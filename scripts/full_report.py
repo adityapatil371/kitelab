@@ -1,10 +1,12 @@
-"""One workbook containing every analysis run on the 199-stock universe.
+"""One workbook containing every analysis run on the 199-stock universe, written so
+that someone new to backtesting can read it cold.
 
     python -m scripts.full_report
 
-Everything is recomputed fresh from the Parquet files at build time, so all sheets
-describe the same data snapshot. Takes several minutes -- the breakout scan over 199
-stocks is the slow part.
+Every sheet opens with WHAT THIS SHEET SHOWS and HOW TO READ IT in plain words, a
+Glossary defines the jargon, and the Read Me tells the whole story in order.
+Everything is recomputed fresh from the Parquet files at build time. Takes several
+minutes -- the breakout scan over 199 stocks is the slow part.
 """
 from __future__ import annotations
 
@@ -13,22 +15,24 @@ import statistics as st
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from kitelab import backtest, config, frames, portfolio, report, strategies
 
 HEADER_FILL = PatternFill("solid", fgColor="DDDDDD")
+EXPLAIN_FILL = PatternFill("solid", fgColor="FFF7E0")
 LOSS_FONT = Font(color="C00000")
 
-BUCKETS = [(0, 1e6, "under Rs10 lakh/day"), (1e6, 1e7, "Rs10L - Rs1cr"),
-           (1e7, 1e8, "Rs1cr - Rs10cr"), (1e8, 1e15, "over Rs10cr/day")]
+BUCKETS = [(0, 1e6, "TINY: under Rs10 lakh traded/day"),
+           (1e6, 1e7, "SMALL: Rs10 lakh - Rs1 crore"),
+           (1e7, 1e8, "MEDIUM: Rs1 - Rs10 crore"),
+           (1e8, 1e15, "LARGE: over Rs10 crore/day")]
 CAPITALS = [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000,
             2_500_000, 5_000_000, 10_000_000]
 RISKS = [0.01, 0.02, 0.03, 0.05, 0.10]
 BANDS = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05]
 PEAK, BOTTOM, YEAREND = (pd.Timestamp("2020-01-14"), pd.Timestamp("2020-03-23"),
                          pd.Timestamp("2020-12-31"))
-# The 2008 grinding bear: Nifty peaked 8 Jan 2008 and bottomed 27 Oct 2008, roughly
-# -60%, with the recovery taking well into 2009 -- the opposite shape to COVID's V.
 PEAK08, BOTTOM08, END09 = (pd.Timestamp("2008-01-08"), pd.Timestamp("2008-10-27"),
                            pd.Timestamp("2009-12-31"))
 
@@ -59,9 +63,31 @@ def buy_hold_cagr(symbol: str) -> float | None:
     return 100 * (growth ** (1 / years) - 1) if growth > 0 else None
 
 
+# ---------------------------------------------------------------------------
+# layout helpers
+# ---------------------------------------------------------------------------
+
+def explain(sheet, anchor_row: int, heading: str, lines: list[str],
+            span: int = 10) -> int:
+    """A highlighted plain-language block. Returns the next free row."""
+    head = sheet.cell(row=anchor_row, column=1, value=heading)
+    head.font = Font(bold=True, size=11)
+    head.fill = EXPLAIN_FILL
+    sheet.merge_cells(start_row=anchor_row, start_column=1,
+                      end_row=anchor_row, end_column=span)
+    row = anchor_row + 1
+    for line in lines:
+        cell = sheet.cell(row=row, column=1, value=line)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.fill = EXPLAIN_FILL
+        sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=span)
+        sheet.row_dimensions[row].height = max(15, 14 * (1 + len(line) // 105))
+        row += 1
+    return row + 1
+
+
 def write_table(sheet, anchor_row: int, title: str, headers: list[str],
                 widths: list[int], rows: list[list], formats: list[str]) -> int:
-    """Write one titled table; returns the next free row."""
     cell = sheet.cell(row=anchor_row, column=1, value=title)
     cell.font = Font(bold=True, size=12)
     header_row = anchor_row + 1
@@ -70,7 +96,7 @@ def write_table(sheet, anchor_row: int, title: str, headers: list[str],
         head.font = Font(bold=True)
         head.fill = HEADER_FILL
         head.alignment = Alignment(horizontal="center", wrap_text=True)
-        letter = sheet.cell(row=1, column=column).column_letter
+        letter = get_column_letter(column)
         sheet.column_dimensions[letter].width = max(
             sheet.column_dimensions[letter].width or 0, width)
     for offset, row in enumerate(rows):
@@ -89,11 +115,70 @@ def strategy_row(label: str, trades: list[dict]) -> list:
             s.get("profit_factor", 0), s.get("avg_r", 0), s.get("top_share_pct", 0)]
 
 
-STRAT_HEADERS = ["Group", "Trades", "Win %", "Gross", "Charges", "Net",
-                 "Expectancy", "Profit Factor", "Avg R", "Best Trade % of Gross"]
-STRAT_WIDTHS = [22, 9, 8, 13, 12, 13, 11, 12, 8, 18]
+STRAT_HEADERS = ["Group", "Trades", "Win %", "Gross Profit", "Charges", "Net Profit",
+                 "Avg Profit / Trade", "Profit Factor", "Avg R", "Best Trade % of Total"]
+STRAT_WIDTHS = [30, 9, 8, 13, 12, 13, 14, 12, 8, 16]
 STRAT_FORMATS = ["@", "0", "0.0", "#,##0", "#,##0", "#,##0", "#,##0", "0.00", "0.00", "0.0"]
 
+GLOSSARY = [
+    ("Profit Factor", "For every Rs1 the strategy lost, how many rupees it made back. "
+     "1.00 = broke even. 1.50 = made Rs1.50 per Rs1 lost. Below 1.00 = losing money. "
+     "This is the single most useful number in this file.",
+     "Above 1.3 is decent, above 1.5 is good."),
+    ("Win rate / Win %", "How often trades made money. A LOW win rate is not bad by "
+     "itself -- these strategies win rarely but win big. What matters is win rate "
+     "TOGETHER with how large wins are versus losses.",
+     "Meaningless alone. Read it next to Profit Factor."),
+    ("Expectancy / Avg Profit per Trade", "Average rupees made per trade after "
+     "everything, including losers. Positive = the strategy adds money on average.",
+     "Positive, and large compared to the charges per trade."),
+    ("R multiple", "Profit measured in units of what you risked. Risked Rs1,000 and "
+     "made Rs3,000 = +3R. Lost the full risk = -1R. Lets big and small trades be "
+     "compared fairly.",
+     "Losses should cluster at -1R (stop worked). Worse than -1R = a gap."),
+    ("Stop loss", "A price where you give up and sell to cap the damage. All our "
+     "trades have one.", "-"),
+    ("Trailing stop", "A stop loss that moves UP as the stock rises (never down). "
+     "Locks in gains while letting winners run. Both strategies use one.", "-"),
+    ("Gap", "A stock opening far below yesterday's close (overnight news). Price "
+     "jumps OVER your stop, so you sell much lower than planned. The one risk a "
+     "stop loss cannot prevent. See Worst Losses.", "-"),
+    ("Charges", "Real Zerodha costs: brokerage, STT, exchange fees, GST, stamp duty, "
+     "demat fee. Charged on POSITION size, not on risk -- so tight stops (big "
+     "positions) cost the most in fees.", "Small next to gross profit."),
+    ("Drawdown / Max DD", "The worst peak-to-valley fall of the account. A 50% "
+     "drawdown needs a 100% gain just to get back to even -- and most people give "
+     "up before that.", "Smaller is better. Above 40% is very hard to live through."),
+    ("CAGR", "Compound annual growth rate -- the steady yearly % that would produce "
+     "the same final result. The honest way to state a multi-year return.",
+     "Compare with ~7% from a fixed deposit and ~12% from buy-and-hold here."),
+    ("In-sample", "The 49 stocks we TUNED the settings on. Results there are like "
+     "scoring your own practice exam -- not proof of anything.", "-"),
+    ("Out-of-sample", "150 random stocks the settings had never seen, with nothing "
+     "re-tuned. The real exam. Only these results count as evidence.", "-"),
+    ("Overfitting", "Accidentally tuning a strategy to fit past data's noise -- like "
+     "memorising last year's exam paper. Looks brilliant in testing, fails on new "
+     "data. The out-of-sample test exists to catch it.", "-"),
+    ("Turnover / Liquidity", "How many rupees of a stock change hands daily. Liquid "
+     "stocks can be bought at the screen price; tiny stocks cannot -- which is where "
+     "fake backtest profits usually hide.", "-"),
+    ("Survivorship bias", "Our stock list only contains companies alive TODAY. Every "
+     "company that went bust is invisible, which makes ALL results here look better "
+     "than reality -- especially buy-and-hold in 2008.", "-"),
+    ("Whipsaw", "Price wobbling around a signal line, triggering buy-sell-buy-sell "
+     "in quick succession, paying fees each time. See Band Sweep for the cure.", "-"),
+    ("Hysteresis band / dead zone", "Buy only when price is 2% ABOVE the line, sell "
+     "only 2% BELOW it. In between, do nothing. This kills whipsaw.", "-"),
+    ("Buy and hold", "Just buying the stock and never selling -- the benchmark every "
+     "strategy must beat to be worth its effort.", "-"),
+    ("All-time high (ATH)", "The highest price a stock has EVER traded. The breakout "
+     "strategy buys when price pushes into brand-new high ground.", "-"),
+]
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     cfg = config.load()
@@ -119,45 +204,87 @@ def main() -> None:
     split = {name: {"in": [t for t in trades if t["symbol"] in in_set],
                     "out": [t for t in trades if t["symbol"] in out_set]}
              for name, trades in signals.items()}
+    pf_out = {n: report.stats("x", split[n]["out"]).get("profit_factor", 0)
+              for n in signals}
 
     book = Workbook()
     book.remove(book.active)
 
     # ---- Strategy Results ------------------------------------------------
     sheet = book.create_sheet("Strategy Results")
-    row = write_table(sheet, 1, "Breakout -- all-time-high, swing-low trailing stop",
-                      STRAT_HEADERS, STRAT_WIDTHS,
-                      [strategy_row(f"IN-SAMPLE ({len(in_sample)} stocks)", split["Breakout"]["in"]),
-                       strategy_row(f"OUT-OF-SAMPLE ({len(out_sample)} stocks)", split["Breakout"]["out"])],
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "The report card. Each strategy was tested twice: on the 49 stocks we tuned the "
+        "settings on (the practice exam -- ignore it), and on 150 random stocks it had "
+        "never seen (the real exam -- this is the evidence).",
+        "HOW TO READ IT: look at the Profit Factor column of the OUT-OF-SAMPLE rows. "
+        "Above 1.00 means the strategy makes money; above 1.5 is genuinely good. "
+        "'Best Trade % of Total' checks the profit isn't one lucky trade -- under ~20% is healthy.",
+        "The strategies: BREAKOUT buys when a stock pushes to a brand-new all-time high "
+        "after a pullback. EMA buys when price is 2% above its 20-day, 20-week and "
+        "20-month average lines, and sells when it drops 2% below any of them. Both "
+        "trail a stop loss up under the price and size every trade to risk 1% of a "
+        "Rs1,00,000 account.",
+    ])
+    row = write_table(sheet, row, "Breakout", STRAT_HEADERS, STRAT_WIDTHS,
+                      [strategy_row(f"Practice exam - IN-SAMPLE ({len(in_sample)} stocks)",
+                                    split["Breakout"]["in"]),
+                       strategy_row(f"REAL EXAM - OUT-OF-SAMPLE ({len(out_sample)} stocks)",
+                                    split["Breakout"]["out"])],
                       STRAT_FORMATS)
-    row = write_table(sheet, row, "EMA -- 20-EMA stack, 2% band, entry-day-low stop",
-                      STRAT_HEADERS, STRAT_WIDTHS,
-                      [strategy_row(f"IN-SAMPLE ({len(in_sample)} stocks)", split["EMA"]["in"]),
-                       strategy_row(f"OUT-OF-SAMPLE ({len(out_sample)} stocks)", split["EMA"]["out"])],
+    row = write_table(sheet, row, "EMA", STRAT_HEADERS, STRAT_WIDTHS,
+                      [strategy_row(f"Practice exam - IN-SAMPLE ({len(in_sample)} stocks)",
+                                    split["EMA"]["in"]),
+                       strategy_row(f"REAL EXAM - OUT-OF-SAMPLE ({len(out_sample)} stocks)",
+                                    split["EMA"]["out"])],
                       STRAT_FORMATS)
-    sheet.cell(row=row, column=1, value=(
-        "IN-SAMPLE = the 49 Nifty Next 50 stocks the parameters were tuned on; not evidence. "
-        "OUT-OF-SAMPLE = 150 random NSE stocks never seen by any parameter. "
-        "Both profit factors staying well above 1.0 out-of-sample is the overfitting test passing."))
+    explain(sheet, row, "WHAT IT MEANS", [
+        f"Both passed the real exam: Breakout {pf_out.get('Breakout', 0):.2f}, EMA "
+        f"{pf_out.get('EMA', 0):.2f} profit factor on stocks they were never tuned for. "
+        "The per-trade edge is real. Whether a real account can capture it is a separate "
+        "question -- see Portfolio Simulation.",
+        "Notice the win rates: roughly 20-40%. These strategies are WRONG most of the "
+        "time and profitable anyway, because winners are far bigger than losers. If you "
+        "trade them expecting to be right often, you will abandon them at exactly the "
+        "wrong moment.",
+    ])
 
-    # ---- Liquidity gradient ---------------------------------------------
+    # ---- Liquidity -------------------------------------------------------
     sheet = book.create_sheet("Liquidity")
-    row = 1
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "The same out-of-sample trades, split by how heavily each stock trades every day "
+        "(its turnover). Why this matters: a backtest assumes you buy at the screen "
+        "price. In a tiny stock that is fiction -- your own order moves the price. So "
+        "FAKE backtest profits almost always hide in the tiniest stocks.",
+        "HOW TO READ IT: if the TINY bucket had the best profit factor, these results "
+        "would be an illusion. The healthy pattern is the opposite: worst in TINY, "
+        "strong in MEDIUM and LARGE -- stocks you could actually trade.",
+    ])
     for name in signals:
         rows = []
         for lo, hi, label in BUCKETS:
             bucket = [t for t in split[name]["out"] if lo <= turnover(t["symbol"]) < hi]
             if bucket:
                 rows.append(strategy_row(label, bucket))
-        row = write_table(sheet, row, f"{name} -- out-of-sample, split by liquidity",
+        row = write_table(sheet, row, f"{name} (out-of-sample trades only)",
                           STRAT_HEADERS, STRAT_WIDTHS, rows, STRAT_FORMATS)
-    sheet.cell(row=row, column=1, value=(
-        "The decisive evidence: profit factor RISES with liquidity in both strategies. "
-        "Fake backtest edges do the opposite -- they live in illiquid stocks where "
-        "simulated fills are fiction."))
+    explain(sheet, row, "WHAT IT MEANS", [
+        "The edge is weakest exactly where fake edges are strongest. That inversion is "
+        "the single best piece of evidence in this file that the strategies are real. "
+        "Practical rule that falls out of it: trade these only in stocks doing at least "
+        "Rs1 crore a day.",
+    ])
 
-    # ---- Band sweep ------------------------------------------------------
+    # ---- Band Sweep ------------------------------------------------------
     sheet = book.create_sheet("Band Sweep")
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "Why the EMA rule has a 2% 'dead zone'. With no band (0%), buying and selling "
+        "share the same line -- price wobbling on that line buys and sells every few "
+        "days (whipsaw), paying fees each round trip. The median trade lasted just 3 "
+        "sessions on a strategy that is supposed to follow MONTHLY trends.",
+        "HOW TO READ IT: go down the rows as the band widens. Watch trades and charges "
+        "collapse while profit-per-trade and profit factor climb. When every column "
+        "improves smoothly in one direction, the effect is real, not luck.",
+    ])
     rows = []
     for band in BANDS:
         trades = []
@@ -171,51 +298,66 @@ def main() -> None:
                      st.median(t["bars_held"] for t in trades) if trades else 0,
                      s["gross_profit"], s["charges"], s["net_profit"],
                      s["expectancy"], s["profit_factor"]])
-    row = write_table(sheet, 1, "EMA hysteresis band sweep (in-sample 49 stocks)",
-                      ["Band", "Trades", "Median Hold (sessions)", "Gross", "Charges",
-                       "Net", "Expectancy", "Profit Factor"],
-                      [8, 9, 20, 13, 12, 13, 11, 12], rows,
+    row = write_table(sheet, row, "EMA with different band widths (on the 49 tuning stocks)",
+                      ["Band", "Trades", "Median Days Held", "Gross Profit", "Charges",
+                       "Net Profit", "Avg Profit / Trade", "Profit Factor"],
+                      [8, 9, 17, 13, 12, 13, 15, 12], rows,
                       ["@", "0", "0", "#,##0", "#,##0", "#,##0", "#,##0", "0.00"])
-    sheet.cell(row=row, column=1, value=(
-        "Why the 2% band exists: at 0% the entry and exit share one knife-edge, so price "
-        "hovering at an EMA exits and re-enters every few days. Everything improves "
-        "monotonically as the band widens -- the signature of a real effect. 2% was chosen "
-        "as the balance of expectancy vs total profit; because it was chosen HERE, these "
-        "49 stocks stop being evidence (see Strategy Results for the honest numbers)."))
+    explain(sheet, row, "WHAT IT MEANS", [
+        "The band cut fee bills by more than 80% by removing pointless churn. 2% was "
+        "picked as the balance between profit-per-trade and total profit. Honesty note: "
+        "because 2% was CHOSEN by looking at this table, these 49 stocks stopped being "
+        "evidence -- that is exactly why the 150-stock out-of-sample test exists.",
+    ])
 
-    # ---- Portfolio simulation -------------------------------------------
+    # ---- Portfolio Simulation -------------------------------------------
     sheet = book.create_sheet("Portfolio Simulation")
-    row = 1
-    port_headers = ["Capital", "Risk", "Final", "Return %", "CAGR %", "Max DD %",
-                    "Taken", "Skipped (too small)", "Skipped (no cash)"]
-    port_widths = [12, 7, 13, 10, 9, 10, 8, 17, 15]
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "Everything before this sheet added up trades as if each had its own money. A "
+        "real account has ONE pot: when cash is tied up, new signals are skipped. This "
+        "simulates that -- one account, signals taken in order, skip what you cannot "
+        "afford, risk 1% of current equity per trade.",
+        "HOW TO READ IT: 'CAGR %' is the honest yearly return; 'Max DD %' is the worst "
+        "fall you would have sat through. 'Skipped (too small)' counts signals where 1% "
+        "risk could not buy even one share -- the small-account trap.",
+    ])
+    port_headers = ["Capital", "Risk", "Final Value", "Total Return %", "CAGR %",
+                    "Max DD %", "Trades Taken", "Skipped (too small)", "Skipped (no cash)"]
+    port_widths = [12, 7, 13, 13, 9, 10, 12, 17, 15]
     port_formats = ["#,##0", "0%", "#,##0", "0", "0.0", "0.0", "0", "0", "0"]
     for name in signals:
         rows = []
         for capital in CAPITALS:
             r = portfolio.run(signals[name], capital, 0.01)
             rows.append([capital, 0.01, r["final"], r["return_pct"], r["cagr_pct"],
-                         r["max_drawdown_pct"], len(r["taken"]) if isinstance(r["taken"], list) else r["taken"],
+                         r["max_drawdown_pct"], len(r["taken"]),
                          r["skipped_size"], r["skipped_cash"]])
-        row = write_table(sheet, row, f"{name} -- one account, every affordable signal, 1% risk",
+        row = write_table(sheet, row, f"{name}: same strategy, different account sizes",
                           port_headers, port_widths, rows, port_formats)
     rows = []
     for capital in (10_000, 100_000):
         for risk in RISKS:
             r = portfolio.run(signals["Breakout"], capital, risk)
             rows.append([capital, risk, r["final"], r["return_pct"], r["cagr_pct"],
-                         r["max_drawdown_pct"], len(r["taken"]) if isinstance(r["taken"], list) else r["taken"],
+                         r["max_drawdown_pct"], len(r["taken"]),
                          r["skipped_size"], r["skipped_cash"]])
-    row = write_table(sheet, row, "Breakout -- raising risk instead of capital",
+    row = write_table(sheet, row,
+                      "Breakout: does raising the risk % rescue a small account? (No.)",
                       port_headers, port_widths, rows, port_formats)
-    sheet.cell(row=row, column=1, value=(
-        "The capital floor: below ~Rs50,000 both strategies destroy the account, because "
-        "1% risk cannot afford most signals and the account is forced into the illiquid "
-        "tail where the edge is negative. Raising risk % makes it worse, not better. "
-        "Above ~Rs2.5 lakh, adding money buys nothing -- the one-position-per-stock rule "
-        "binds, not cash."))
+    explain(sheet, row, "WHAT IT MEANS", [
+        "Rs10,000 is destroyed at EVERY risk setting -- not because the strategy is bad, "
+        "but because 1% of Rs10,000 cannot afford most trades, so the account is forced "
+        "into only the cheapest, tightest-stop trades (the worst ones), while fixed fees "
+        "eat ~15% of every trade's risk budget.",
+        "Around Rs1,00,000 the strategies start working; near Rs2,50,000 they reach full "
+        "strength. Beyond that, extra money adds nothing -- the one-position-per-stock "
+        "rule becomes the limit, not cash.",
+        "And raising risk % makes a small account die FASTER: one overnight gap at 5% "
+        "risk can take half the account (see Worst Losses). The lever that feels like "
+        "the fix is the trap.",
+    ])
 
-    # ---- crash windows ---------------------------------------------------
+    # ---- crash sheets ----------------------------------------------------
     def equity_at(curve, when):
         prior = [e for ts, e in curve if ts <= when]
         return prior[-1] if prior else (curve[0][1] if curve else 0)
@@ -239,8 +381,10 @@ def main() -> None:
                 recovery.append(100 * (c / a - 1))
         return crash, recovery, count
 
-    def crash_sheet(title, sheet_name, peak, bottom, end, strategy_names, note):
+    def crash_sheet(sheet_name, preamble, title, peak, bottom, end,
+                    strategy_names, meaning):
         sheet = book.create_sheet(sheet_name)
+        row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", preamble)
         rows = []
         for name in strategy_names:
             r = portfolio.run(signals[name], 250_000, 0.01)
@@ -250,122 +394,219 @@ def main() -> None:
             rows.append([name, e_peak, e_bot, 100 * (e_bot / e_peak - 1),
                          e_end, 100 * (e_end / e_peak - 1)])
         crash, recovery, count = buy_hold_window(peak, bottom, end)
-        rows.append([f"BUY & HOLD (median, {count} stocks)", None, None,
+        rows.append([f"BUY & HOLD (median of {count} stocks)", None, None,
                      st.median(crash) if crash else 0, None,
                      st.median(recovery) if recovery else 0])
-        last = write_table(sheet, 1, title,
-                           ["Strategy", "Equity at Peak", "Equity at Bottom",
-                            "Peak->Bottom %", "Equity at Window End", "Peak->End %"],
-                           [30, 14, 15, 14, 16, 15], rows,
-                           ["@", "#,##0", "#,##0", "0.0", "#,##0", "0.0"])
-        sheet.cell(row=last, column=1, value=note)
+        row = write_table(sheet, row, title,
+                          ["Strategy", "Account at Peak", "Account at Bottom",
+                           "Peak to Bottom %", "Account at Window End", "Peak to End %"],
+                          [30, 14, 15, 14, 17, 15], rows,
+                          ["@", "#,##0", "#,##0", "0.0", "#,##0", "0.0"])
+        explain(sheet, row, "WHAT IT MEANS", meaning)
 
-    crash_sheet("COVID crash: 14 Jan 2020 peak -> 23 Mar bottom -> 31 Dec 2020",
-                "2020 Crash", PEAK, BOTTOM, YEAREND, list(signals),
-                "A V-shaped crash -- the worst possible shape for trend-following, which "
-                "sells into the fall and re-enters late. Buy-and-hold fell ~40% "
-                "peak-to-bottom; the strategies were roughly flat to positive through it.")
-    crash_sheet("2008 bear: 8 Jan 2008 peak -> 27 Oct 2008 bottom -> 31 Dec 2009",
-                "2008 Crash", PEAK08, BOTTOM08, END09, ["EMA"],
-                "The grinding ten-month bear, EMA ONLY: the breakout strategy enters on "
-                "30-minute candles and Kite serves no intraday data before 2015, so it "
-                "cannot be tested here. Survivorship bias is at its strongest in this "
-                "window -- companies that 2008 killed are absent from the universe, which "
-                "flatters buy-and-hold especially. The EMA portfolio equity also reflects "
-                "only ~2 years of pre-crash trading history.")
+    crash_sheet(
+        "2020 Crash",
+        ["What happened to a Rs2,50,000 account through the COVID crash, versus simply "
+         "holding the same stocks. 'Peak to Bottom %' is the pain during the fall; "
+         "'Peak to End %' is where you stood once the dust settled."],
+        "COVID: 14 Jan 2020 peak -> 23 Mar bottom -> 31 Dec 2020",
+        PEAK, BOTTOM, YEAREND, list(signals),
+        ["Buy-and-hold fell ~40% peak to bottom; the strategies were roughly flat -- the "
+         "EMA even made money DURING the crash, because its exit rule had sold rising "
+         "stocks as they broke their trend lines on the way down.",
+         "Then the market recovered in a near-vertical V -- the worst possible shape for "
+         "these strategies, which had sold and were slow to get back in. Protection on "
+         "the way down, lag on the way up."],
+    )
+    crash_sheet(
+        "2008 Crash",
+        ["The same test through the 2008 collapse -- a ten-month grinding bear, the "
+         "opposite shape to COVID's V. EMA ONLY: the Breakout strategy needs 30-minute "
+         "price data, which does not exist before 2015 from any Kite source.",
+         "Extra warning for this sheet: our stock list only contains companies alive "
+         "TODAY. The many companies 2008 actually killed are invisible, which makes the "
+         "buy-and-hold row look far better than the real 2008 experience was."],
+        "2008: 8 Jan 2008 peak -> 27 Oct 2008 bottom -> 31 Dec 2009",
+        PEAK08, BOTTOM08, END09, ["EMA"],
+        ["At the bottom the EMA was ahead: down ~50% versus ~68% for holding. The stops "
+         "did cut the damage. But 2008's crash came as huge overnight GAPS that jump "
+         "straight over stops, and its bear-market rallies kept triggering re-entries "
+         "that lost again.",
+         "Then buy-and-hold rode the giant 2009 rebound back while the EMA, stopped out "
+         "near the lows, lagged badly. Over the FULL 2008-09 cycle, holding won.",
+         "Put both crash sheets together and the honest conclusion is: the strategies "
+         "halve the fall, and pay for it in the recovery. Whether that trade is worth it "
+         "depends on the crash's shape -- which nobody knows in advance."],
+    )
 
-    # ---- Worst losses ----------------------------------------------------
+    # ---- Worst Losses ----------------------------------------------------
     sheet = book.create_sheet("Worst Losses")
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "The ten worst trades across everything, measured in R (multiples of what was "
+        "risked). A working stop loss caps a loss at -1R. Every trade here is worse than "
+        "-1R, and every one is an overnight GAP: the stock opened far below the stop, so "
+        "the sale happened at the open, not at the planned price.",
+        "HOW TO READ IT: multiply the R column by your risk-per-trade to see the rupee "
+        "damage at your settings. A -18R trade at 1% risk costs 18% of the account. At "
+        "5% risk the same single trade costs 91%.",
+    ])
     worst = sorted(((t["r_multiple"], name, t) for name, trades in signals.items()
                     for t in trades), key=lambda x: x[0])[:10]
     rows = [[name, t["symbol"], t["entry_ts"].date(), r, t["exit_reason"],
              t["net_profit"]] for r, name, t in worst]
-    row = write_table(sheet, 1, "Ten worst trades by R multiple (all 199 stocks, both strategies)",
-                      ["Strategy", "Stock", "Entry Date", "R Multiple", "Exit Reason", "Net P&L"],
-                      [11, 12, 12, 11, 20, 12], rows,
+    row = write_table(sheet, row, "Ten worst trades (all 199 stocks, both strategies)",
+                      ["Strategy", "Stock", "Entry Date", "R Multiple", "Exit Reason",
+                       "Net P&L (at 1% risk)"],
+                      [11, 12, 12, 11, 20, 18], rows,
                       ["@", "@", "yyyy-mm-dd", "0.00", "@", "#,##0"])
-    sheet.cell(row=row, column=1, value=(
-        "Every entry here is an overnight gap through the stop -- the one risk a stop-loss "
-        "cannot cover. This table is why risking 5% per trade is ruin: multiply the R "
-        "column by your risk-per-trade to see what one gap does to the account."))
+    explain(sheet, row, "WHAT IT MEANS", [
+        "This table is the whole argument for small risk-per-trade. Gaps cannot be "
+        "prevented by any stop, only survived by position sizing. Keeping risk at 1% "
+        "means the worst night in twenty years of data cost under a fifth of the "
+        "account. At 5% it would have ended it.",
+    ])
 
-    # ---- Per stock -------------------------------------------------------
+    # ---- Per Stock -------------------------------------------------------
     sheet = book.create_sheet("Per Stock")
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "Every one of the 199 stocks individually: which test group it was in, how "
+        "liquid it is, what simply holding it returned per year, and how each strategy "
+        "did on it. Use this to look up any stock you care about.",
+        "HOW TO READ IT: expect MOST stocks to be small losers for the strategies and a "
+        "minority to be large winners -- that is the design, not a flaw. A strategy row "
+        "with very few trades means little either way.",
+    ])
     by_symbol = {name: {} for name in signals}
     for name, trades in signals.items():
         for t in trades:
             by_symbol[name].setdefault(t["symbol"], []).append(t)
     rows = []
     for symbol in everything:
-        entry = [symbol, "in-sample" if symbol in in_set else "out-of-sample",
+        entry = [symbol, "tuning (in-sample)" if symbol in in_set else "real exam (out)",
                  turnover(symbol), buy_hold_cagr(symbol)]
         for name in ("Breakout", "EMA"):
             mine = by_symbol[name].get(symbol, [])
             s = report.stats(symbol, mine) if mine else {}
             entry += [len(mine), s.get("net_profit", 0), s.get("profit_factor", 0)]
         rows.append(entry)
-    write_table(sheet, 1, f"All {len(everything)} stocks",
-                ["Stock", "Group", "Median Turnover", "Buy&Hold CAGR %",
+    write_table(sheet, row, f"All {len(everything)} stocks",
+                ["Stock", "Group", "Daily Turnover (median Rs)", "Buy&Hold CAGR %",
                  "B'out Trades", "B'out Net", "B'out PF",
                  "EMA Trades", "EMA Net", "EMA PF"],
-                [13, 14, 15, 15, 11, 12, 9, 11, 12, 9], rows,
+                [13, 17, 20, 15, 11, 12, 9, 11, 12, 9], rows,
                 ["@", "@", "#,##0", "0.0", "0", "#,##0", "0.00", "0", "#,##0", "0.00"])
-    sheet.freeze_panes = "A3"
+    sheet.freeze_panes = f"A{row + 2}"
+
+    # ---- Glossary --------------------------------------------------------
+    sheet = book.create_sheet("Glossary", 1)
+    row = explain(sheet, 1, "EVERY TERM USED IN THIS FILE, IN PLAIN WORDS",
+                  ["Read this sheet once and every other sheet becomes readable."], span=3)
+    for column, (heading, width) in enumerate(
+            zip(["Term", "What it means", "What a good value looks like"],
+                [22, 95, 42]), start=1):
+        head = sheet.cell(row=row, column=column, value=heading)
+        head.font = Font(bold=True)
+        head.fill = HEADER_FILL
+        sheet.column_dimensions[get_column_letter(column)].width = width
+    for offset, (term, meaning, good) in enumerate(GLOSSARY):
+        r = row + 1 + offset
+        sheet.cell(row=r, column=1, value=term).font = Font(bold=True)
+        cell = sheet.cell(row=r, column=2, value=meaning)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        sheet.cell(row=r, column=3, value=good).alignment = Alignment(
+            wrap_text=True, vertical="top")
+        sheet.row_dimensions[r].height = max(28, 14 * (1 + len(meaning) // 92))
+    sheet.freeze_panes = f"A{row + 1}"
 
     # ---- Read Me ---------------------------------------------------------
     sheet = book.create_sheet("Read Me", 0)
     sheet.column_dimensions["A"].width = 118
-    pf = {n: report.stats("x", split[n]["out"]).get("profit_factor", 0) for n in signals}
     story = [
-        ("WHAT THIS WORKBOOK IS", True),
-        ("Every analysis from the kitelab project, recomputed in one pass over 199 NSE stocks "
-         "(49 Nifty Next 50 + 150 randomly drawn). Data: Zerodha Kite daily & 30-minute candles.", False),
+        ("WHAT THIS FILE IS", True),
+        ("We took two trading strategies -- one that buys all-time-high breakouts, one "
+         "that follows 20-period average lines on three timeframes -- and tested them "
+         "the hard way: on 199 NSE stocks, over up to 20 years of real Zerodha price "
+         "data, with real fees, and with every trick we could think of to catch "
+         "ourselves being fooled. This file is everything we found.", False),
         ("", False),
-        ("THE STORY, IN ORDER", True),
-        ("1. Hand-backtesting showed a 76% win rate on 47 trades. The same rules applied "
-         "mechanically to every day of history won ~38% -- the gap is selection bias: "
-         "trades that worked stand out when you scroll a chart; the ones that fizzled don't.", False),
-        ("2. Fixed 1.5R profit targets made both level strategies losers. Letting winners run "
-         "(swing-low trailing stop) flipped them: the profit came from rare large winners "
-         "that the target had been amputating.", False),
-        ("3. Fees are charged on POSITION size, risk is chosen on STOP size. A tight stop "
-         "means a huge position and huge fees for the same rupee risk -- the tight-stop trap.", False),
-        ("4. The EMA rule whipsawed: median hold 3 sessions on a monthly-filtered strategy. "
-         "A 2% hysteresis band (enter 2% above, exit 2% below) cut fees 83%. See Band Sweep.", False),
-        (f"5. Overfitting test: parameters frozen, then run on 150 never-seen stocks. "
-         f"Profit factors held -- Breakout {pf.get('Breakout', 0):.2f}, EMA {pf.get('EMA', 0):.2f} "
-         f"out-of-sample. See Strategy Results.", False),
-        ("6. The edge STRENGTHENS with liquidity (see Liquidity). Fake edges do the opposite. "
-         "This is the strongest single piece of evidence the effect is real.", False),
-        ("7. But a real account extracts almost none of it: Rs10,000 dies at every risk "
-         "setting, Rs1 lakh earns ~4-6% CAGR with 40-70% drawdowns, and above ~Rs2.5 lakh "
-         "extra money buys nothing. See Portfolio Simulation.", False),
-        ("8. Buy-and-hold on the same stocks returned ~12% CAGR median over the same period -- "
-         "though the period is almost entirely a bull market, which stacks that comparison "
-         "against stop-based strategies.", False),
-        ("9. In the one crash in the data (COVID 2020), buy-and-hold fell ~40% while the "
-         "strategies were roughly flat to positive -- the protection is real. See 2020 Crash.", False),
+        ("THE WHOLE STORY IN THREE LINES", True),
+        ("1. Both strategies genuinely work, per trade -- proven on stocks they were "
+         "never tuned for.", False),
+        ("2. A small account cannot capture that edge: fees and capital limits eat it, "
+         "and below ~Rs50,000 the account is destroyed.", False),
+        ("3. Even a big account roughly matches a fixed deposit at far more stress -- "
+         "the strategies' real product is not higher returns, it is smaller crashes.", False),
         ("", False),
-        ("10. With daily history deepened to 2006, the EMA rule was re-tested across the "
-         "2008 collapse and the 2010-13 sideways grind -- its out-of-sample profit factor "
-         "held. See 2008 Crash for the window itself. The breakout cannot be tested "
-         "pre-2015 (no intraday data exists), but deeper history corrected its levels: "
-         "false post-2015 'all-time highs' were removed, raising its quality.", False),
+        ("WHICH SHEET ANSWERS WHICH QUESTION", True),
+        ("Do the strategies actually make money?  ->  Strategy Results", False),
+        ("How do I know it isn't luck or curve-fitting?  ->  Strategy Results (the "
+         "out-of-sample rows) and Liquidity", False),
+        ("Why does the EMA rule have that 2% buffer?  ->  Band Sweep", False),
+        ("How much money would I need? What returns? How bad do the falls get?  ->  "
+         "Portfolio Simulation", False),
+        ("What happens in a market crash?  ->  2020 Crash and 2008 Crash", False),
+        ("What is the single worst thing that can happen?  ->  Worst Losses", False),
+        ("How did one specific stock do?  ->  Per Stock", False),
+        ("What does this word mean?  ->  Glossary", False),
         ("", False),
-        ("CAVEATS THAT STILL STAND", True),
-        ("Survivorship: the universe is today's instrument list; companies that died are "
-         "invisible -- and 2008 killed many, so the 2008 sheet flatters buy-and-hold "
-         "most of all. Slippage is not modelled. One market (India). Daily data spans "
-         "2006-2026 for ~74 stocks and less for the rest; intraday, and therefore the "
-         "breakout strategy, begins in 2015.", False),
+        ("HOW WE GOT HERE -- THE TEN FINDINGS, IN ORDER", True),
+        ("1. THE 76% ILLUSION. Backtesting by scrolling charts by hand showed a 76% win "
+         "rate on 47 trades. A computer applying the SAME rules to EVERY day of history "
+         "found 267 trades winning ~38%. Nobody cheated: trades that worked stand out "
+         "when you scroll; the ones that fizzled are invisible. This is why hand "
+         "backtests always flatter.", False),
+        ("2. SELLING WINNERS EARLY WAS THE KILLER. The original rules took profit at a "
+         "fixed 1.5x risk. Removing the target and trailing a stop under the price "
+         "instead turned losing strategies into winning ones -- because ALL the profit "
+         "lives in a few huge winners the target had been cutting short.", False),
+        ("3. THE TIGHT-STOP FEE TRAP. Fees are charged on the SIZE of your position, "
+         "but you choose risk by your STOP distance. A tight stop forces a huge position "
+         "-- so 'safer' tight stops quietly cost 3-4x more in fees for the same risk.", False),
+        ("4. WHIPSAW. The EMA rule was re-buying the same stock within days of selling "
+         "it, over and over, paying fees each time. A 2% dead zone between the buy line "
+         "and sell line cut the total fee bill by more than 80%. (Band Sweep)", False),
+        ("5. THE OVERFITTING TEST. Because we tuned that 2% on 49 stocks, we froze every "
+         "setting and re-ran on 150 random stocks the rules had never seen. Both "
+         f"strategies held: Breakout {pf_out.get('Breakout', 0):.2f}, EMA "
+         f"{pf_out.get('EMA', 0):.2f} profit factor. Memorised answers fail new exams; "
+         "these did not. (Strategy Results)", False),
+        ("6. THE LIQUIDITY FINGERPRINT. Fake backtest profits hide in tiny stocks where "
+         "simulated prices are fiction. Our edge is WEAKEST there and strongest in "
+         "heavily-traded stocks -- the reverse of the fake pattern. (Liquidity)", False),
+        ("7. THE SMALL-ACCOUNT TRAP. A Rs10,000 account died at every risk setting -- "
+         "it can only afford the worst trades, and fixed fees eat it alive. Raising "
+         "risk % kills it faster. The floor is ~Rs1,00,000; full strength ~Rs2,50,000; "
+         "beyond that more money adds nothing. (Portfolio Simulation)", False),
+        ("8. THE BENCHMARK NOBODY BEATS EASILY. Simply buying and holding these same "
+         "stocks returned ~12% a year over the period. The strategies earned less with "
+         "more effort -- their real value shows up only in crashes.", False),
+        ("9. CRASH PROTECTION IS REAL BUT SHAPE-DEPENDENT. COVID 2020: buy-and-hold "
+         "fell 40%, the strategies were flat to positive -- clear win. 2008: the EMA "
+         "fell ~50% vs ~68% for holding, then lagged the 2009 rebound and lost the full "
+         "cycle. The strategies halve the fall and pay for it in the recovery.", False),
+        ("10. EVERY WRONG NUMBER ANNOUNCED ITSELF. Three times in this project a result "
+         "made no sense -- and each time chasing it uncovered a real bug (a wrong "
+         "breakout definition, a 10-day cap starving trades, dead levels leaking through "
+         "a data boundary). The lesson worth more than any strategy: when a number "
+         "surprises you, it is a finding, not an answer.", False),
+        ("", False),
+        ("WHAT THIS FILE STILL CANNOT TELL YOU", True),
+        ("Companies that went bankrupt are missing from the data (only today's "
+         "survivors are testable), so every result -- especially buy-and-hold in 2008 "
+         "-- looks better than reality. Slippage (getting a worse fill than the screen "
+         "price) is not modelled. This is one country's market, and the past, however "
+         "long, is not the future.", False),
+        ("Data: Zerodha Kite. Daily candles 2006-2026 for ~74 stocks, later starts for "
+         "the rest; 30-minute candles exist only from 2015, so the Breakout strategy is "
+         "untestable before then. Charges: Zerodha delivery rates as of Aug 2026.", False),
     ]
     for row_index, (text, bold) in enumerate(story, start=1):
         cell = sheet.cell(row=row_index, column=1, value=text)
         cell.alignment = Alignment(wrap_text=True, vertical="top")
         if bold:
-            cell.font = Font(bold=True)
+            cell.font = Font(bold=True, size=12)
         elif text:
-            sheet.row_dimensions[row_index].height = 30
+            sheet.row_dimensions[row_index].height = 15 * (1 + len(text) // 105)
 
     target = report.save(book, "Full Analysis 199 Stocks.xlsx")
     print(f"\n  written: {target}\n")
