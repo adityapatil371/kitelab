@@ -15,6 +15,8 @@ import statistics as st
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.chart import LineChart, Reference
+from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils import get_column_letter
 
 from kitelab import backtest, config, frames, portfolio, report, strategies
@@ -31,6 +33,11 @@ CAPITALS = [10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000,
             2_500_000, 5_000_000, 10_000_000]
 RISKS = [0.01, 0.02, 0.03, 0.05, 0.10]
 BANDS = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05]
+# The capital x risk map: 15 capital levels x 20 risk levels = 300 simulated
+# accounts per strategy. 0% risk is omitted because it buys zero shares.
+RISK_GRID = [i / 200 for i in range(1, 21)]          # 0.5% .. 10.0%
+CAP_GRID = [10_000, 15_000, 20_000, 30_000, 40_000, 50_000, 75_000, 100_000,
+            150_000, 200_000, 300_000, 400_000, 500_000, 750_000, 1_000_000]
 PEAK, BOTTOM, YEAREND = (pd.Timestamp("2020-01-14"), pd.Timestamp("2020-03-23"),
                          pd.Timestamp("2020-12-31"))
 PEAK08, BOTTOM08, END09 = (pd.Timestamp("2008-01-08"), pd.Timestamp("2008-10-27"),
@@ -285,30 +292,41 @@ def main() -> None:
         "collapse while profit-per-trade and profit factor climb. When every column "
         "improves smoothly in one direction, the effect is real, not luck.",
     ])
-    rows = []
-    for band in BANDS:
-        trades = []
-        for symbol in in_sample:
-            try:
-                trades.extend(backtest.simulate(symbol, band=band))
-            except SystemExit:
-                pass
-        s = report.stats(f"{band * 100:.1f}%", trades)
-        rows.append([f"{band * 100:.1f}%", s["trades"],
-                     st.median(t["bars_held"] for t in trades) if trades else 0,
-                     s["gross_profit"], s["charges"], s["net_profit"],
-                     s["expectancy"], s["profit_factor"]])
-    row = write_table(sheet, row, "EMA with different band widths (on the 49 tuning stocks)",
-                      ["Band", "Trades", "Median Days Held", "Gross Profit", "Charges",
-                       "Net Profit", "Avg Profit / Trade", "Profit Factor"],
-                      [8, 9, 17, 13, 12, 13, 15, 12], rows,
-                      ["@", "0", "0", "#,##0", "#,##0", "#,##0", "#,##0", "0.00"])
-    explain(sheet, row, "WHAT IT MEANS", [
-        "The band cut fee bills by more than 80% by removing pointless churn. 2% was "
-        "picked as the balance between profit-per-trade and total profit. Honesty note: "
-        "because 2% was CHOSEN by looking at this table, these 49 stocks stopped being "
-        "evidence -- that is exactly why the 150-stock out-of-sample test exists.",
-    ])
+    sweeps = [
+        ("the 49 tuning stocks", in_sample, [
+            "The band cut fee bills by more than 80% by removing pointless churn. 2% was "
+            "picked as the balance between profit-per-trade and total profit. Honesty "
+            "note: because 2% was CHOSEN by looking at THIS table, these 49 stocks "
+            "stopped being evidence."]),
+        ("the 150 never-seen stocks -- VALIDATION", out_sample, [
+            "The same sweep on stocks the 2% was never chosen from. The same smooth "
+            "pattern appearing here -- fewer trades, collapsing charges, rising profit "
+            "per trade as the band widens -- means the band captures something real "
+            "about how these rules trade, not a quirk of the 49.",
+            "Discipline note: we look at this table but do NOT re-pick the band from "
+            "it. Choosing the best value from a validation table would just start a "
+            "new round of overfitting on new stocks."]),
+    ]
+    for sweep_label, members, meaning in sweeps:
+        rows = []
+        for band in BANDS:
+            trades = []
+            for symbol in members:
+                try:
+                    trades.extend(backtest.simulate(symbol, band=band))
+                except SystemExit:
+                    pass
+            s = report.stats(f"{band * 100:.1f}%", trades)
+            rows.append([f"{band * 100:.1f}%", s["trades"],
+                         st.median(t["bars_held"] for t in trades) if trades else 0,
+                         s["gross_profit"], s["charges"], s["net_profit"],
+                         s["expectancy"], s["profit_factor"]])
+        row = write_table(sheet, row, f"EMA with different band widths (on {sweep_label})",
+                          ["Band", "Trades", "Median Days Held", "Gross Profit", "Charges",
+                           "Net Profit", "Avg Profit / Trade", "Profit Factor"],
+                          [8, 9, 17, 13, 12, 13, 15, 12], rows,
+                          ["@", "0", "0", "#,##0", "#,##0", "#,##0", "#,##0", "0.00"])
+        row = explain(sheet, row, "WHAT IT MEANS", meaning)
 
     # ---- Portfolio Simulation -------------------------------------------
     sheet = book.create_sheet("Portfolio Simulation")
@@ -356,6 +374,78 @@ def main() -> None:
         "risk can take half the account (see Worst Losses). The lever that feels like "
         "the fix is the trap.",
     ])
+
+    # ---- Risk Map --------------------------------------------------------
+    sheet = book.create_sheet("Risk Map")
+    row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
+        "One simulated account for EVERY combination of starting capital (rows, Rs10,000 "
+        "to Rs10 lakh) and risk-per-trade (columns, 0.5% to 10%) -- 300 separate "
+        "simulations per strategy. Each cell is that account's CAGR: its yearly % "
+        "return over the whole period. 0% risk is not shown because risking nothing "
+        "buys zero shares.",
+        "HOW TO READ IT: green = the account grew each year, red = it shrank. Read a "
+        "row left-to-right to see what raising risk does at your capital level; read a "
+        "column top-to-bottom to see what more capital does at your risk level. The "
+        "charts below each grid plot CAGR against capital at four risk settings.",
+        "The map is bumpy rather than smooth, and that is honest: changing any setting "
+        "changes WHICH trades the account can afford, and a different trade list can "
+        "swing the outcome hard. Treat broad regions as meaningful, single cells as "
+        "noise.",
+    ], span=len(RISK_GRID) + 1)
+    for name in signals:
+        title = sheet.cell(row=row, column=1,
+                           value=f"{name}: CAGR % for every capital x risk combination")
+        title.font = Font(bold=True, size=12)
+        hdr = row + 1
+        corner = sheet.cell(row=hdr, column=1, value="Capital \\ Risk")
+        corner.font = Font(bold=True)
+        corner.fill = HEADER_FILL
+        sheet.column_dimensions["A"].width = 14
+        for j, riskv in enumerate(RISK_GRID, start=2):
+            cell = sheet.cell(row=hdr, column=j, value=f"{riskv * 100:g}%")
+            cell.font = Font(bold=True)
+            cell.fill = HEADER_FILL
+            cell.alignment = Alignment(horizontal="center")
+            sheet.column_dimensions[get_column_letter(j)].width = 7
+        for i, capital in enumerate(CAP_GRID):
+            r_index = hdr + 1 + i
+            cap_cell = sheet.cell(row=r_index, column=1, value=capital)
+            cap_cell.number_format = "#,##0"
+            cap_cell.font = Font(bold=True)
+            for j, riskv in enumerate(RISK_GRID, start=2):
+                result = portfolio.run(signals[name], capital, riskv)
+                cell = sheet.cell(row=r_index, column=j,
+                                  value=round(result["cagr_pct"], 1))
+                cell.number_format = "0.0"
+        last_col = get_column_letter(1 + len(RISK_GRID))
+        data_range = f"B{hdr + 1}:{last_col}{hdr + len(CAP_GRID)}"
+        # Same fixed colour scale on both grids so their colours are comparable.
+        sheet.conditional_formatting.add(data_range, ColorScaleRule(
+            start_type="num", start_value=-25, start_color="F8696B",
+            mid_type="num", mid_value=0, mid_color="FFFFFF",
+            end_type="num", end_value=12, end_color="63BE7B"))
+        chart = LineChart()
+        chart.title = f"{name}: CAGR % vs capital, at four risk levels"
+        chart.y_axis.title = "CAGR %"
+        chart.x_axis.title = "Starting capital (Rs)"
+        chart.height, chart.width = 10, 26
+        categories = Reference(sheet, min_col=1, min_row=hdr + 1,
+                               max_row=hdr + len(CAP_GRID))
+        for riskv in (0.01, 0.02, 0.05, 0.10):
+            j = 2 + RISK_GRID.index(riskv)
+            series = Reference(sheet, min_col=j, min_row=hdr,
+                               max_row=hdr + len(CAP_GRID))
+            chart.add_data(series, titles_from_data=True)
+        chart.set_categories(categories)
+        sheet.add_chart(chart, f"B{hdr + len(CAP_GRID) + 2}")
+        row = hdr + len(CAP_GRID) + 24
+    explain(sheet, row, "WHAT IT MEANS", [
+        "The bottom-left is red for both strategies: small accounts lose at EVERY risk "
+        "setting, and moving right (more risk) makes the red deeper, not lighter. The "
+        "healthy region starts around Rs1,00,000 at low risk and is broadest near "
+        "Rs2,50,000+ at 1-2%. Above that, adding capital changes little -- the "
+        "one-position-per-stock rule, not money, becomes the limit.",
+    ], span=len(RISK_GRID) + 1)
 
     # ---- crash sheets ----------------------------------------------------
     def equity_at(curve, when):
@@ -544,6 +634,7 @@ def main() -> None:
         ("Why does the EMA rule have that 2% buffer?  ->  Band Sweep", False),
         ("How much money would I need? What returns? How bad do the falls get?  ->  "
          "Portfolio Simulation", False),
+        ("Every capital-and-risk combination as one colour-coded picture  ->  Risk Map", False),
         ("What happens in a market crash?  ->  2020 Crash and 2008 Crash", False),
         ("What is the single worst thing that can happen?  ->  Worst Losses", False),
         ("How did one specific stock do?  ->  Per Stock", False),
