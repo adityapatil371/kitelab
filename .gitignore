@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# secrets -- never commit these
+config.local.toml
+data/.access_token.json
+
+# price data: re-downloadable from Kite, hundreds of MB
+data/*.parquet
+data/signal_cache/
+
+# generated artifacts: every workbook is rebuilt by a script
+output/
+
+# the one data/ file that IS committed: levels.json (hand-drawn, unreproducible)

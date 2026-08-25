@@ -1,0 +1,27 @@
+# Copy this file to  config.local.toml  and fill in your own values.
+# Get them from https://developers.kite.trade/apps -> your app.
+# config.local.toml is gitignored. Do not paste these values into a chat window.
+
+[kite]
+api_key    = "your_api_key_here"
+api_secret = "your_api_secret_here"
+
+[universe]
+symbols  = ["HAL", "HINDZINC", "HYUNDAI", "IRFC"]
+exchange = "NSE"
+
+# Wider universe for strategies that need no hand-drawn levels.
+extended = []
+
+[backfill]
+# 15-minute candles are the base. Everything above (30m, 1h, 1d, 1w, 1M) is
+# resampled from them locally.
+start = "2006-01-01"
+intraday_start = "2015-01-01"
+
+# Kite only serves intraday history back a few years, but daily candles go back
+# much further. With this true, daily/weekly/monthly are fetched from Kite's own
+# `day` interval instead of being derived from 15-min bars -- one extra request
+# per symbol, and you keep the full long history on the higher timeframes.
+# Set false for a pure 15-min derivation.
+use_daily_source = true

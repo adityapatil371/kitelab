@@ -1,0 +1,82 @@
+//@version=5
+// EMA Stack strategy (kitelab) — the rule validated in the local backtest:
+//
+//   entry  close is BAND% above the 20-EMA on the monthly, weekly AND daily
+//          timeframes, on the day that first becomes true. Filled at that day's
+//          close ("buy on EOD").
+//   stop   the entry day's low (a gap below it fills at the open — TradingView's
+//          stop orders behave the same way as the backtest's convention).
+//   exit   close falls BAND% below ANY of the three EMAs → sell at that close.
+//   sizing Rs 100,000 fixed capital, 1% risk per trade, position capped by capital.
+//
+// Apply this on a DAILY chart of an NSE symbol. On any other timeframe it
+// deliberately takes no trades and shows a warning.
+//
+// The weekly and monthly EMAs are FORMING-BAR values, rebuilt by hand here:
+//     ema_today = alpha*close + (1-alpha) * ema(last COMPLETED higher-TF bar)
+// which is what a trader sees mid-week, and exactly what the backtest used.
+// request.security with [1] + lookahead_on is the standard non-repainting idiom
+// for "last completed higher-timeframe value".
+//
+// Known small mismatches vs the local backtest (expect a few markers to differ):
+//   * ta.ema seeds with an SMA; pandas ewm(adjust=False) seeds with the first
+//     close — earliest years of a symbol's history can disagree slightly.
+//   * TradingView's data feed is not Kite's; prices can differ by paise.
+//   * Commission here is a flat approximation of Zerodha delivery charges.
+
+strategy("EMA Stack (kitelab)",
+     overlay = true,
+     initial_capital = 100000,
+     pyramiding = 0,
+     calc_on_every_tick = false,
+     process_orders_on_close = true,          // entries/exits fill at the signal bar's close
+     commission_type = strategy.commission.percent,
+     commission_value = 0.11)                 // ~Zerodha delivery: STT+txn+stamp per side
+
+lengthInput = input.int(20, "EMA length", minval = 2)
+bandInput   = input.float(2.0, "Hysteresis band %", minval = 0.0, step = 0.5)
+riskInput   = input.float(1.0, "Risk % of capital", minval = 0.1, step = 0.5)
+
+alpha = 2.0 / (lengthInput + 1)
+
+emaDaily = ta.ema(close, lengthInput)
+weekDone  = request.security(syminfo.tickerid, "W", ta.ema(close, lengthInput)[1],
+     lookahead = barmerge.lookahead_on)
+monthDone = request.security(syminfo.tickerid, "M", ta.ema(close, lengthInput)[1],
+     lookahead = barmerge.lookahead_on)
+emaWeekly  = alpha * close + (1 - alpha) * weekDone
+emaMonthly = alpha * close + (1 - alpha) * monthDone
+
+upper = 1 + bandInput / 100
+lower = 1 - bandInput / 100
+entryOk = close > emaDaily * upper and close > emaWeekly * upper and close > emaMonthly * upper
+exitOk  = close < emaDaily * lower or  close < emaWeekly * lower or  close < emaMonthly * lower
+freshSignal = entryOk and not entryOk[1]
+
+// Fixed-capital sizing, matching the backtest: every trade sized off the same base.
+var float stopPrice = na
+riskBudget   = strategy.initial_capital * riskInput / 100
+perShareRisk = close - low
+qtyByRisk    = perShareRisk > 0 ? math.floor(riskBudget / perShareRisk) : 0
+qtyByCapital = math.floor(strategy.initial_capital / close)
+qty          = math.min(qtyByRisk, qtyByCapital)
+
+if timeframe.isdaily and freshSignal and strategy.position_size == 0 and qty >= 1
+    stopPrice := low
+    strategy.entry("L", strategy.long, qty = qty)
+
+if strategy.position_size > 0
+    strategy.exit("stop", "L", stop = stopPrice)
+    if exitOk
+        strategy.close("L", comment = "ema break")
+
+plot(emaDaily,   "EMA20 daily",   color = color.new(#4fc3f7, 0))
+plot(emaWeekly,  "EMA20 weekly",  color = color.new(#ffb74d, 0))
+plot(emaMonthly, "EMA20 monthly", color = color.new(#ce93d8, 0))
+plot(strategy.position_size > 0 ? stopPrice : na, "stop",
+     color = color.new(#ef5350, 0), style = plot.style_linebr)
+
+var table warn = table.new(position.top_center, 1, 1)
+if barstate.islast and not timeframe.isdaily
+    table.cell(warn, 0, 0, "EMA Stack runs on the DAILY timeframe only — switch to 1D",
+         bgcolor = color.new(#ef5350, 20), text_color = color.white)
