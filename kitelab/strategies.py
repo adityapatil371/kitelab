@@ -341,7 +341,20 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
         return None
 
     trades: list[dict] = []
+    intraday_start = bars["ts"].min() if len(bars) else None
+    daily_close = daily["close"].to_numpy()
+    daily_ts = daily["ts"].to_numpy()
     for price, armed_on in ath_levels(daily, pullback):
+        # Daily history reaches back to 2006 but intraday only to 2015. A level armed
+        # pre-2015 whose FIRST daily break also happened pre-2015 is already dead --
+        # scanning post-2015 intraday for "the first crossing" would fire on some later
+        # incidental cross (often a bounce inside a decline), which is exactly the
+        # not-a-breakout error this strategy exists to avoid. Skip such levels.
+        after = (daily_ts > armed_on.to_numpy()) & (daily_close > price)
+        if after.any():
+            first_daily_break = daily_ts[after.argmax()]
+            if intraday_start is not None and first_daily_break < intraday_start.to_numpy():
+                continue
         active = bars[bars["ts"] > armed_on].reset_index(drop=True)
         if len(active) < 2:
             continue
