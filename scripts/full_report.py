@@ -27,6 +27,10 @@ RISKS = [0.01, 0.02, 0.03, 0.05, 0.10]
 BANDS = [0.0, 0.005, 0.01, 0.02, 0.03, 0.05]
 PEAK, BOTTOM, YEAREND = (pd.Timestamp("2020-01-14"), pd.Timestamp("2020-03-23"),
                          pd.Timestamp("2020-12-31"))
+# The 2008 grinding bear: Nifty peaked 8 Jan 2008 and bottomed 27 Oct 2008, roughly
+# -60%, with the recovery taking well into 2009 -- the opposite shape to COVID's V.
+PEAK08, BOTTOM08, END09 = (pd.Timestamp("2008-01-08"), pd.Timestamp("2008-10-27"),
+                           pd.Timestamp("2009-12-31"))
 
 _TURNOVER: dict[str, float] = {}
 
@@ -211,47 +215,64 @@ def main() -> None:
         "Above ~Rs2.5 lakh, adding money buys nothing -- the one-position-per-stock rule "
         "binds, not cash."))
 
-    # ---- 2020 crash ------------------------------------------------------
-    sheet = book.create_sheet("2020 Crash")
+    # ---- crash windows ---------------------------------------------------
     def equity_at(curve, when):
         prior = [e for ts, e in curve if ts <= when]
         return prior[-1] if prior else (curve[0][1] if curve else 0)
-    rows = []
-    for name in signals:
-        r = portfolio.run(signals[name], 250_000, 0.01)
-        e_peak = equity_at(r["curve"], PEAK)
-        e_bot = equity_at(r["curve"], BOTTOM)
-        e_end = equity_at(r["curve"], YEAREND)
-        rows.append([name, e_peak, e_bot, 100 * (e_bot / e_peak - 1),
-                     e_end, 100 * (e_end / e_peak - 1)])
-    crash, recovery = [], []
-    for symbol in everything:
-        try:
-            daily = frames.daily(symbol)
-        except SystemExit:
-            continue
-        if daily["ts"].iloc[0] > PEAK:
-            continue
-        def px(when):
-            sub = daily[daily.ts <= when]
-            return float(sub["close"].iloc[-1]) if len(sub) else None
-        a, b, c = px(PEAK), px(BOTTOM), px(YEAREND)
-        if a and b and c:
-            crash.append(100 * (b / a - 1))
-            recovery.append(100 * (c / a - 1))
-    rows.append([f"BUY & HOLD (median, {len(crash)} stocks)", None, None,
-                 st.median(crash) if crash else 0, None,
-                 st.median(recovery) if recovery else 0])
-    row = write_table(sheet, 1, "COVID crash: 14 Jan 2020 peak -> 23 Mar bottom -> 31 Dec 2020",
-                      ["Strategy", "Equity at Peak", "Equity at Bottom", "Peak->Bottom %",
-                       "Equity Year End", "Peak->Year End %"],
-                      [30, 14, 15, 14, 15, 15], rows,
-                      ["@", "#,##0", "#,##0", "0.0", "#,##0", "0.0"])
-    sheet.cell(row=row, column=1, value=(
-        "The one bear market in the data. Buy-and-hold fell ~40%; the strategies were "
-        "roughly flat to positive through it -- the stop/trend mechanism doing its job. "
-        "They then lagged the V-shaped recovery, which is the worst possible shape for "
-        "trend-following. A long grinding bear (2008-style) is NOT in this data."))
+
+    def buy_hold_window(peak, bottom, end):
+        crash, recovery, count = [], [], 0
+        for symbol in everything:
+            try:
+                daily = frames.daily(symbol)
+            except SystemExit:
+                continue
+            if daily["ts"].iloc[0] > peak:
+                continue
+            def px(when):
+                sub = daily[daily.ts <= when]
+                return float(sub["close"].iloc[-1]) if len(sub) else None
+            a, b, c = px(peak), px(bottom), px(end)
+            if a and b and c:
+                count += 1
+                crash.append(100 * (b / a - 1))
+                recovery.append(100 * (c / a - 1))
+        return crash, recovery, count
+
+    def crash_sheet(title, sheet_name, peak, bottom, end, strategy_names, note):
+        sheet = book.create_sheet(sheet_name)
+        rows = []
+        for name in strategy_names:
+            r = portfolio.run(signals[name], 250_000, 0.01)
+            e_peak = equity_at(r["curve"], peak)
+            e_bot = equity_at(r["curve"], bottom)
+            e_end = equity_at(r["curve"], end)
+            rows.append([name, e_peak, e_bot, 100 * (e_bot / e_peak - 1),
+                         e_end, 100 * (e_end / e_peak - 1)])
+        crash, recovery, count = buy_hold_window(peak, bottom, end)
+        rows.append([f"BUY & HOLD (median, {count} stocks)", None, None,
+                     st.median(crash) if crash else 0, None,
+                     st.median(recovery) if recovery else 0])
+        last = write_table(sheet, 1, title,
+                           ["Strategy", "Equity at Peak", "Equity at Bottom",
+                            "Peak->Bottom %", "Equity at Window End", "Peak->End %"],
+                           [30, 14, 15, 14, 16, 15], rows,
+                           ["@", "#,##0", "#,##0", "0.0", "#,##0", "0.0"])
+        sheet.cell(row=last, column=1, value=note)
+
+    crash_sheet("COVID crash: 14 Jan 2020 peak -> 23 Mar bottom -> 31 Dec 2020",
+                "2020 Crash", PEAK, BOTTOM, YEAREND, list(signals),
+                "A V-shaped crash -- the worst possible shape for trend-following, which "
+                "sells into the fall and re-enters late. Buy-and-hold fell ~40% "
+                "peak-to-bottom; the strategies were roughly flat to positive through it.")
+    crash_sheet("2008 bear: 8 Jan 2008 peak -> 27 Oct 2008 bottom -> 31 Dec 2009",
+                "2008 Crash", PEAK08, BOTTOM08, END09, ["EMA"],
+                "The grinding ten-month bear, EMA ONLY: the breakout strategy enters on "
+                "30-minute candles and Kite serves no intraday data before 2015, so it "
+                "cannot be tested here. Survivorship bias is at its strongest in this "
+                "window -- companies that 2008 killed are absent from the universe, which "
+                "flatters buy-and-hold especially. The EMA portfolio equity also reflects "
+                "only ~2 years of pre-crash trading history.")
 
     # ---- Worst losses ----------------------------------------------------
     sheet = book.create_sheet("Worst Losses")
@@ -325,10 +346,18 @@ def main() -> None:
         ("9. In the one crash in the data (COVID 2020), buy-and-hold fell ~40% while the "
          "strategies were roughly flat to positive -- the protection is real. See 2020 Crash.", False),
         ("", False),
+        ("10. With daily history deepened to 2006, the EMA rule was re-tested across the "
+         "2008 collapse and the 2010-13 sideways grind -- its out-of-sample profit factor "
+         "held. See 2008 Crash for the window itself. The breakout cannot be tested "
+         "pre-2015 (no intraday data exists), but deeper history corrected its levels: "
+         "false post-2015 'all-time highs' were removed, raising its quality.", False),
+        ("", False),
         ("CAVEATS THAT STILL STAND", True),
         ("Survivorship: the universe is today's instrument list; companies that died are "
-         "invisible, flattering everything. Slippage is not modelled. One market, one "
-         "mostly-bull decade. No 2008-style grinding bear exists in this data.", False),
+         "invisible -- and 2008 killed many, so the 2008 sheet flatters buy-and-hold "
+         "most of all. Slippage is not modelled. One market (India). Daily data spans "
+         "2006-2026 for ~74 stocks and less for the rest; intraday, and therefore the "
+         "breakout strategy, begins in 2015.", False),
     ]
     for row_index, (text, bold) in enumerate(story, start=1):
         cell = sheet.cell(row=row_index, column=1, value=text)
