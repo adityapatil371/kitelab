@@ -152,6 +152,10 @@ def monthly(day_frame: pd.DataFrame) -> pd.DataFrame:
     return _group_daily(day_frame, day_frame["ts"].dt.to_period("M"))
 
 
+def quarterly(day_frame: pd.DataFrame) -> pd.DataFrame:
+    return _group_daily(day_frame, day_frame["ts"].dt.to_period("Q"))
+
+
 def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -> pd.DataFrame:
     """Return OHLCV for a symbol at one of TIMEFRAMES."""
     if timeframe not in TIMEFRAMES:
