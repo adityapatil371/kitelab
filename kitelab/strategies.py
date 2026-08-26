@@ -97,8 +97,8 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
     if risk <= 0:
         return None
     shares, risk_taken, capped = sizing.position(entry_price, stop)
-    if shares < 1:
-        return None  # one share would already exceed the risk budget or the capital
+    if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
+        return None  # position not viable within the risk budget / capital
     if trail_step is not None:
         # Swing-low trail: no target, the trade ends when the ratcheting stop is hit.
         target = None

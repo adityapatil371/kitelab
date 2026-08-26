@@ -21,6 +21,10 @@ import math
 CAPITAL = 100_000.0    # account size
 RISK_PCT = 0.01        # 1% of it per trade
 
+# Bitcoin trades in fractions; a whole-coin minimum would reject every signal once
+# the price exceeds the account. When True, position() returns fractional units.
+FRACTIONAL = False
+
 
 def risk_budget() -> float:
     return CAPITAL * RISK_PCT
@@ -31,6 +35,11 @@ def position(entry_price: float, stop: float) -> tuple[int, float, bool]:
     per_share_risk = entry_price - stop
     if per_share_risk <= 0 or entry_price <= 0:
         return 0, 0.0, False
+    if FRACTIONAL:
+        by_risk = risk_budget() / per_share_risk
+        by_capital = CAPITAL / entry_price
+        units = round(min(by_risk, by_capital), 6)
+        return units, units * per_share_risk, by_capital < by_risk
     by_risk = math.floor(risk_budget() / per_share_risk)
     by_capital = math.floor(CAPITAL / entry_price)
     shares = min(by_risk, by_capital)

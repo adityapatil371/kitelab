@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 
+from . import sizing
 from .backtest import charges
 
 
@@ -57,10 +58,15 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         per_share_risk = trade["entry_price"] - trade["stop"]
         if per_share_risk <= 0:
             continue
-        by_risk = math.floor(equity * risk_pct / per_share_risk)
-        by_cash = math.floor(cash / trade["entry_price"])
-        shares = min(by_risk, by_cash)
-        if shares < 1:
+        if sizing.FRACTIONAL:
+            by_risk = equity * risk_pct / per_share_risk
+            by_cash = cash / trade["entry_price"]
+            shares = round(min(by_risk, by_cash), 6)
+        else:
+            by_risk = math.floor(equity * risk_pct / per_share_risk)
+            by_cash = math.floor(cash / trade["entry_price"])
+            shares = min(by_risk, by_cash)
+        if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
             if by_risk < 1:
                 skipped_size += 1      # 1% of equity cannot cover even one share's risk
             else:

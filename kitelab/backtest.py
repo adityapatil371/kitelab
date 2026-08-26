@@ -65,9 +65,17 @@ INTRADAY_STAMP_RATE = 0.00003      # 0.003%, buy side only
 # and no DP charge, because nothing reaches the demat account.
 
 
+# When set, replaces the whole Zerodha equity model with a flat rate on turnover.
+# Used for the class assets: crypto exchange fees, index futures, MCX -- none of
+# which pay equity STT or demat charges. None = normal Zerodha equity model.
+FLAT_FEE_RATE: float | None = None
+
+
 def charges(buy_value: float, sell_value: float, intraday: bool = False) -> float:
     """Round-trip cost. Intraday is roughly half of delivery, mostly because STT drops
     from 0.1% on both sides to 0.025% on the sell side alone."""
+    if FLAT_FEE_RATE is not None:
+        return FLAT_FEE_RATE * (buy_value + sell_value)
     turnover = buy_value + sell_value
     transaction = NSE_TXN_RATE * turnover
     sebi = SEBI_RATE * turnover
@@ -173,7 +181,7 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         exit_index, exit_price, reason = exit_at
         risk = entry_price - stop
         shares, risk_taken, capped = sizing.position(entry_price, stop)
-        if shares < 1:
+        if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
             position = exit_index + 1
             continue
         buy_value = entry_price * shares
