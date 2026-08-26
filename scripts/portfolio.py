@@ -58,7 +58,11 @@ def main() -> None:
             skipped = r["skipped_cash"] + r["skipped_size"] + r["skipped_busy"]
             print(f"    {capital:>10,.0f} {r['final']:>12,.0f} {r['return_pct']:>9,.0f}% "
                   f"{r['cagr_pct']:>7.1f}% {r['max_drawdown_pct']:>9.1f}% "
-                  f"{r['taken']:>7,} {skipped:>8,} {r['max_concurrent']:>7}")
+                  f"{len(r['taken']):>7,} {skipped:>8,} {r['max_concurrent']:>7}")
+            dd_when = (f"{r['dd_peak_date'].date()} -> {r['dd_trough_date'].date()}"
+                       if r["dd_trough_date"] is not None else "n/a")
+            print(f"    {'':>10} maxDD is daily mark-to-market ({dd_when}); "
+                  f"old at-cost method said {r['legacy_max_drawdown_pct']:.1f}%")
             print(f"    {'':>10} skipped: {r['skipped_size']:,} too small to size, "
                   f"{r['skipped_cash']:,} no cash, {r['skipped_busy']:,} already holding it"
                   f"   over {r['years']:.1f} years")
