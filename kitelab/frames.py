@@ -159,6 +159,12 @@ def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -
     if timeframe == "15m":
         return base_15m(symbol)
     if timeframe == "30m":
+        # Assets fetched with native 30-minute bars (Bitcoin: 24/7 market, Binance
+        # serves 30m directly and NSE-session resampling makes no sense there) are
+        # loaded as-is instead of being rebuilt from 15m.
+        native = _path(symbol, "30minute")
+        if native.exists():
+            return pd.read_parquet(native).sort_values("ts").reset_index(drop=True)
         return _resample_intraday(base_15m(symbol), 30)
     if timeframe == "1h":
         return _resample_intraday(base_15m(symbol), 60)

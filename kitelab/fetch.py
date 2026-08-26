@@ -87,7 +87,8 @@ def _to_frame(candles: list[dict]) -> pd.DataFrame:
 
 
 def fetch_interval(kite, symbol: str, token: int, interval: str,
-                   start: str, throttle: Throttle) -> pd.DataFrame:
+                   start: str, throttle: Throttle,
+                   continuous: bool = False) -> pd.DataFrame:
     """Fetch one interval for one symbol, resuming from whatever is already on disk."""
     target = path_for(symbol, interval)
     existing = pd.read_parquet(target) if target.exists() else pd.DataFrame(columns=COLUMNS)
@@ -118,7 +119,8 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
         while cursor <= range_end:
             chunk_end = min(cursor + timedelta(days=span - 1), range_end)
             throttle.wait()
-            candles = kite.historical_data(token, cursor, chunk_end, interval)
+            candles = kite.historical_data(token, cursor, chunk_end, interval,
+                                           continuous=continuous)
             requests += 1
             chunks.append(_to_frame(candles))
             cursor = chunk_end + timedelta(days=1)
