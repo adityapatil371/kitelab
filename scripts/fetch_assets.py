@@ -111,6 +111,10 @@ def fetch_commodities(kite, throttle) -> None:
         dump = pd.read_parquet(cache)
     else:
         dump = pd.DataFrame(kite.instruments("MCX"))
+        # MCX rows carry real expiry dates as Python date objects, which pyarrow
+        # refuses to serialize (the NSE dump never hit this -- equities have blank
+        # expiries). Store as ISO strings.
+        dump["expiry"] = dump["expiry"].astype(str)
         dump.to_parquet(cache, index=False)
         print(f"  cached {len(dump):,} MCX instruments -> {cache.name}")
 
