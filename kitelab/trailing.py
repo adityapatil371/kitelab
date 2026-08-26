@@ -68,24 +68,47 @@ def daily_trail(daily: pd.DataFrame, pivots: list[int], stamps, span: int = PIVO
     return make
 
 
-def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step):
-    """Walk forward, ratcheting the stop. Returns (position, price, reason, final_stop)."""
+def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
+            entry_price: float | None = None, scale_out: str | None = None):
+    """Walk forward, ratcheting the stop.
+
+    scale_out (needs entry_price):
+        "half"    -- sell half the position at entry + 1R, rest runs unchanged
+        "half_be" -- same, and the stop on the remainder jumps to breakeven
+    Same-bar ambiguity resolves to the STOP, the conservative reading throughout
+    this project.
+
+    Returns (position, exit_price, reason, final_stop, banked_fraction, banked_price)
+    where banked_fraction is 0.0 (no scale-out happened) or 0.5.
+    """
     open_ = bars["open"].to_numpy()
+    high = bars["high"].to_numpy()
     low = bars["low"].to_numpy()
     close = bars["close"].to_numpy()
 
     stop = initial_stop
+    trigger = (entry_price + (entry_price - initial_stop)
+               if scale_out and entry_price is not None else None)
+    banked_fraction, banked_price = 0.0, 0.0
     for position in range(entry_pos, len(bars)):
         if low[position] <= stop:
             gapped = open_[position] < stop
             moved = stop > initial_stop
             reason = ("gap through stop" if gapped
                       else ("trailing stop" if moved else "initial stop"))
-            return position, (float(open_[position]) if gapped else stop), reason, stop
+            return (position, (float(open_[position]) if gapped else stop), reason,
+                    stop, banked_fraction, banked_price)
+        if trigger is not None and banked_fraction == 0.0 and high[position] >= trigger:
+            # A gap ABOVE the trigger sells at the open -- a better fill, and real.
+            banked_price = max(trigger, float(open_[position]))
+            banked_fraction = 0.5
+            if scale_out == "half_be":
+                stop = max(stop, entry_price)
         stop = step(position, stop, float(low[position]))
 
     last = len(bars) - 1
-    return last, float(close[last]), "open (marked to market)", stop
+    return (last, float(close[last]), "open (marked to market)", stop,
+            banked_fraction, banked_price)
 
 
 def pivot_lows(frame: pd.DataFrame, span: int = PIVOT_SPAN) -> list[int]:

@@ -143,7 +143,7 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
 
 
 def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
-             band: float = BAND) -> list[dict]:
+             band: float = BAND, scale_out: str | None = None) -> list[dict]:
     """Walk the signal series and produce closed trades, oldest first."""
     signal = ema_stack_signal(symbol, length, band)
     entry_ok = signal["entry_ok"].to_numpy()
@@ -164,13 +164,23 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         stop = float(low[position])
         exit_at = None
 
+        # scale_out: sell half at entry + 1R ("half"), optionally moving the stop on
+        # the remainder to breakeven ("half_be"). Same-bar ambiguity goes to the stop.
+        risk0 = entry_price - stop
+        trigger = entry_price + risk0 if scale_out and risk0 > 0 else None
+        current_stop = stop
+        banked_fraction = banked_price = 0.0
         for step in range(position + 1, total):
-            if low[step] <= stop:
-                # A gap straight through the stop fills at the open, not the stop.
-                gapped = open_[step] < stop
-                exit_at = (step, float(open_[step]) if gapped else stop,
+            if low[step] <= current_stop:
+                gapped = open_[step] < current_stop
+                exit_at = (step, float(open_[step]) if gapped else current_stop,
                            "gap through stop" if gapped else "stop")
                 break
+            if trigger is not None and banked_fraction == 0.0 and high[step] >= trigger:
+                banked_price = max(trigger, float(open_[step]))
+                banked_fraction = 0.5
+                if scale_out == "half_be":
+                    current_stop = max(current_stop, entry_price)
             if exit_ok[step]:
                 exit_at = (step, float(close[step]), "ema break")
                 break
@@ -185,8 +195,13 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             position = exit_index + 1
             continue
         buy_value = entry_price * shares
-        sell_value = exit_price * shares
-        gross = (exit_price - entry_price) * shares
+        banked_shares = shares * banked_fraction
+        remaining = shares - banked_shares
+        sell_value = banked_price * banked_shares + exit_price * remaining
+        gross = ((banked_price - entry_price) * banked_shares
+                 + (exit_price - entry_price) * remaining)
+        if banked_fraction:
+            reason = reason + " (half banked at 1R)"
         same_session = stamps[position].date() == stamps[exit_index].date()
         cost = charges(buy_value, sell_value)
         cost_best = charges(buy_value, sell_value, intraday=same_session)
@@ -220,8 +235,7 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             "shares": shares,
             "cost_of_entry": buy_value,
             "gross_profit": gross,
-            "r_multiple": ((exit_price - entry_price) * shares / risk_taken)
-                          if risk_taken else 0.0,
+            "r_multiple": (gross / risk_taken) if risk_taken else 0.0,
             "charges": cost,
             "net_profit": gross - cost,
             "months_done": int(signal["months_done"].iloc[position]),

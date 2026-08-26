@@ -92,18 +92,20 @@ def _trigger_entry(bars: pd.DataFrame, signal_pos: int, trigger_price: float):
 
 def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
                  entry_pos, entry_price, stop, max_hold: int,
-                 trail_step=None) -> dict | None:
+                 trail_step=None, scale_out: str | None = None) -> dict | None:
     risk = entry_price - stop
     if risk <= 0:
         return None
     shares, risk_taken, capped = sizing.position(entry_price, stop)
     if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
         return None  # position not viable within the risk budget / capital
+    banked_fraction, banked_price = 0.0, 0.0
     if trail_step is not None:
         # Swing-low trail: no target, the trade ends when the ratcheting stop is hit.
         target = None
-        exit_pos, exit_price, reason, final_stop = trailing.resolve(
-            bars, entry_pos, stop, trail_step)
+        (exit_pos, exit_price, reason, final_stop,
+         banked_fraction, banked_price) = trailing.resolve(
+            bars, entry_pos, stop, trail_step, entry_price, scale_out)
     else:
         target = entry_price + REWARD_RATIO * risk
         resolved = _resolve_exit(bars, entry_pos, stop, target, max_hold)
@@ -113,8 +115,14 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         final_stop = stop
 
     entry_ts, exit_ts = bars.iloc[entry_pos]["ts"], bars.iloc[exit_pos]["ts"]
-    buy_value, sell_value = entry_price * shares, exit_price * shares
-    gross = (exit_price - entry_price) * shares
+    buy_value = entry_price * shares
+    banked_shares = shares * banked_fraction
+    remaining = shares - banked_shares
+    sell_value = banked_price * banked_shares + exit_price * remaining
+    gross = ((banked_price - entry_price) * banked_shares
+             + (exit_price - entry_price) * remaining)
+    if banked_fraction:
+        reason = reason + " (half banked at 1R)"
     # Whether a same-day round trip is billed at intraday or delivery rates depends on
     # how the broker classifies it, so carry both and let the report show the range.
     same_session = entry_ts.date() == exit_ts.date()
@@ -147,8 +155,7 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         "exit_reason": reason,
         "bars_held": exit_pos - entry_pos,
         "gross_profit": gross,
-        "r_multiple": ((exit_price - entry_price) * shares / risk_taken)
-                      if risk_taken else 0.0,
+        "r_multiple": (gross / risk_taken) if risk_taken else 0.0,
         "charges": cost,
         "net_profit": gross - cost,
         "same_session": same_session,
@@ -319,7 +326,8 @@ def ath_levels(daily: pd.DataFrame, pullback: float = ATH_PULLBACK) -> list[tupl
 
 def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                         pullback: float = ATH_PULLBACK,
-                        timeframe: str = TIMEFRAME) -> list[dict]:
+                        timeframe: str = TIMEFRAME,
+                        scale_out: str | None = None) -> list[dict]:
     """Breakouts to new all-time highs, detected automatically.
 
     timeframe="1d" runs entries on daily bars instead of 30-minute ones. That is a
@@ -375,7 +383,7 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                 break
             trade = _build_trade(symbol, active, price, "all-time high", position,
                                  entry_pos, entry_price, stop, BREAKOUT_HOLD_BARS,
-                                 make_trail() if make_trail else None)
+                                 make_trail() if make_trail else None, scale_out)
             if trade:
                 trades.append(trade)
             break   # one trade per armed level; the next needs a fresh pullback
