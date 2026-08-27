@@ -140,30 +140,50 @@ if strategy.position_size > 0
         strategy.close("L", comment = "stop (close)")
 
 // --- drawing ----------------------------------------------------------------
-// The three EMAs, and the stop while a trade is open, drawn on the price
-// chart so every entry/exit marker can be read against the rule.
+// The three EMAs on the price chart, so every trade marker can be read
+// against the rule.
 plot(emaBase, "EMA20 · chart timeframe",  color = color.new(#4fc3f7, 0))
 plot(emaMid,  "EMA20 · one step up",      color = color.new(#ffb74d, 0))
 plot(emaTop,  "EMA20 · two steps up",     color = color.new(#ce93d8, 0))
-plot(strategy.position_size > 0 ? stopPrice : na, "stop",
-     color = color.new(#ef5350, 0), style = plot.style_linebr)
 
-// The 2% band lines — WHERE THE RULE ACTUALLY BITES. Raw EMAs alone make
-// trades look mistimed, because signals fire 2% away from them:
-//   * ENTRY needs a close above ALL THREE upper bands, so the one that
-//     matters is the HIGHEST of the three: the green line. A close above
-//     green = entry territory.
+// WHERE THE RULE ACTUALLY BITES — the 2% zones around the HIGHEST EMA.
+// Raw EMAs alone make trades look mistimed, because signals fire 2% away:
+//   * ENTRY needs a close above ALL THREE upper bands, so the binding line
+//     is 2% above the HIGHEST of the three. The GREEN ZONE is that last 2%:
+//     a close above the green zone's top = entry territory.
 //   * EXIT fires on a close below ANY lower band; walking down, the first
-//     one you can break is the HIGHEST of the three lowers: the red line.
-//     A close below red = exit territory.
-// Between the two lines is the dead zone (hysteresis): already-open trades
-// are held there, but nothing new triggers.
+//     one you can break is 2% below the highest EMA. The RED ZONE is that
+//     2%: a close below the red zone's bottom = exit territory.
 highestEma = math.max(emaBase, math.max(emaMid, emaTop))
-entryLine = plot(highestEma * upper, "entry line (2% above highest EMA)",
-     color = color.new(#26a69a, 30), style = plot.style_line, linewidth = 1)
-exitLine  = plot(highestEma * lower, "exit line (2% below highest EMA)",
-     color = color.new(#ef5350, 30), style = plot.style_line, linewidth = 1)
-fill(entryLine, exitLine, color = color.new(#898781, 92), title = "dead zone")
+emaLine   = plot(highestEma,        "highest EMA (binding)", color = color.new(#898781, 100))
+entryLine = plot(highestEma * upper, "entry line (2% above)", color = color.new(#26a69a, 35))
+exitLine  = plot(highestEma * lower, "exit line (2% below)",  color = color.new(#ef5350, 35))
+fill(entryLine, emaLine, color = color.new(#26a69a, 88), title = "2% above zone")
+fill(emaLine, exitLine,  color = color.new(#ef5350, 90), title = "2% below zone")
+
+// --- on-chart name tags -----------------------------------------------------
+// One small label at the right edge of each line, so nobody has to guess
+// which line is which. Created once ('var'), moved to the latest bar's
+// values on every update.
+baseName = isHourly ? "hourly" : timeframe.isdaily ? "daily" : "weekly"
+midName  = isHourly ? "daily"  : timeframe.isdaily ? "weekly" : "monthly"
+topName  = isHourly ? "weekly" : timeframe.isdaily ? "monthly" : "quarterly"
+var label tagBase  = label.new(na, na, style = label.style_label_left, textcolor = color.white, color = color.new(#4fc3f7, 20), size = size.small)
+var label tagMid   = label.new(na, na, style = label.style_label_left, textcolor = color.white, color = color.new(#ffb74d, 20), size = size.small)
+var label tagTop   = label.new(na, na, style = label.style_label_left, textcolor = color.white, color = color.new(#ce93d8, 20), size = size.small)
+var label tagEntry = label.new(na, na, style = label.style_label_left, textcolor = color.white, color = color.new(#26a69a, 20), size = size.small)
+var label tagExit  = label.new(na, na, style = label.style_label_left, textcolor = color.white, color = color.new(#ef5350, 20), size = size.small)
+if barstate.islast
+    label.set_xy(tagBase, bar_index + 1, emaBase)
+    label.set_text(tagBase, "EMA20 " + baseName)
+    label.set_xy(tagMid, bar_index + 1, emaMid)
+    label.set_text(tagMid, "EMA20 " + midName)
+    label.set_xy(tagTop, bar_index + 1, emaTop)
+    label.set_text(tagTop, "EMA20 " + topName)
+    label.set_xy(tagEntry, bar_index + 1, highestEma * upper)
+    label.set_text(tagEntry, "BUY above (+2%)")
+    label.set_xy(tagExit, bar_index + 1, highestEma * lower)
+    label.set_text(tagExit, "SELL below (-2%)")
 
 // --- status banner ----------------------------------------------------------
 // Always says which stack is running — or warns when the chart timeframe is
