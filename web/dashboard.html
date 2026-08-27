@@ -158,6 +158,8 @@
         <svg id="riskbars" viewBox="0 0 360 120"></svg>
         <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
         <svg id="riskdd" viewBox="0 0 360 120"></svg>
+        <h2 style="margin-top:0.7rem">CAGR by strategy stack</h2>
+        <svg id="stackbars" viewBox="0 0 360 120"></svg>
       </div>
 
       <div class="card span8">
@@ -234,26 +236,6 @@
       </div>
     </div>
 
-    <div class="canvas page" id="page-timeframes">
-      <div class="card span12">
-        <div class="card-head">
-          <div><h2>Same rule, three timeframe stacks</h2>
-          <div class="sub">Q/M/W trades weekly closes, M/W/D daily (the class strategy), W/D/H hourly. Five assigned stocks · gross ·
-            fixed ₹1L · common window per stock (hourly data exists only from 2015). Going UP a timeframe makes each trade better
-            but rarer; going DOWN makes each trade worse but far more frequent — and charges multiply with trade count.</div></div>
-          <div class="tabs" id="tf-tabs"></div>
-        </div>
-        <div class="table-scroll"><table id="tf-table"></table></div>
-      </div>
-      <div class="card span12">
-        <h2>The six class assets, by timeframe stack</h2>
-        <div class="sub">Net per asset across its full history (100,000 units, 1% risk, flat fees). W/D/H needs hourly bars,
-          which exist only for Bitcoin and the two indices — MCX futures have daily data only.
-          For the 199-stock ACCOUNTS on each stack, use the Portfolio page: the Strategy slicer now has all three EMA stacks.</div>
-        <div class="table-scroll"><table id="tf-assets"></table></div>
-      </div>
-    </div>
-
   </main>
 </div>
 <div class="tip" id="tip"></div>
@@ -269,7 +251,7 @@ const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx:
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
-               ["assets", "Futures & assets"], ["timeframes", "Timeframes"]];
+               ["assets", "Futures & assets"]];
 
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { DATA = d; init(); })
@@ -308,13 +290,6 @@ function init() {
     $("logbtn").setAttribute("aria-pressed", state.log);
     renderPortfolio();
   });
-  for (const key of Object.keys(DATA.timeframes)) {
-    const b = document.createElement("button");
-    b.textContent = DATA.timeframes[key].label; b.dataset.key = key;
-    b.addEventListener("click", () => { state.tf = key; renderTF(); });
-    $("tf-tabs").appendChild(b);
-  }
-  renderTF();
   setPage("portfolio");
 }
 
@@ -403,6 +378,12 @@ function renderPortfolio() {
   barChart($("riskdd"), DATA.risks.map((rk, i) => ({
     label: rk + "%", value: runFor(i, state.capIdx).maxdd, on: i === state.riskIdx
   })), "var(--dd)", v => v.toFixed(0) + "%");
+  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", wdh: "W/D/H", brk: "Brk" };
+  barChart($("stackbars"), Object.keys(stackNames).map(k => ({
+    label: stackNames[k],
+    value: DATA.grid[`${k}|${state.uni}|${DATA.risks[state.riskIdx]}|${DATA.capitals[state.capIdx]}`].cagr,
+    on: k === state.strat
+  })), "var(--equity)", v => v.toFixed(1) + "%");
   renderEpisodes(r);
   renderScaleout();
 }
@@ -512,40 +493,6 @@ function renderAsset() {
   tradesTable($("a-table"), block.trades);
 }
 
-// ================================================== timeframes page ====
-function renderTF() {
-  for (const b of $("tf-tabs").children) b.classList.toggle("on", b.dataset.key === state.tf);
-  const t = DATA.timeframes[state.tf];
-  const maxG = Math.max(...t.rows.map(r => Math.abs(r.gross)), 1);
-  $("tf-table").innerHTML =
-    `<thead><tr><th>Stock</th><th>Trades</th><th>Win</th><th>Avg win ₹</th><th>Avg loss ₹</th><th>Expectancy ₹</th><th>PF</th><th>Gross ₹</th></tr></thead><tbody>` +
-    t.rows.map(r => {
-      const cls = r.sym === "ALL 5" ? ' class="total"' : "";
-      const bw = Math.min(100, Math.abs(r.gross) / maxG * 100).toFixed(0);
-      return `<tr${cls}><td>${r.sym}</td><td>${r.trades}</td><td>${(r.win_rate * 100).toFixed(0)}%</td>` +
-        `<td>${Math.round(r.avg_win).toLocaleString("en-IN")}</td><td class="neg">${Math.round(r.avg_loss).toLocaleString("en-IN")}</td>` +
-        `<td>${Math.round(r.expectancy).toLocaleString("en-IN")}</td><td>${r.profit_factor.toFixed(2)}</td>` +
-        `<td class="databar"><div class="bg" style="width:${bw}%"></div>` +
-        `<span class="${r.gross >= 0 ? "pos" : "neg"}">${Math.round(r.gross).toLocaleString("en-IN")}</span></td></tr>`;
-    }).join("") + "</tbody>";
-  renderTFAssets();
-}
-
-function renderTFAssets() {
-  const el = $("tf-assets");
-  if (!el || el.dataset.done) return;
-  const stacks = ["qmw", "ema", "wdh", "brk"];
-  const names = { qmw: "Q/M/W", ema: "M/W/D", wdh: "W/D/H", brk: "Breakout" };
-  const cell = st => st && st.trades
-    ? `${st.net.toLocaleString("en-IN")} <span style="color:var(--muted)">(${st.trades}t, ${(st.win_rate * 100).toFixed(0)}%, PF ${st.pf ?? "—"})</span>`
-    : '<span style="color:var(--muted)">no hourly data</span>';
-  el.innerHTML =
-    `<thead><tr><th>Asset</th>${stacks.map(k => `<th>${names[k]} net</th>`).join("")}</tr></thead><tbody>` +
-    Object.entries(DATA.assets).map(([sym, a]) =>
-      `<tr><td>${sym}</td>${stacks.map(k => `<td>${a[k] ? cell(a[k].stats) : cell(null)}</td>`).join("")}</tr>`).join("") +
-    "</tbody>";
-  el.dataset.done = "1";
-}
 
 
 // ======================================================= chart kit ====
