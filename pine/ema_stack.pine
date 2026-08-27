@@ -8,6 +8,8 @@
 //          stop orders behave the same way as the backtest's convention).
 //   exit   close falls BAND% below ANY of the three EMAs → sell at that close.
 //   sizing Rs 100,000 fixed capital, 1% risk per trade, position capped by capital.
+//          Whole shares by default; turn on "Fractional units" for crypto (a whole
+//          coin costs more than the account, so flooring would reject every trade).
 //
 // Apply this on a DAILY chart of an NSE symbol. On any other timeframe it
 // deliberately takes no trades and shows a warning.
@@ -36,6 +38,11 @@ strategy("EMA Stack (kitelab)",
 lengthInput = input.int(20, "EMA length", minval = 2)
 bandInput   = input.float(2.0, "Hysteresis band %", minval = 0.0, step = 0.5)
 riskInput   = input.float(1.0, "Risk % of capital", minval = 0.1, step = 0.5)
+fracInput   = input.bool(false, "Fractional units (crypto/commodities)",
+     tooltip = "Whole shares suit NSE stocks. Turn ON for BTCUSDT and the like: " +
+       "one whole coin costs more than the whole account, so whole-unit sizing " +
+       "would reject nearly every trade. Also set commission to the venue's fee " +
+       "(e.g. 0.10%) in Settings -> Properties.")
 
 alpha = 2.0 / (lengthInput + 1)
 
@@ -57,11 +64,13 @@ freshSignal = entryOk and not entryOk[1]
 var float stopPrice = na
 riskBudget   = strategy.initial_capital * riskInput / 100
 perShareRisk = close - low
-qtyByRisk    = perShareRisk > 0 ? math.floor(riskBudget / perShareRisk) : 0
-qtyByCapital = math.floor(strategy.initial_capital / close)
-qty          = math.min(qtyByRisk, qtyByCapital)
+qtyByRisk    = perShareRisk > 0 ? riskBudget / perShareRisk : 0
+qtyByCapital = strategy.initial_capital / close
+qtyRaw       = math.min(qtyByRisk, qtyByCapital)
+qty          = fracInput ? qtyRaw : math.floor(qtyRaw)
+qtyEnough    = fracInput ? qty > 0 : qty >= 1
 
-if timeframe.isdaily and freshSignal and strategy.position_size == 0 and qty >= 1
+if timeframe.isdaily and freshSignal and strategy.position_size == 0 and qtyEnough
     stopPrice := low
     strategy.entry("L", strategy.long, qty = qty)
 
