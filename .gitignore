@@ -15,3 +15,4 @@ data/signal_cache/
 output/
 
 # the one data/ file that IS committed: levels.json (hand-drawn, unreproducible)
+data/dashboard.json
