@@ -64,35 +64,52 @@ def main() -> None:
     parser.add_argument("--universe", default="assets", choices=["assets", "stocks"])
     args = parser.parse_args()
 
+    collected = {("EMA", label): [] for label, _ in MODES}
+    collected.update({("Breakout", label): [] for label, _ in MODES})
     if args.universe == "assets":
         jobs = list(ASSET_SPECS.items())
         tag = "Assets"
+        print(f"\n  universe: {tag} ({len(jobs)} instruments)\n", flush=True)
+        for index, (symbol, (brk_tf, fee)) in enumerate(jobs, 1):
+            backtest.FLAT_FEE_RATE = fee
+            sizing.FRACTIONAL = True
+            try:
+                for label, mode in MODES:
+                    try:
+                        collected[("EMA", label)].extend(
+                            backtest.simulate(symbol, scale_out=mode))
+                        collected[("Breakout", label)].extend(
+                            strategies.ath_breakout_trades(symbol, True, timeframe=brk_tf,
+                                                           scale_out=mode))
+                    except SystemExit:
+                        break
+            finally:
+                backtest.FLAT_FEE_RATE = None
+                sizing.FRACTIONAL = False
+            print(f"    {symbol} done", flush=True)
     else:
-        cfg = config.load()
-        jobs = [(s, ("30m", None)) for s in cfg.all_symbols]
+        # The six 199-stock signal lists are the same ones the dashboard builds,
+        # so reuse its cache (delete data/signal_cache to force a fresh sweep).
+        from scripts.dashboard_data import cached_signals
         tag = "199 Stocks"
-
-    collected = {("EMA", label): [] for label, _ in MODES}
-    collected.update({("Breakout", label): [] for label, _ in MODES})
-    print(f"\n  universe: {tag} ({len(jobs)} instruments)\n", flush=True)
-    for index, (symbol, (brk_tf, fee)) in enumerate(jobs, 1):
-        backtest.FLAT_FEE_RATE = fee
-        sizing.FRACTIONAL = fee is not None   # fractional units for the assets run
-        try:
-            for label, mode in MODES:
-                try:
-                    collected[("EMA", label)].extend(
-                        backtest.simulate(symbol, scale_out=mode))
-                    collected[("Breakout", label)].extend(
-                        strategies.ath_breakout_trades(symbol, True, timeframe=brk_tf,
-                                                       scale_out=mode))
-                except SystemExit:
-                    break
-        finally:
-            backtest.FLAT_FEE_RATE = None
-            sizing.FRACTIONAL = False
-        if index % 25 == 0:
-            print(f"    {index}/{len(jobs)} instruments done", flush=True)
+        print(f"\n  universe: {tag} (cached signal lists)\n", flush=True)
+        cache_names = {("EMA", None): ("EMA_199", lambda s: backtest.simulate(s)),
+                       ("EMA", "half"): ("EMA_half_199",
+                                         lambda s: backtest.simulate(s, scale_out="half")),
+                       ("EMA", "half_be"): ("EMA_halfbe_199",
+                                            lambda s: backtest.simulate(s, scale_out="half_be")),
+                       ("Breakout", None): ("Breakout_199",
+                                            lambda s: strategies.ath_breakout_trades(s, True)),
+                       ("Breakout", "half"): ("Breakout_half_199",
+                                              lambda s: strategies.ath_breakout_trades(
+                                                  s, True, scale_out="half")),
+                       ("Breakout", "half_be"): ("Breakout_halfbe_199",
+                                                 lambda s: strategies.ath_breakout_trades(
+                                                     s, True, scale_out="half_be"))}
+        for label, mode in MODES:
+            for strategy in ("EMA", "Breakout"):
+                name, build = cache_names[(strategy, mode)]
+                collected[(strategy, label)] = cached_signals(name, build)
 
     book = Workbook()
     book.remove(book.active)
