@@ -1,0 +1,101 @@
+//@version=5
+// EMA Stack, any timeframe triplet (kitelab) — the same rule as ema_stack.pine,
+// but the three timeframes are picked from the CHART's timeframe:
+//
+//     chart on 1W  ->  quarterly / monthly / weekly   (Q/M/W)
+//     chart on 1D  ->  monthly  / weekly  / daily     (M/W/D, the class strategy)
+//     chart on 1h  ->  weekly   / daily   / hourly    (W/D/H)
+//
+// RULE (identical on all three): buy at the close of the first chart bar whose
+// close is BAND% above the 20-EMA on all three timeframes; stop = that entry
+// bar's low; exit when the stop is hit (a gap fills at the open) or a close
+// falls BAND% below ANY of the three EMAs.
+//
+// The two higher-timeframe EMAs are FORMING-BAR values, rebuilt by hand:
+//     ema_now = alpha*close + (1-alpha) * ema(last COMPLETED higher-TF bar)
+// request.security with [1] + lookahead_on is the non-repainting idiom for
+// "last completed higher-timeframe value".
+//
+// Sizing: fixed initial capital, RISK% per trade, capped by capital. Whole
+// shares by default; turn on "Fractional units" for crypto.
+//
+// Known mismatches vs the local backtest (small, expected):
+//   * ta.ema seeds with an SMA; pandas seeds with the first close — the
+//     earliest trades of a long history can differ.
+//   * TradingView's feed is not Kite's; prices differ by paise, and hourly
+//     history on TradingView may be much shorter than Kite's (2015+) — on the
+//     1h chart compare individual recent trades, not lifetime totals.
+//   * Commission here is a flat approximation; the local numbers quoted for
+//     comparison are GROSS, so set commission to 0 in Properties when checking.
+
+strategy("EMA Stack Multi-TF (kitelab)",
+     overlay = true,
+     initial_capital = 100000,
+     pyramiding = 0,
+     calc_on_every_tick = false,
+     process_orders_on_close = true,          // entries/exits fill at the signal bar's close
+     commission_type = strategy.commission.percent,
+     commission_value = 0.11)
+
+lengthInput = input.int(20, "EMA length", minval = 2)
+bandInput   = input.float(2.0, "Hysteresis band %", minval = 0.0, step = 0.5)
+riskInput   = input.float(1.0, "Risk % of capital", minval = 0.1, step = 0.5)
+fracInput   = input.bool(false, "Fractional units (crypto/commodities)")
+
+// which triplet does this chart get?
+isHourly = timeframe.isintraday and timeframe.multiplier == 60
+tfOk     = timeframe.isweekly or timeframe.isdaily or isHourly
+htfMid   = timeframe.isweekly ? "M"  : timeframe.isdaily ? "W" : "D"
+htfTop   = timeframe.isweekly ? "3M" : timeframe.isdaily ? "M" : "W"
+
+alpha = 2.0 / (lengthInput + 1)
+
+emaBase = ta.ema(close, lengthInput)
+midDone = request.security(syminfo.tickerid, htfMid, ta.ema(close, lengthInput)[1],
+     lookahead = barmerge.lookahead_on)
+topDone = request.security(syminfo.tickerid, htfTop, ta.ema(close, lengthInput)[1],
+     lookahead = barmerge.lookahead_on)
+emaMid = alpha * close + (1 - alpha) * midDone
+emaTop = alpha * close + (1 - alpha) * topDone
+
+upper = 1 + bandInput / 100
+lower = 1 - bandInput / 100
+entryOk = close > emaBase * upper and close > emaMid * upper and close > emaTop * upper
+exitOk  = close < emaBase * lower or  close < emaMid * lower or  close < emaTop * lower
+freshSignal = entryOk and not entryOk[1]
+
+// Fixed-capital sizing, matching the backtest: every trade sized off the same base.
+var float stopPrice = na
+riskBudget   = strategy.initial_capital * riskInput / 100
+perShareRisk = close - low
+qtyByRisk    = perShareRisk > 0 ? riskBudget / perShareRisk : 0
+qtyByCapital = strategy.initial_capital / close
+qtyRaw       = math.min(qtyByRisk, qtyByCapital)
+qty          = fracInput ? qtyRaw : math.floor(qtyRaw)
+qtyEnough    = fracInput ? qty > 0 : qty >= 1
+
+if tfOk and freshSignal and strategy.position_size == 0 and qtyEnough
+    stopPrice := low
+    strategy.entry("L", strategy.long, qty = qty)
+
+if strategy.position_size > 0
+    strategy.exit("stop", "L", stop = stopPrice)
+    if exitOk
+        strategy.close("L", comment = "ema break")
+
+plot(emaBase, "EMA20 chart TF",      color = color.new(#4fc3f7, 0))
+plot(emaMid,  "EMA20 middle TF",     color = color.new(#ffb74d, 0))
+plot(emaTop,  "EMA20 top TF",        color = color.new(#ce93d8, 0))
+plot(strategy.position_size > 0 ? stopPrice : na, "stop",
+     color = color.new(#ef5350, 0), style = plot.style_linebr)
+
+var table info = table.new(position.top_center, 1, 1)
+if barstate.islast
+    if not tfOk
+        table.cell(info, 0, 0,
+             "EMA Stack Multi-TF runs on 1W, 1D or 1h charts only — switch timeframe",
+             bgcolor = color.new(#ef5350, 20), text_color = color.white)
+    else
+        stack = timeframe.isweekly ? "Q/M/W" : timeframe.isdaily ? "M/W/D" : "W/D/H"
+        table.cell(info, 0, 0, "EMA Stack: " + stack,
+             bgcolor = color.new(#26a69a, 60), text_color = color.white)
