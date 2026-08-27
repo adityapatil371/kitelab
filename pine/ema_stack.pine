@@ -148,6 +148,23 @@ plot(emaTop,  "EMA20 · two steps up",     color = color.new(#ce93d8, 0))
 plot(strategy.position_size > 0 ? stopPrice : na, "stop",
      color = color.new(#ef5350, 0), style = plot.style_linebr)
 
+// The 2% band lines — WHERE THE RULE ACTUALLY BITES. Raw EMAs alone make
+// trades look mistimed, because signals fire 2% away from them:
+//   * ENTRY needs a close above ALL THREE upper bands, so the one that
+//     matters is the HIGHEST of the three: the green line. A close above
+//     green = entry territory.
+//   * EXIT fires on a close below ANY lower band; walking down, the first
+//     one you can break is the HIGHEST of the three lowers: the red line.
+//     A close below red = exit territory.
+// Between the two lines is the dead zone (hysteresis): already-open trades
+// are held there, but nothing new triggers.
+highestEma = math.max(emaBase, math.max(emaMid, emaTop))
+entryLine = plot(highestEma * upper, "entry line (2% above highest EMA)",
+     color = color.new(#26a69a, 30), style = plot.style_line, linewidth = 1)
+exitLine  = plot(highestEma * lower, "exit line (2% below highest EMA)",
+     color = color.new(#ef5350, 30), style = plot.style_line, linewidth = 1)
+fill(entryLine, exitLine, color = color.new(#898781, 92), title = "dead zone")
+
 // --- status banner ----------------------------------------------------------
 // Always says which stack is running — or warns when the chart timeframe is
 // unsupported, instead of silently taking no trades.
