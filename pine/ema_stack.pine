@@ -1,31 +1,42 @@
 //@version=5
 // ============================================================================
-// THE 20-EMA STACK — the class strategy, exactly as the machine backtests it.
+// THE 20-EMA STACK — one script, three timeframe versions.
 //
-// THE RULE (class convention, everything judged at bar CLOSES only):
-//   ENTRY  buy at the close of the first day whose close stands 2% ABOVE the
-//          20-EMA on all three timeframes: monthly, weekly AND daily.
-//   STOP   the entry day's LOW. Checked at closes only — a wick dipping below
-//          it during the day does NOT sell; a daily CLOSE at or below it does.
+// THE CHART'S TIMEFRAME PICKS WHICH VERSION RUNS:
+//     chart on 1W  ->  quarterly / monthly / weekly   (Q/M/W)
+//     chart on 1D  ->  monthly  / weekly  / daily     (M/W/D — the class strategy)
+//     chart on 1h  ->  weekly   / daily   / hourly    (W/D/H)
+// Any other timeframe: the script deliberately takes NO trades and shows a
+// warning banner instead of quietly producing wrong numbers.
+//
+// THE RULE (identical on all three, only the timeframes change):
+//   ENTRY  buy at the close of the first chart bar whose close stands 2% ABOVE
+//          the 20-EMA on ALL THREE timeframes at once. Three timeframes
+//          agreeing = the trend is real on every scale you care about.
+//   STOP   that entry bar's LOW. CLASS CONVENTION: the stop is checked at
+//          CLOSES only — a wick dipping below it during the bar does NOT
+//          sell; a close at or below it does. (A broker's resting stop order
+//          would fire intrabar. That is a different, also valid, strategy —
+//          but a manual end-of-bar backtester can only check closes, so
+//          that is what the class does and what this script does.)
 //   EXIT   sell at the close when either happens first:
-//            - a close falls 2% BELOW any of the three EMAs, or
+//            - a close falls 2% BELOW any one of the three EMAs, or
 //            - a close is at/below the stop.
-//   SIZE   risk 1% of a fixed Rs1,00,000 per trade; the stop distance decides
-//          the share count, capped by what the capital can actually buy.
+//   SIZE   risk 1% of a fixed 100,000 per trade: the distance to the stop
+//          decides how many shares, capped by what the capital can buy.
 //
-// Apply on a DAILY chart. The Strategy Tester panel (bottom of TradingView)
-// then shows the account's equity curve, net profit, and MAX DRAWDOWN —
-// TradingView computes those itself from these trades, which is exactly what
-// makes this an independent check on the Python backtest.
+// WHERE TO SEE THE RESULTS: the Strategy Tester panel at the bottom.
+// TradingView computes net profit, the equity curve and MAX DRAWDOWN there
+// by itself — which is exactly what makes this an independent check on our
+// Python backtest. (For comparing with the lab's GROSS numbers, set
+// commission to 0 in Settings -> Properties.)
 // ============================================================================
 
 // --- strategy declaration ---------------------------------------------------
-// process_orders_on_close = true is the single most important line for
-// matching the class rule: orders placed on a bar FILL AT THAT BAR'S CLOSE
-// (the default would fill them at the NEXT bar's open instead).
-// Commission approximates Zerodha delivery charges per side; the local
-// backtest's comparison numbers are GROSS, so set commission to 0 in
-// Settings -> Properties when checking totals against them.
+// process_orders_on_close = true is the most important line for matching the
+// class rule: orders placed on a bar FILL AT THAT BAR'S CLOSE. The default
+// would fill them at the NEXT bar's open instead — a different strategy.
+// The commission is a flat approximation of Zerodha delivery charges per side.
 strategy("EMA Stack (kitelab)",
      overlay = true,                          // draw the EMAs on the price chart
      initial_capital = 100000,
@@ -36,67 +47,75 @@ strategy("EMA Stack (kitelab)",
      commission_value = 0.11)
 
 // --- inputs -----------------------------------------------------------------
-// Exposed so the class can experiment; defaults are the tested values.
+// Exposed so anyone can experiment; the defaults are the tested class values.
 lengthInput = input.int(20, "EMA length", minval = 2)
-bandInput   = input.float(2.0, "Band % (2 = enter 2% above, exit 2% below)", minval = 0.0, step = 0.5)
+bandInput   = input.float(2.0, "Band % (enter 2% above, exit 2% below)", minval = 0.0, step = 0.5)
 riskInput   = input.float(1.0, "Risk % of capital per trade", minval = 0.1, step = 0.5)
 fracInput   = input.bool(false, "Fractional units (crypto/commodities)",
      tooltip = "Whole shares suit NSE stocks. Turn ON for BTCUSDT and the " +
        "like: one whole coin costs more than the account, so whole-unit " +
-       "sizing would reject nearly every trade.")
+       "sizing would floor the quantity to zero and reject every trade.")
+
+// --- which timeframe triplet is this chart running? -------------------------
+// timeframe.* describes the CHART the script is applied to. From the chart's
+// own timeframe we derive the two HIGHER timeframes of the stack.
+// ("3M" = one quarter; timeframe.multiplier == 60 = a 60-minute chart.)
+isHourly = timeframe.isintraday and timeframe.multiplier == 60
+tfOk     = timeframe.isweekly or timeframe.isdaily or isHourly
+htfMid   = timeframe.isweekly ? "M"  : timeframe.isdaily ? "W" : "D"   // one step up
+htfTop   = timeframe.isweekly ? "3M" : timeframe.isdaily ? "M" : "W"   // two steps up
 
 // --- the three EMAs ---------------------------------------------------------
-// The daily EMA is ordinary: TradingView's ta.ema on daily closes.
-emaDaily = ta.ema(close, lengthInput)
+// The chart-timeframe EMA is ordinary: ta.ema on this chart's closes.
+emaBase = ta.ema(close, lengthInput)
 
-// The weekly and monthly EMAs need care. Mid-week, TradingView's completed
-// weekly EMA doesn't move — but a trader looking at a weekly chart mid-week
-// sees the FORMING bar's value. The backtest rebuilds that forming value by
-// hand with the EMA recurrence:
-//     ema_now = alpha * today's close + (1 - alpha) * ema(last COMPLETED bar)
+// The two higher-timeframe EMAs need care. Mid-week, the COMPLETED weekly
+// EMA does not move — but a trader looking at a weekly chart mid-week sees
+// the FORMING bar's value. We rebuild that forming value by hand with the
+// EMA's own recurrence formula:
+//     ema_now = alpha * current close + (1 - alpha) * ema(last COMPLETED bar)
 // where alpha = 2 / (length + 1) is the EMA's standard smoothing weight.
 alpha = 2.0 / (lengthInput + 1)
 
 // request.security(...)[1] with lookahead_on is the standard NON-REPAINTING
-// idiom for "the higher timeframe's LAST COMPLETED value": the [1] steps back
-// one completed weekly/monthly bar, and lookahead_on makes that same value
-// available on every daily bar inside the current week/month (without peeking
-// at anything unfinished — the [1] guarantees the bar is already closed).
-weekDone  = request.security(syminfo.tickerid, "W", ta.ema(close, lengthInput)[1],
+// idiom for "the higher timeframe's LAST COMPLETED value": the [1] steps
+// back one completed higher-TF bar (so nothing unfinished is ever used), and
+// lookahead_on makes that completed value available on every chart bar
+// inside the current higher-TF bar instead of one bar late.
+midDone = request.security(syminfo.tickerid, htfMid, ta.ema(close, lengthInput)[1],
      lookahead = barmerge.lookahead_on)
-monthDone = request.security(syminfo.tickerid, "M", ta.ema(close, lengthInput)[1],
+topDone = request.security(syminfo.tickerid, htfTop, ta.ema(close, lengthInput)[1],
      lookahead = barmerge.lookahead_on)
 
-// Blend today's close into the completed higher-timeframe EMA = forming value.
-emaWeekly  = alpha * close + (1 - alpha) * weekDone
-emaMonthly = alpha * close + (1 - alpha) * monthDone
+// Blend the current close into each completed EMA -> the forming-bar value.
+emaMid = alpha * close + (1 - alpha) * midDone
+emaTop = alpha * close + (1 - alpha) * topDone
 
 // --- entry and exit conditions ----------------------------------------------
-// The band creates hysteresis (a dead zone): you must close 2% ABOVE all
-// three lines to get in, and 2% BELOW one of them to be forced out. Without
-// it, price hugging an EMA flips the signal daily and charges eat the account
-// (measured: the 2% band cut charges by ~83%).
+// The band creates hysteresis (a dead zone): close 2% ABOVE all three lines
+// to get in, 2% BELOW any one of them to be forced out. Without the gap,
+// price hugging an EMA flips the signal every bar and charges eat the
+// account (measured on the lab data: the 2% band cut charges by ~83%).
 upper = 1 + bandInput / 100
 lower = 1 - bandInput / 100
 
-// Entry needs ALL THREE clear of the upper line (the trend agrees on every
-// timeframe); exit needs only ONE below the lower line (any timeframe
-// breaking is enough to leave).
-entryOk = close > emaDaily * upper and close > emaWeekly * upper and close > emaMonthly * upper
-exitOk  = close < emaDaily * lower or  close < emaWeekly * lower or  close < emaMonthly * lower
+// Entry needs ALL THREE clear of the upper line; exit needs only ONE below
+// the lower line — any timeframe breaking down is reason enough to leave.
+entryOk = close > emaBase * upper and close > emaMid * upper and close > emaTop * upper
+exitOk  = close < emaBase * lower or  close < emaMid * lower or  close < emaTop * lower
 
-// Only the FIRST day the condition turns true is a signal. Without this,
-// every day inside a long uptrend would look like a fresh entry.
+// Only the FIRST bar where the condition turns true is a signal. Without
+// this, every bar inside a long uptrend would look like a fresh entry.
 freshSignal = entryOk and not entryOk[1]
 
 // --- position sizing --------------------------------------------------------
-// Fixed capital (no compounding): every trade is sized off the same base so
-// results are comparable across time. Two limits, the smaller one wins:
+// Fixed capital, no compounding: every trade is sized off the same base so
+// results are comparable across time. Two limits, the SMALLER one wins:
 //   by risk    : risk budget / rupees lost per share if the stop is hit
 //   by capital : you cannot buy more than the account can pay for
-var float stopPrice = na                      // remembers the stop while in a trade
+var float stopPrice = na                      // 'var' = remembers its value bar to bar
 riskBudget   = strategy.initial_capital * riskInput / 100
-perShareRisk = close - low                    // entry (close) minus stop (low)
+perShareRisk = close - low                    // entry (this close) minus stop (this low)
 qtyByRisk    = perShareRisk > 0 ? riskBudget / perShareRisk : 0
 qtyByCapital = strategy.initial_capital / close
 qtyRaw       = math.min(qtyByRisk, qtyByCapital)
@@ -104,16 +123,16 @@ qty          = fracInput ? qtyRaw : math.floor(qtyRaw)   // whole shares for sto
 qtyEnough    = fracInput ? qty > 0 : qty >= 1
 
 // --- orders -----------------------------------------------------------------
-// Enter only on a daily chart, on a fresh signal, when flat, with a sizeable
-// quantity. The fill happens at THIS bar's close (process_orders_on_close).
-if timeframe.isdaily and freshSignal and strategy.position_size == 0 and qtyEnough
-    stopPrice := low                          // the entry day's low becomes the stop
+// Enter only on a supported timeframe, on a fresh signal, when flat, with a
+// sizeable quantity. The fill happens at THIS bar's close.
+if tfOk and freshSignal and strategy.position_size == 0 and qtyEnough
+    stopPrice := low                          // the entry bar's low becomes the stop
     strategy.entry("L", strategy.long, qty = qty)
 
-// CLASS CONVENTION: no resting stop order. The stop is a DECISION RULE
-// checked at each close — which is all a manual end-of-day backtester can
-// do. (A broker's stop order would fire intrabar; that is a different, also
-// valid, strategy — the class does not trade it.)
+// CLASS CONVENTION IN CODE: there is NO strategy.exit(stop=...) order here.
+// A resting stop order would fire the moment price TOUCHES the level
+// intrabar. Instead the stop is a decision rule tested against each CLOSE —
+// which is all a manual end-of-bar backtester can do.
 if strategy.position_size > 0
     if exitOk
         strategy.close("L", comment = "ema break")
@@ -123,14 +142,24 @@ if strategy.position_size > 0
 // --- drawing ----------------------------------------------------------------
 // The three EMAs, and the stop while a trade is open, drawn on the price
 // chart so every entry/exit marker can be read against the rule.
-plot(emaDaily,   "EMA20 daily",   color = color.new(#4fc3f7, 0))
-plot(emaWeekly,  "EMA20 weekly",  color = color.new(#ffb74d, 0))
-plot(emaMonthly, "EMA20 monthly", color = color.new(#ce93d8, 0))
+plot(emaBase, "EMA20 · chart timeframe",  color = color.new(#4fc3f7, 0))
+plot(emaMid,  "EMA20 · one step up",      color = color.new(#ffb74d, 0))
+plot(emaTop,  "EMA20 · two steps up",     color = color.new(#ce93d8, 0))
 plot(strategy.position_size > 0 ? stopPrice : na, "stop",
      color = color.new(#ef5350, 0), style = plot.style_linebr)
 
-// A warning banner instead of silent wrong numbers on the wrong timeframe.
-var table warn = table.new(position.top_center, 1, 1)
-if barstate.islast and not timeframe.isdaily
-    table.cell(warn, 0, 0, "EMA Stack runs on the DAILY timeframe only — switch to 1D",
-         bgcolor = color.new(#ef5350, 20), text_color = color.white)
+// --- status banner ----------------------------------------------------------
+// Always says which stack is running — or warns when the chart timeframe is
+// unsupported, instead of silently taking no trades.
+var table info = table.new(position.top_center, 1, 1)
+if barstate.islast
+    if not tfOk
+        table.cell(info, 0, 0,
+             "EMA Stack runs on 1W, 1D or 1h charts only — switch timeframe",
+             bgcolor = color.new(#ef5350, 20), text_color = color.white)
+    else
+        stack = timeframe.isweekly ? "Q/M/W (quarterly-monthly-weekly)"
+             : timeframe.isdaily  ? "M/W/D (the class strategy)"
+             : "W/D/H (weekly-daily-hourly)"
+        table.cell(info, 0, 0, "EMA Stack: " + stack,
+             bgcolor = color.new(#26a69a, 60), text_color = color.white)
