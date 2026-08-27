@@ -8,8 +8,9 @@
 //
 // RULE (identical on all three): buy at the close of the first chart bar whose
 // close is BAND% above the 20-EMA on all three timeframes; stop = that entry
-// bar's low; exit when the stop is hit (a gap fills at the open) or a close
-// falls BAND% below ANY of the three EMAs.
+// bar's low, CHECKED AT CLOSES ONLY (class convention: manual end-of-bar
+// backtesting cannot watch intrabar); exit when a close is at or below the
+// stop, or a close falls BAND% below ANY of the three EMAs.
 //
 // The two higher-timeframe EMAs are FORMING-BAR values, rebuilt by hand:
 //     ema_now = alpha*close + (1-alpha) * ema(last COMPLETED higher-TF bar)
@@ -78,10 +79,12 @@ if tfOk and freshSignal and strategy.position_size == 0 and qtyEnough
     stopPrice := low
     strategy.entry("L", strategy.long, qty = qty)
 
+// CLASS CONVENTION: the stop is checked only at the bar's close, never intrabar.
 if strategy.position_size > 0
-    strategy.exit("stop", "L", stop = stopPrice)
     if exitOk
         strategy.close("L", comment = "ema break")
+    else if close <= stopPrice
+        strategy.close("L", comment = "stop (close)")
 
 plot(emaBase, "EMA20 chart TF",      color = color.new(#4fc3f7, 0))
 plot(emaMid,  "EMA20 middle TF",     color = color.new(#ffb74d, 0))

@@ -13,8 +13,9 @@ Variants (highest/middle/lowest -- you trade on the LOWEST timeframe):
 
 Mechanics are identical to backtest.simulate, just generalised over the base
 timeframe: entry at the close of the first base bar where the close is 2% above
-all three EMAs (fresh transition only), exit when the stop is hit (gap fills at
-the open) or a base-bar close falls 2% below ANY of the three EMAs. Whole-share
+all three EMAs (fresh transition only); CLASS CONVENTION exits: a base-bar
+CLOSE at/below the stop sells at that close, or a close 2% below ANY of the
+three EMAs sells at that close. Nothing intrabar matters. Whole-share
 sizing off Capital 100,000 / Risk 1%. GROSS results -- no charges, matching the
 practice file.
 
@@ -100,8 +101,13 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
     return out
 
 
-def simulate_variant(symbol: str, variant: str) -> list[dict]:
-    """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly."""
+def simulate_variant(symbol: str, variant: str,
+                     stop_on_close: bool = True) -> list[dict]:
+    """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly.
+
+    stop_on_close=True is the class convention (everything checked at bar
+    closes only); False is the pre-2026-08-28 broker convention.
+    """
     base, highers = _stack_frames(symbol, variant)
     signal = stack_signal(base, highers)
     entry_ok = signal["entry_ok"].to_numpy()
@@ -122,7 +128,11 @@ def simulate_variant(symbol: str, variant: str) -> list[dict]:
         stop = float(low[position])
         exit_at = None
         for step in range(position + 1, total):
-            if low[step] <= stop:
+            if stop_on_close:
+                if close[step] <= stop:
+                    exit_at = (step, float(close[step]), "stop (close)")
+                    break
+            elif low[step] <= stop:
                 gapped = open_[step] < stop
                 exit_at = (step, float(open_[step]) if gapped else stop,
                            "gap through stop" if gapped else "stop")
@@ -232,8 +242,9 @@ def write_readme(book: Workbook, windows: dict, results: dict | None = None) -> 
         "",
         "THE RULE (same for all three, only the timeframes change) : buy at the close of the "
         "lowest-timeframe bar when price closes 2% above the 20-EMA on all three timeframes. "
-        "Stop = that entry bar's low. Sell when the stop is hit, or when a close falls 2% "
-        "below any of the three EMAs.",
+        "Stop = that entry bar's low, checked at CLOSES only (class convention -- manual "
+        "backtesting cannot watch intrabar). Sell when a close is at/below the stop, or a "
+        "close falls 2% below any of the three EMAs.",
         "",
     ] + PREDICTIONS + [
         "",

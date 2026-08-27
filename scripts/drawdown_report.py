@@ -212,22 +212,23 @@ def main() -> None:
                   PREDICTIONS)
     row = explain(sheet, row, "VERDICTS", [
         "1. PARTLY CORRECT. For EMA the direction survives everywhere it matters: "
-        "full history all-199 (0.25% risk: 16.9% CAGR / -44.7% DD vs 1%: 4.9% / "
-        "-66.7%) and on the 150 holdout stocks no parameter ever saw (16.8% / -39.3% "
-        "vs 3.9% / -62.9%). It FAILS for Breakout: with only ~2,000 signals in 11 "
+        "full history all-199 (0.25% risk: 24.6% CAGR / -31.6% DD vs 1%: 12.2% / "
+        "-59.9%) and on the 150 holdout stocks no parameter ever saw (27.3% / -32.6% "
+        "vs 14.0% / -66.3%). It FAILS for Breakout: with only ~2,000 signals in 11 "
         "years, 0.25% risk leaves the account under-deployed (2.9% CAGR vs 5.3% at "
         "1%). The honest general rule: cutting risk per trade ALWAYS shrinks the "
         "drawdown; it only also raises returns when signals are plentiful enough to "
-        "keep the freed-up cash working (EMA has ~11,000, Breakout ~2,000).",
+        "keep the freed-up cash working (EMA has ~10,000, Breakout ~2,000).",
         "2. CORRECT: every strategy account's true drawdown is deeper than the old "
         "figure, and every one is far shallower than buy-and-hold on the same asset "
         "(see Assets).",
         "3. CORRECT: crude oil buy-and-hold bottomed at ~-100% in April 2020.",
-        "THE TEACHER'S QUESTION: at the 1% risk we used all along, drawdowns are "
-        "-57% to -67% with up to 6.5 YEARS underwater, for FD-level returns -- "
-        "unsustainable, exactly as he said. The refinement the data adds: risk per "
-        "trade, not the strategy alone, sets the pain. At 0.25% risk the same signals "
-        "produce index-competitive returns with index-like drawdowns.",
+        "THE TEACHER'S QUESTION: at 1% risk, drawdowns run -56% to -66% with 5-6 "
+        "YEARS underwater -- his 'unsustainable' verdict stands on the pain, though "
+        "under the class's close-only exit convention the returns at 1% are no longer "
+        "FD-level (EMA ~12% CAGR). The refinement the data adds: risk per trade, not "
+        "the strategy alone, sets the pain -- at 0.25% risk the same signals produce "
+        "index-beating returns with index-like drawdowns.",
     ])
     explain(sheet, row, "CAVEATS, so nobody is fooled", [
         "Survivorship bias: the universe is TODAY'S surviving stocks, worst for the "
@@ -236,6 +237,10 @@ def main() -> None:
         "intraday data) -- the 'EMA, 2015-2026' block exists for a fair window match.",
         "MCX futures are continuous series with rollover jumps: their numbers carry "
         "extra noise. Indices are not directly tradable (futures/funds approximated).",
+        "CONVENTIONS (2026-08-28): EMA uses the class rule -- the stop is checked at "
+        "bar CLOSES only. Breakout keeps live intrabar stops, because its buy-stop "
+        "entry is inherently an intrabar order; the two are not directly comparable "
+        "on stop behaviour.",
         "The risk sweep is four values we looked at AFTER the fact -- treat '0.25% is "
         "best' as a direction with a mechanical explanation (smaller positions -> cash "
         "lasts -> nearly twice the signals taken -> smoother compounding), not a tuned "

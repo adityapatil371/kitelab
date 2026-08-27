@@ -4,8 +4,9 @@
 //   entry  close is BAND% above the 20-EMA on the monthly, weekly AND daily
 //          timeframes, on the day that first becomes true. Filled at that day's
 //          close ("buy on EOD").
-//   stop   the entry day's low (a gap below it fills at the open — TradingView's
-//          stop orders behave the same way as the backtest's convention).
+//   stop   the entry day's low, CHECKED AT CLOSES ONLY (class convention: manual
+//          end-of-day backtesting cannot watch intrabar) — a daily close at or
+//          below it sells at that close.
 //   exit   close falls BAND% below ANY of the three EMAs → sell at that close.
 //   sizing Rs 100,000 fixed capital, 1% risk per trade, position capped by capital.
 //          Whole shares by default; turn on "Fractional units" for crypto (a whole
@@ -74,10 +75,14 @@ if timeframe.isdaily and freshSignal and strategy.position_size == 0 and qtyEnou
     stopPrice := low
     strategy.entry("L", strategy.long, qty = qty)
 
+// CLASS CONVENTION: everything -- the stop included -- is checked only at the
+// bar's CLOSE (manual end-of-day backtesting cannot watch intrabar). A close at
+// or below the stop sells at that close; an intrabar touch alone does nothing.
 if strategy.position_size > 0
-    strategy.exit("stop", "L", stop = stopPrice)
     if exitOk
         strategy.close("L", comment = "ema break")
+    else if close <= stopPrice
+        strategy.close("L", comment = "stop (close)")
 
 plot(emaDaily,   "EMA20 daily",   color = color.new(#4fc3f7, 0))
 plot(emaWeekly,  "EMA20 weekly",  color = color.new(#ffb74d, 0))

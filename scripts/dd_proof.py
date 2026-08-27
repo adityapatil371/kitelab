@@ -3,7 +3,7 @@
     python -m scripts.dd_proof
 
 Writes output/Drawdown Proof.xlsx for the EMA account (199 stocks, Rs250,000,
-1% risk) whose true max drawdown is the headline -66.7%:
+1% risk, class close-only convention) and its headline true max drawdown:
 
     How To Check  -- instructions for auditing this file by hand
     Equity Curve  -- every trading day 2006-2026: cash and position value are
@@ -112,9 +112,10 @@ def main() -> None:
     sheet.column_dimensions["A"].width = 110
     lines = [
         ("THE CLAIM BEING PROVEN", True),
-        ("One account, Rs2,50,000, trading the 20-EMA stack on 199 NSE stocks at 1% "
-         "risk per trade, suffered a maximum drawdown of about -67%: from its equity "
-         f"peak on {peak_day.date()} to its low on {trough_day.date()}.", False),
+        (f"One account, Rs2,50,000, trading the 20-EMA stack on 199 NSE stocks at 1% "
+         f"risk per trade (class convention: stop checked at closes only), suffered a "
+         f"maximum drawdown of {r['max_drawdown_pct']:.1f}%: from its equity peak on "
+         f"{peak_day.date()} to its low on {trough_day.date()}.", False),
         ("", False),
         ("CHECK 1 -- LET EXCEL DO THE MATH (no trust in our code needed)", True),
         ("On the Equity Curve sheet, only Cash and Positions Value are typed-in "
@@ -135,16 +136,17 @@ def main() -> None:
         ("The Trade Ledger sheet has all the trades the account took: entry date and "
          "price, stop, exit date and price, shares, fees. Profit columns are live "
          "formulas. Any single trade can be replayed on a chart: entry is the close "
-         "of the signal day, the stop is the entry day's low, exits follow the "
-         "2%-below-any-EMA rule or the stop.", False),
+         "of the signal day, the stop is the entry day's low CHECKED AT CLOSES ONLY "
+         "(class convention), exits follow the 2%-below-any-EMA rule or a close at/below "
+         "the stop.", False),
         ("", False),
         ("WHY THE OLD, SMALLER NUMBER WAS WRONG", True),
-        ("Earlier reports said about -54% for this account. That method only looked "
+        (f"Earlier reports said about {r['legacy_max_drawdown_pct']:.0f}% for this account. That method only looked "
          "at equity when a trade settled, valued open positions at what was PAID for "
          "them (so a stock down 40% still counted at full cost), and divided the "
          "worst rupee dip by the final peak instead of the peak at the time. Marking "
          "positions to market every day -- which is what a real account statement "
-         "does -- is what produces the -67%.", False),
+         "does -- is what produces the headline number.", False),
         ("", False),
         ("HONEST CAVEATS", True),
         ("The stock universe is today's surviving 199 stocks (survivorship bias: the "

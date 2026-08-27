@@ -143,8 +143,18 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
 
 
 def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
-             band: float = BAND, scale_out: str | None = None) -> list[dict]:
-    """Walk the signal series and produce closed trades, oldest first."""
+             band: float = BAND, scale_out: str | None = None,
+             stop_on_close: bool = True) -> list[dict]:
+    """Walk the signal series and produce closed trades, oldest first.
+
+    stop_on_close=True is the CLASS convention (2026-08-28): everything --
+    the stop included -- is evaluated only at bar closes, because the class
+    backtests manually on end-of-bar data. A close at or below the stop sells
+    at that close; nothing that happens inside the bar matters.
+    stop_on_close=False is the broker convention used by all results before
+    2026-08-28: the stop is a live intrabar order (a touch fills at the stop,
+    a gap through it fills at the open).
+    """
     signal = ema_stack_signal(symbol, length, band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
@@ -171,16 +181,24 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         current_stop = stop
         banked_fraction = banked_price = 0.0
         for step in range(position + 1, total):
-            if low[step] <= current_stop:
+            if stop_on_close:
+                if close[step] <= current_stop:
+                    exit_at = (step, float(close[step]), "stop (close)")
+                    break
+            elif low[step] <= current_stop:
                 gapped = open_[step] < current_stop
                 exit_at = (step, float(open_[step]) if gapped else current_stop,
                            "gap through stop" if gapped else "stop")
                 break
-            if trigger is not None and banked_fraction == 0.0 and high[step] >= trigger:
-                banked_price = max(trigger, float(open_[step]))
-                banked_fraction = 0.5
-                if scale_out == "half_be":
-                    current_stop = max(current_stop, entry_price)
+            if trigger is not None and banked_fraction == 0.0:
+                banked = (close[step] >= trigger if stop_on_close
+                          else high[step] >= trigger)
+                if banked:
+                    banked_price = (float(close[step]) if stop_on_close
+                                    else max(trigger, float(open_[step])))
+                    banked_fraction = 0.5
+                    if scale_out == "half_be":
+                        current_stop = max(current_stop, entry_price)
             if exit_ok[step]:
                 exit_at = (step, float(close[step]), "ema break")
                 break
