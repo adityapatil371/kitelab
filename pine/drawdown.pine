@@ -1,0 +1,93 @@
+//@version=5
+// ============================================================================
+// DRAWDOWN — how far price sits below the highest point it has EVER reached.
+//
+// The whole idea in one line:
+//     drawdown today = (price today - highest price so far) / highest price so far
+//
+// Three rules that make this the *correct* way to measure it:
+//   1. The peak must come BEFORE the trough. "Highest ever minus lowest ever"
+//      is NOT a drawdown unless the high happened first — you can only lose
+//      money you actually had at some point.
+//   2. Each dip is divided by the peak that stood AT THAT MOMENT, never by
+//      some later, bigger peak (dividing by a later peak shrinks old crashes
+//      and flatters the result).
+//   3. Max drawdown is simply the most negative day this line ever printed.
+//
+// Apply this to any chart. It draws the "underwater curve" in its own pane:
+// the line sits at 0% whenever price makes a fresh all-time high, and hangs
+// below 0% the rest of the time. The deeper and longer the red, the harder
+// that instrument was to hold.
+//
+// NOTE: this measures the CHART SYMBOL's own drawdown (what buy-and-hold
+// endured). A STRATEGY'S account drawdown cannot be read by a separate
+// indicator — Pine scripts are sandboxed from each other — so for the
+// account's drawdown open the Strategy Tester panel of ema_stack.pine:
+// TradingView computes and displays it there natively.
+// ============================================================================
+
+// overlay=false puts this in its own pane below the price chart, because a
+// percentage line makes no sense drawn on top of a price scale.
+indicator("Drawdown (kitelab)", overlay = false, format = format.percent)
+
+// --- inputs -----------------------------------------------------------------
+// Close-based is the standard convention (and matches how the class checks
+// everything at closes). Turning this on uses each bar's LOW instead, which
+// answers the scarier question "how bad did it get at the worst moment
+// WITHIN the bar" — always equal or deeper than the close-based number.
+useLows = input.bool(false, "Measure dips with bar LOWS instead of closes",
+     tooltip = "Off = close-to-close (standard, matches the class convention). " +
+       "On = intrabar lows: the deepest moment inside each bar, a more " +
+       "conservative and slightly deeper number.")
+
+// --- the three-line core ----------------------------------------------------
+// 'var' means: create this variable ONCE on the very first bar, then let it
+// KEEP its value from bar to bar (instead of resetting every bar). That is
+// exactly what a high-water mark needs — memory.
+var float peak = na
+
+// The running peak: yesterday's record, or today's close if it beat it.
+// Peaks are always set by CLOSES (a record you count must be a real close);
+// only the dip side optionally uses lows.
+peak := na(peak) ? close : math.max(peak, close)
+
+// Today's distance below the record, as a fraction OF THAT RECORD.
+// 0 = at a fresh high. -0.36 = 36% below the best close ever seen.
+dipPrice = useLows ? low : close
+drawdown = dipPrice / peak - 1
+
+// Max drawdown = the worst (most negative) value the line ever reached.
+// Another 'var' + math.min pair: memory again, this time of the deepest dip.
+var float maxDrawdown = 0.0
+maxDrawdown := math.min(maxDrawdown, drawdown)
+
+// --- drawing ----------------------------------------------------------------
+// The underwater curve: a red line hanging below the zero baseline, with a
+// translucent fill so long painful stretches read at a glance.
+zero = plot(0, "high-water mark", color = color.new(#898781, 40))
+ddPlot = plot(100 * drawdown, "drawdown %", color = color.new(#d03b3b, 0), linewidth = 2)
+fill(ddPlot, zero, color = color.new(#d03b3b, 85))
+
+// A dashed line pinned at the worst-ever level, so the record dip stays
+// visible even when price has long recovered.
+plot(100 * maxDrawdown, "max drawdown %", color = color.new(#d03b3b, 50),
+     style = plot.style_linebr, linewidth = 1)
+
+// --- readout ----------------------------------------------------------------
+// A small table in the corner with the two numbers that matter. Built once
+// ('var'), refreshed only on the last bar (barstate.islast) — tables are
+// drawn on top of the pane and only their final state is visible anyway.
+var table box = table.new(position.top_right, 2, 3, border_width = 1)
+if barstate.islast
+    table.cell(box, 0, 0, "Now below peak", text_size = size.small,
+         text_color = color.new(#52514e, 0))
+    table.cell(box, 1, 0, str.tostring(100 * drawdown, "#.0") + "%",
+         text_size = size.small, text_color = #d03b3b)
+    table.cell(box, 0, 1, "Max drawdown", text_size = size.small,
+         text_color = color.new(#52514e, 0))
+    table.cell(box, 1, 1, str.tostring(100 * maxDrawdown, "#.0") + "%",
+         text_size = size.small, text_color = #d03b3b)
+    table.cell(box, 0, 2, "Peak (close)", text_size = size.small,
+         text_color = color.new(#52514e, 0))
+    table.cell(box, 1, 2, str.tostring(peak, format.mintick),
+         text_size = size.small, text_color = color.new(#52514e, 0))

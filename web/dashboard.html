@@ -245,31 +245,15 @@
         </div>
         <div class="table-scroll"><table id="tf-table"></table></div>
       </div>
+      <div class="card span12">
+        <h2>The six class assets, by timeframe stack</h2>
+        <div class="sub">Net per asset across its full history (100,000 units, 1% risk, flat fees). W/D/H needs hourly bars,
+          which exist only for Bitcoin and the two indices — MCX futures have daily data only.
+          For the 199-stock ACCOUNTS on each stack, use the Portfolio page: the Strategy slicer now has all three EMA stacks.</div>
+        <div class="table-scroll"><table id="tf-assets"></table></div>
+      </div>
     </div>
 
-    <div class="canvas page" id="page-class">
-      <div class="card span12">
-        <h2>Your manual Bitcoin backtest — machine verdict, class rule</h2>
-        <div class="sub">36 hand-logged trades checked bar-by-bar against Binance daily data, stops judged at CLOSES only.
-          Finding 1: the sheet's Profit column ignored No. of Shares — the real result is ~48x larger.
-          Finding 2: in 3 trades a daily close broke the stop before the claimed exit price ever traded (2 exits originally
-          flagged were valid once judged at closes). Corrected total: <b>₹51,02,167</b> (sheet said ₹57.1L with shares fixed).</div>
-        <div class="table-scroll tall"><table id="btc-table"></table></div>
-      </div>
-      <div class="card span6">
-        <h2>The findings that changed the numbers</h2>
-        <p><b>Hand-picking flatters.</b> The first manual backtests showed a 76% win rate; the machine, taking every signal, gets ~25–31%. The edge is real but lives in rare big winners, not in winning often.</p>
-        <p><b>Drawdown was being measured wrong.</b> Old method sampled equity only at exits, valued open positions at cost, and divided by the wrong peak. Daily mark-to-market roughly doubled the Breakout drawdown (−30% → −59%).</p>
-        <p><b>The convention matters.</b> The class checks everything at closes; a broker stop fires intrabar. Same signals, class rule: ₹1L EMA account went from 3.8% to 11.6% CAGR — shakeouts rescued — at the price of single losses up to ~2.5x the planned risk.</p>
-      </div>
-      <div class="card span6">
-        <h2>Rules of the game (what every number assumes)</h2>
-        <p><b>Entry</b> at the close that first stands 2% above all three 20-EMAs; <b>stop</b> = entry bar's low, checked at closes; <b>exit</b> on a close 2% below any EMA or at/below the stop.</p>
-        <p><b>Sizing</b>: 1% of capital risked per trade, capped by cash; whole shares for stocks, fractional for assets.</p>
-        <p><b>Costs</b>: exact Zerodha delivery model on stocks; flat 0.10%/0.05% per side on assets. No slippage anywhere.</p>
-        <p><b>Biases we can't remove</b>: today's surviving stocks (2008 was worse in reality); Kite has no intraday before ~2015; MCX continuous futures carry rollover jumps.</p>
-      </div>
-    </div>
   </main>
 </div>
 <div class="tip" id="tip"></div>
@@ -285,7 +269,7 @@ const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx:
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
-               ["assets", "Futures & assets"], ["timeframes", "Timeframes"], ["class", "Class work"]];
+               ["assets", "Futures & assets"], ["timeframes", "Timeframes"]];
 
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { DATA = d; init(); })
@@ -300,7 +284,7 @@ function init() {
     b.addEventListener("click", () => setPage(key));
     $("nav").appendChild(b);
   }
-  const stratNames = { ema: "EMA 20 stack", brk: "ATH Breakout" };
+  const stratNames = DATA.strategies;
   slicer("sl-strat", Object.entries(stratNames), () => state.strat, k => { state.strat = k; renderPortfolio(); });
   slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
   slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
@@ -330,7 +314,6 @@ function init() {
     b.addEventListener("click", () => { state.tf = key; renderTF(); });
     $("tf-tabs").appendChild(b);
   }
-  renderBTC();
   renderTF();
   setPage("portfolio");
 }
@@ -425,14 +408,23 @@ function renderPortfolio() {
 }
 
 function renderScaleout() {
-  const rows = DATA.scaleout[state.strat];
+  const block = DATA.scaleout[state.strat];
+  if (!block) {
+    $("so-table").innerHTML = "";
+    $("so-sub").textContent = "Scale-out was tested on the class stack (M/W/D) and Breakout — pick one of those in the Strategy slicer to see it. The verdict there: banking half caps roughly half the profit; adding a breakeven stop was the worst of the three.";
+    return;
+  }
+  $("so-sub").textContent = `${DATA.universes[state.uni]} · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`;
+  const rows = block[state.uni];
   const maxNet = Math.max(...rows.map(r => Math.abs(r.net)), 1);
   $("so-table").innerHTML =
-    `<thead><tr><th>Exit rule</th><th>Trades</th><th>Win</th><th>PF</th><th>Worst losing run</th><th>Total net ₹</th></tr></thead><tbody>` +
+    `<thead><tr><th>Exit rule</th><th>Trades</th><th>Banked</th><th>Win</th><th>Gross ₹</th><th>Charges ₹</th><th>Avg / trade ₹</th><th>PF</th><th>Worst losing run</th><th>Total net ₹</th></tr></thead><tbody>` +
     rows.map((r, i) => {
       const bw = (Math.abs(r.net) / maxNet * 100).toFixed(0);
       return `<tr${i === 0 ? ' style="font-weight:600"' : ""}><td>${r.variant}</td><td>${r.trades.toLocaleString("en-IN")}</td>` +
-        `<td>${(r.win_rate * 100).toFixed(0)}%</td><td>${r.pf ?? "—"}</td><td class="neg">${inr(r.worst_run)}</td>` +
+        `<td>${r.banked.toLocaleString("en-IN")}</td><td>${(r.win_rate * 100).toFixed(0)}%</td>` +
+        `<td>${r.gross.toLocaleString("en-IN")}</td><td>${r.charges.toLocaleString("en-IN")}</td>` +
+        `<td>${r.avg.toLocaleString("en-IN")}</td><td>${r.pf ?? "—"}</td><td class="neg">${inr(r.worst_run)}</td>` +
         `<td class="databar"><div class="bg" style="width:${bw}%"></div><span class="${r.net >= 0 ? "pos" : "neg"}">${inr(r.net)}</span></td></tr>`;
     }).join("") + "</tbody>";
 }
@@ -486,7 +478,14 @@ function tradesTable(el, trades) {
 function renderAsset() {
   $("sl-asset")._sync(); $("sl-asset-strat")._sync();
   const a = DATA.assets[state.asset];
-  const block = a[state.assetStrat];
+  let block = a[state.assetStrat];
+  if (!block) {
+    $("a-title").textContent = `${state.asset} — no ${DATA.strategies[state.assetStrat]} data (needs hourly bars; MCX futures are daily-only)`;
+    for (const id of ["a-cagr","a-dd","a-bh-cagr","a-bh-dd","a-trades","a-pf"]) $(id).textContent = "—";
+    $("a-eq").innerHTML = ""; $("a-uw").innerHTML = ""; $("a-chart").innerHTML = "";
+    $("a-table").innerHTML = "";
+    return;
+  }
   const st = block.stats, acc = block.account;
   $("a-cagr").textContent = acc ? pct1(acc.cagr) + "/yr" : "—";
   $("a-cagr").className = "v" + (acc && acc.cagr >= 7 ? " good" : "");
@@ -531,19 +530,6 @@ function renderTF() {
     }).join("") + "</tbody>";
 }
 
-// =================================================== class-work page ====
-function renderBTC() {
-  $("btc-table").innerHTML =
-    `<thead><tr><th>Entry date</th><th>Entry $</th><th>Stop $</th><th>Qty</th><th>Claimed exit</th><th>Reason</th><th>Verdict</th><th>Corrected exit</th><th>Profit × shares</th></tr></thead><tbody>` +
-    DATA.btc_validation.map(r => {
-      const bad = r.verdict && r.verdict.includes("CAME FIRST");
-      return `<tr><td>${r.date}</td><td>${r.entry.toLocaleString("en-IN")}</td><td>${r.stop.toLocaleString("en-IN")}</td>` +
-        `<td>${r.shares}</td><td>${r.claimed.toLocaleString("en-IN")}</td><td style="text-align:left">${r.reason}</td>` +
-        `<td style="text-align:left" class="${bad ? "neg" : "pos"}">${r.verdict}</td>` +
-        `<td>${Math.round(r.corrected).toLocaleString("en-IN")}</td>` +
-        `<td class="${r.profit >= 0 ? "pos" : "neg"}">${Math.round(r.profit).toLocaleString("en-IN")}</td></tr>`;
-    }).join("") + "</tbody>";
-}
 
 // ======================================================= chart kit ====
 const M = { l: 56, r: 12, t: 10, b: 20 };

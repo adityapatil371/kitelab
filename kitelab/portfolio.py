@@ -64,13 +64,24 @@ def daily_curve(taken: list[dict], capital: float) -> dict:
         return int(np.searchsorted(
             calendar, np.datetime64(pd.Timestamp(stamp).normalize(), "ns")))
 
+    # A trade that opens and closes within the SAME session never holds an
+    # overnight position: it only moves cash on that day. Keeping it out of
+    # the open-positions map matters for intraday strategies, where a symbol
+    # can round-trip several times in one day (the map holds one entry per
+    # symbol, so same-day trades would collide with each other and with a
+    # later overnight entry).
     entries_by_day: dict[int, list] = defaultdict(list)
     exits_by_day: dict[int, list] = defaultdict(list)
+    sameday_by_day: dict[int, list] = defaultdict(list)
     for t in taken:
         t = dict(t)
         t["_entry_day"] = day_pos(t["entry_ts"])
-        entries_by_day[t["_entry_day"]].append(t)
-        exits_by_day[day_pos(t["exit_ts"])].append(t)
+        exit_day = day_pos(t["exit_ts"])
+        if exit_day == t["_entry_day"]:
+            sameday_by_day[exit_day].append(t)
+        else:
+            entries_by_day[t["_entry_day"]].append(t)
+            exits_by_day[exit_day].append(t)
 
     cash = capital
     open_by_symbol: dict[str, dict] = {}
@@ -89,17 +100,17 @@ def daily_curve(taken: list[dict], capital: float) -> dict:
         del open_by_symbol[t["symbol"]]
 
     for i in range(len(calendar)):
-        # settle yesterday's positions first, then open today's, then settle
-        # same-day round trips -- mirrors the order the simulation used.
+        # settle yesterday's positions first, then open today's overnight
+        # positions, then net the same-day round trips through cash.
         for t in exits_by_day.get(i, ()):
-            if t["_entry_day"] < i:
-                close_out(t)
+            close_out(t)
         for t in entries_by_day.get(i, ()):
             cash -= t["shares"] * t["entry_price"]
             open_by_symbol[t["symbol"]] = t
-        for t in exits_by_day.get(i, ()):
-            if t["_entry_day"] == i:
-                close_out(t)
+        for t in sameday_by_day.get(i, ()):
+            proceeds = t["shares"] * t["exit_price"]
+            cash += proceeds - t["shares"] * t["entry_price"] \
+                - charges(t["shares"] * t["entry_price"], proceeds, t["same_session"])
         equity = cash + sum(t["shares"] * aligned[s][i]
                             for s, t in open_by_symbol.items())
         day = pd.Timestamp(calendar[i])

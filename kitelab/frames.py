@@ -171,6 +171,17 @@ def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -
             return pd.read_parquet(native).sort_values("ts").reset_index(drop=True)
         return _resample_intraday(base_15m(symbol), 30)
     if timeframe == "1h":
+        # Assets fetched with native 30-minute bars and no 15m file (Bitcoin) are
+        # paired into hours on a midnight anchor -- correct for a 24/7 UTC market,
+        # where NSE session anchoring makes no sense.
+        native_30 = _path(symbol, "30minute")
+        if not _path(symbol, "15minute").exists() and native_30.exists():
+            base = pd.read_parquet(native_30).sort_values("ts")
+            out = base.set_index("ts").resample("60min").agg(AGG).dropna(subset=["open"])
+            out.index.name = "ts"
+            out = out.reset_index()
+            out["volume"] = out["volume"].astype("int64")
+            return out
         return _resample_intraday(base_15m(symbol), 60)
 
     day_frame = daily(symbol, prefer_native=prefer_native_daily)
