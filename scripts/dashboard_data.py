@@ -47,8 +47,8 @@ ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
           ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
           ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005)]
 STEP = 5
-STRATEGY_LABELS = {"ema": "EMA · M/W/D (class)", "qmw": "EMA · Q/M/W (weekly)",
-                   "wdh": "EMA · W/D/H (hourly)", "brk": "ATH Breakout"}
+STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
+                   "wdh": "EMA · W/D/H", "brk": "ATH Breakout"}
 
 
 # ------------------------------------------------------------ helpers ----
