@@ -292,6 +292,45 @@ def main() -> None:
         tf[key] = {"label": label, "desc": desc, "rows": rows}
         print(f"  timeframes: {label} done", flush=True)
 
+    # ---- the 10-stock reality check: Monte Carlo over random baskets -------
+    # Nobody at class level tracks 199 stocks; ~10 is realistic. Which 10 you
+    # pick dominates the outcome, so we run the SAME account simulation on
+    # many random baskets and report the distribution. Fixed Rs1,00,000
+    # capital (class level); risk follows the slider; baskets identical
+    # across strategies/risks so comparisons are apples-to-apples.
+    import random
+    rng = random.Random(20260823)
+    symbols = sorted(cfg.all_symbols)
+    baskets = [rng.sample(symbols, 10) for _ in range(150)]
+    basket10 = {}
+    for skey, signals in base.items():
+        by_sym = {}
+        for t in signals:
+            by_sym.setdefault(t["symbol"], []).append(t)
+        for risk in RISKS:
+            cagrs, dds = [], []
+            for basket in baskets:
+                subset = [t for s in basket for t in by_sym.get(s, [])]
+                if not subset:
+                    continue
+                r = portfolio.run(subset, 100_000, risk / 100)
+                cagrs.append(round(r["cagr_pct"], 1))
+                dds.append(round(r["max_drawdown_pct"], 1))
+            cagrs_sorted = sorted(cagrs)
+            n = len(cagrs_sorted)
+            basket10[f"{skey}|{risk:g}"] = {
+                "cagrs": cagrs,
+                "median": cagrs_sorted[n // 2],
+                "mean": round(sum(cagrs) / n, 1),
+                "p10": cagrs_sorted[n // 10],
+                "p90": cagrs_sorted[9 * n // 10],
+                "best": cagrs_sorted[-1], "worst": cagrs_sorted[0],
+                "beat_fd": round(100 * sum(1 for c in cagrs if c >= 7) / n),
+                "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
+                "median_dd": sorted(dds)[len(dds) // 2],
+            }
+        print(f"  baskets: {skey} done", flush=True)
+
     nifty = frames.daily("NIFTY 50")
     payload = {
         "built": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
@@ -300,7 +339,7 @@ def main() -> None:
         "risks": RISKS, "capitals": CAPITALS,
         "assigned": list(ASSIGNED),
         "grid": grid, "scaleout": scaleout, "stocks": stocks, "assets": assets,
-        "timeframes": tf, "nifty": close_series(nifty),
+        "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
     OUT.write_text(json.dumps(payload))
     print(f"\n  written: {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
