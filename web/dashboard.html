@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitelab Control Room</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane: #f0f0ee; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --grid: #e1e0d9; --baseline: #c3c2b7;
+    --ring: rgba(11,11,11,0.10);
+    --equity: #2a78d6; --bench: #1baf7a; --dd: #d03b3b; --good: #006300;
+    --accent: #2a78d6; --accent-ink: #ffffff; --accent-soft: rgba(42,120,214,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+      --muted: #898781; --grid: #2c2c2a; --baseline: #383835;
+      --ring: rgba(255,255,255,0.10);
+      --equity: #3987e5; --bench: #199e70; --dd: #d03b3b; --good: #0ca30c;
+      --accent: #3987e5; --accent-ink: #ffffff; --accent-soft: rgba(57,135,229,0.18);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --baseline: #383835;
+    --ring: rgba(255,255,255,0.10);
+    --equity: #3987e5; --bench: #199e70; --dd: #d03b3b; --good: #0ca30c;
+    --accent: #3987e5; --accent-ink: #ffffff; --accent-soft: rgba(57,135,229,0.18);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .frame { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+
+  /* ---- slicer rail ---- */
+  aside {
+    background: var(--surface); border-right: 1px solid var(--grid);
+    padding: 1.1rem 1rem 2rem; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  aside h1 { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
+  aside .built { color: var(--muted); font-size: 0.72rem; margin: 0.15rem 0 1.1rem; }
+  .slicer { margin-bottom: 1.15rem; }
+  .slicer .eyebrow { display: block; margin-bottom: 0.4rem; }
+  .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.66rem; color: var(--muted); font-weight: 700; }
+  .slist { display: flex; flex-direction: column; gap: 3px; }
+  .slist button {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    border: 0; background: transparent; color: var(--ink-2); border-radius: 7px;
+    padding: 0.4rem 0.55rem; font: inherit; font-size: 0.82rem; cursor: pointer; text-align: left;
+  }
+  .slist button:hover { background: var(--accent-soft); color: var(--ink); }
+  .slist button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .slist button .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--baseline); flex: none;
+  }
+  .slist button.on .dot { background: var(--accent-ink); }
+  .slist button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  aside .note { color: var(--muted); font-size: 0.7rem; margin-top: 1.2rem; line-height: 1.5; }
+  aside .note code { font-size: 0.66rem; }
+
+  /* ---- canvas ---- */
+  main { padding: 1rem 1.2rem 3rem; min-width: 0; }
+  .canvas { display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.8rem; max-width: 1240px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+    padding: 0.75rem 0.9rem; min-width: 0;
+  }
+  .card h2 { font-size: 0.78rem; font-weight: 700; color: var(--ink-2); margin-bottom: 0.1rem; }
+  .card .sub { color: var(--muted); font-size: 0.7rem; margin-bottom: 0.45rem; }
+  .span12 { grid-column: span 12; } .span8 { grid-column: span 8; }
+  .span6 { grid-column: span 6; } .span4 { grid-column: span 4; } .span2 { grid-column: span 2; }
+  @media (max-width: 980px) {
+    .frame { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--grid); }
+    .span8, .span6, .span4 { grid-column: span 12; }
+    .span2 { grid-column: span 6; }
+  }
+
+  /* KPI cards */
+  .kpi .v { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.15; }
+  .kpi .v.bad { color: var(--dd); } .kpi .v.good { color: var(--good); }
+  .kpi .lbl { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 0.25rem; }
+  .kpi .delta { font-size: 0.72rem; color: var(--muted); margin-top: 0.2rem; font-variant-numeric: tabular-nums; }
+  .kpi .delta b.up { color: var(--good); } .kpi .delta b.down { color: var(--dd); }
+
+  .legend { display: flex; gap: 0.9rem; font-size: 0.7rem; color: var(--ink-2); align-items: center; flex-wrap: wrap; }
+  .legend .key { display: inline-block; width: 13px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .logtoggle { border: 1px solid var(--ring); background: transparent; color: var(--ink-2); border-radius: 6px; padding: 0.1rem 0.5rem; font: inherit; font-size: 0.68rem; cursor: pointer; }
+  .logtoggle.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .logtoggle:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
+
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font: 10.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .tip {
+    position: fixed; pointer-events: none; z-index: 20; display: none;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18); padding: 0.4rem 0.6rem; font-size: 0.75rem;
+    font-variant-numeric: tabular-nums; min-width: 155px;
+  }
+  .tip .d { color: var(--muted); margin-bottom: 2px; }
+  .tip .row { display: flex; justify-content: space-between; gap: 1rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+  th { text-align: right; color: var(--muted); font-weight: 700; padding: 0.3rem 0.45rem; border-bottom: 1px solid var(--grid);
+       text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.63rem; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 0.3rem 0.45rem; border-bottom: 1px solid var(--grid); }
+  tr:last-child td { border-bottom: 0; }
+  tr.total td { font-weight: 700; border-top: 2px solid var(--baseline); }
+  td.neg { color: var(--dd); } td.pos { color: var(--good); }
+  .table-scroll { overflow-x: auto; }
+  .databar { position: relative; }
+  .databar .bg { position: absolute; inset: 3px auto 3px 0; border-radius: 3px; background: var(--accent-soft); z-index: 0; }
+  .databar span { position: relative; z-index: 1; }
+
+  .tabs { display: inline-flex; border: 1px solid var(--ring); border-radius: 7px; overflow: hidden; background: var(--plane); }
+  .tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 0.25rem 0.7rem; font: inherit; font-size: 0.74rem; cursor: pointer; }
+  .tabs button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  #loading { padding: 3rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="frame">
+  <aside>
+    <h1>Kitelab Control Room</h1>
+    <div class="built" id="built"></div>
+    <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
+    <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
+    <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
+    <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
+    <div class="note">Every combination is a real precomputed backtest — nothing is simulated in the browser.
+      Net of Zerodha charges. Survivorship bias applies (today's surviving stocks). Rebuild data:
+      <code>python -m scripts.dashboard_data</code></div>
+  </aside>
+
+  <main>
+    <div id="loading">Loading the backtest grid&hellip;</div>
+    <div class="canvas" id="app" style="display:none">
+
+      <div class="card kpi span2"><div class="lbl">Final equity</div><div class="v" id="k-final"></div><div class="delta" id="k-final-d"></div></div>
+      <div class="card kpi span2"><div class="lbl">CAGR</div><div class="v" id="k-cagr"></div><div class="delta" id="k-cagr-d"></div></div>
+      <div class="card kpi span2"><div class="lbl">Worst drawdown</div><div class="v bad" id="k-dd"></div><div class="delta" id="k-dd-d"></div></div>
+      <div class="card kpi span2"><div class="lbl">Longest underwater</div><div class="v" id="k-uw"></div><div class="delta">below a previous peak</div></div>
+      <div class="card kpi span2"><div class="lbl">Underwater now</div><div class="v" id="k-uwnow"></div><div class="delta">as the data ends</div></div>
+      <div class="card kpi span2"><div class="lbl">Trades taken</div><div class="v" id="k-trades"></div><div class="delta" id="k-trades-d"></div></div>
+
+      <div class="card span8">
+        <div class="card-head">
+          <div><h2>Account equity</h2><div class="sub" id="eq-sub"></div></div>
+          <div class="legend">
+            <span><span class="key" style="background:var(--equity)"></span>Strategy</span>
+            <span><span class="key" style="background:var(--bench)"></span>NIFTY 50 B&amp;H</span>
+            <button class="logtoggle" id="logbtn" aria-pressed="false">log</button>
+          </div>
+        </div>
+        <svg id="eqchart" viewBox="0 0 760 280" role="img" aria-label="Equity curve"></svg>
+      </div>
+
+      <div class="card span4">
+        <h2>CAGR by risk %</h2><div class="sub">this strategy &amp; universe &amp; capital — selected risk highlighted</div>
+        <svg id="riskbars" viewBox="0 0 360 120" role="img" aria-label="CAGR by risk"></svg>
+        <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
+        <svg id="riskdd" viewBox="0 0 360 120" role="img" aria-label="Drawdown by risk"></svg>
+      </div>
+
+      <div class="card span8">
+        <h2>Underwater — % below the account's own peak</h2>
+        <div class="sub">0 = fresh equity high. The deeper and longer the red, the harder to live through.</div>
+        <svg id="ddchart" viewBox="0 0 760 170" role="img" aria-label="Drawdown curve"></svg>
+      </div>
+
+      <div class="card span4">
+        <h2>Five deepest dips</h2>
+        <div class="sub">&ldquo;not yet&rdquo; = still underwater at data end</div>
+        <div class="table-scroll"><table id="episodes"></table></div>
+      </div>
+
+      <div class="card span6">
+        <div class="card-head">
+          <div><h2>Timeframe battle</h2><div class="sub">5 assigned stocks · gross · fixed ₹1L · common window</div></div>
+          <div class="tabs" id="tf-tabs"></div>
+        </div>
+        <div class="table-scroll"><table id="tf-table"></table></div>
+      </div>
+
+      <div class="card span6">
+        <h2>Six class assets vs buy &amp; hold</h2>
+        <div class="sub">one account each (100k units, 1% risk) · bars compare worst drawdown: colored = strategy, grey = holding raw</div>
+        <div class="table-scroll"><table id="assets"></table></div>
+      </div>
+
+    </div>
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const inr = v => "₹" + Math.round(v).toLocaleString("en-IN");
+const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
+
+let DATA = null;
+const state = { strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, log: false, tf: "MWD" };
+
+fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
+  .then(d => { DATA = d; init(); })
+  .catch(() => { $("loading").textContent = "No data yet — run: python -m scripts.dashboard_data, then reload."; });
+
+function init() {
+  $("loading").style.display = "none";
+  $("app").style.display = "";
+  $("built").textContent = "grid built " + DATA.built + " · 144 backtests";
+  const stratNames = { ema: "EMA 20 stack (class rule)", brk: "ATH Breakout" };
+  slicer("sl-strat", Object.keys(DATA.strategies).filter(k => k in stratNames).map(k => [k, stratNames[k]]),
+         () => state.strat, k => { state.strat = k; });
+  slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; });
+  slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
+         () => String(state.riskIdx), k => { state.riskIdx = +k; });
+  slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
+         () => String(state.capIdx), k => { state.capIdx = +k; });
+  $("logbtn").addEventListener("click", () => {
+    state.log = !state.log;
+    $("logbtn").classList.toggle("on", state.log);
+    $("logbtn").setAttribute("aria-pressed", state.log);
+    render();
+  });
+  const tabs = $("tf-tabs");
+  for (const key of Object.keys(DATA.timeframes)) {
+    const b = document.createElement("button");
+    b.textContent = DATA.timeframes[key].label;
+    b.dataset.key = key;
+    b.addEventListener("click", () => { state.tf = key; renderTF(); });
+    tabs.appendChild(b);
+  }
+  renderAssets();
+  render();
+  renderTF();
+}
+
+function slicer(id, options, get, set) {
+  const el = $(id);
+  for (const [k, label] of options) {
+    const b = document.createElement("button");
+    b.dataset.key = k;
+    b.innerHTML = `<span class="dot"></span>${label}`;
+    b.addEventListener("click", () => { set(k); render(); });
+    el.appendChild(b);
+  }
+  el._sync = () => { for (const b of el.children) b.classList.toggle("on", b.dataset.key === get()); };
+}
+
+const runFor = (riskIdx, capIdx) =>
+  DATA.grid[`${state.strat}|${state.uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`];
+
+function render() {
+  for (const id of ["sl-strat", "sl-uni", "sl-risk", "sl-cap"]) $(id)._sync();
+  const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
+  const r = runFor(state.riskIdx, state.capIdx);
+
+  const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
+  const bench = benchSeries(r, cap);
+  const benchFinal = bench ? bench.v.at(-1) : null;
+
+  $("k-final").textContent = inr(r.final);
+  $("k-final").className = "v" + (r.final < cap ? " bad" : "");
+  $("k-final-d").innerHTML = benchFinal
+    ? `NIFTY B&amp;H: <b class="${r.final >= benchFinal ? "up" : "down"}">${inr(benchFinal)}</b>` : "";
+  $("k-cagr").textContent = pct1(r.cagr) + "/yr";
+  $("k-cagr").className = "v" + (r.cagr >= 7 ? " good" : r.cagr < 0 ? " bad" : "");
+  $("k-cagr-d").innerHTML = `over ${years.toFixed(1)} yrs · FD ≈ 7%`;
+  $("k-dd").textContent = r.maxdd.toFixed(1) + "%";
+  $("k-dd-d").innerHTML = bench ? `NIFTY B&amp;H: <b>${benchDD(bench).toFixed(1)}%</b>` : "";
+  $("k-uw").textContent = r.uw_long.toFixed(1) + " yrs";
+  $("k-uwnow").textContent = r.uw_now.toFixed(1) + " yrs";
+  $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
+  $("k-trades").textContent = r.taken.toLocaleString("en-IN");
+  $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
+  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${risk}% risk · start ${inr(cap)}`;
+
+  drawEquity(r, cap, bench);
+  drawUnderwater(r);
+  drawRiskBars();
+  renderEpisodes(r);
+}
+
+// ---------- charts ----------
+const M = { l: 52, r: 10, t: 10, b: 20 };
+
+function benchSeries(run, cap) {
+  const start = run.curve.d[0];
+  const i0 = DATA.nifty.d.findIndex(d => d >= start);
+  if (i0 < 0) return null;
+  const base = DATA.nifty.close[i0], end = run.curve.d.at(-1);
+  const d = [], v = [];
+  for (let i = i0; i < DATA.nifty.d.length && DATA.nifty.d[i] <= end; i++) {
+    d.push(DATA.nifty.d[i]); v.push(cap * DATA.nifty.close[i] / base);
+  }
+  return { d, v };
+}
+function benchDD(b) {
+  let peak = -1e18, worst = 0;
+  for (const v of b.v) { peak = Math.max(peak, v); worst = Math.min(worst, 100 * (v - peak) / peak); }
+  return worst;
+}
+
+function scales(dates, w, h, lo, hi, log) {
+  const t0 = Date.parse(dates[0]), t1 = Date.parse(dates.at(-1));
+  const x = d => M.l + (Date.parse(d) - t0) / (t1 - t0 || 1) * (w - M.l - M.r);
+  const y = log
+    ? v => M.t + (1 - (Math.log(Math.max(v, 1)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo) || 1)) * (h - M.t - M.b)
+    : v => M.t + (1 - (v - lo) / (hi - lo || 1)) * (h - M.t - M.b);
+  return { x, y, t0, t1 };
+}
+function yearTicks(t0, t1, max) {
+  const out = [], y0 = new Date(t0).getFullYear() + 1, y1 = new Date(t1).getFullYear();
+  const step = Math.max(1, Math.ceil((y1 - y0) / (max || 8)));
+  for (let y = y0; y <= y1; y += step) out.push(y);
+  return out;
+}
+const line = pts => pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
+
+function drawEquity(run, cap, bench) {
+  const w = 760, h = 280, svg = $("eqchart");
+  const all = run.curve.eq.concat(bench ? bench.v : []);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (state.log) lo = Math.max(lo, 1); else lo = Math.min(lo, cap * 0.8);
+  hi *= 1.03; lo *= state.log ? 0.9 : 0.97;
+  const s = scales(run.curve.d, w, h, lo, hi, state.log);
+  let g = "";
+  for (const v of (state.log ? logTicks(lo, hi) : linTicks(lo, hi))) {
+    const yy = s.y(v);
+    if (yy < M.t - 1 || yy > h - M.b) continue;
+    g += `<line x1="${M.l}" x2="${w - M.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
+         `<text x="${M.l - 6}" y="${yy + 3.5}" text-anchor="end">${shortInr(v)}</text>`;
+  }
+  for (const yr of yearTicks(s.t0, s.t1))
+    g += `<text x="${s.x(yr + "-01-01")}" y="${h - 6}" text-anchor="middle">${yr}</text>`;
+  g += `<line x1="${M.l}" x2="${w - M.r}" y1="${h - M.b}" y2="${h - M.b}" stroke="var(--baseline)"/>`;
+  if (bench)
+    g += `<path d="${line(bench.d.map((d, i) => [s.x(d), s.y(bench.v[i])]))}" fill="none" stroke="var(--bench)" stroke-width="1.5" opacity="0.85"/>`;
+  g += `<path d="${line(run.curve.d.map((d, i) => [s.x(d), s.y(run.curve.eq[i])]))}" fill="none" stroke="var(--equity)" stroke-width="2.2"/>`;
+  g += `<circle cx="${s.x(run.curve.d.at(-1))}" cy="${s.y(run.curve.eq.at(-1))}" r="3.5" fill="var(--equity)" stroke="var(--surface)" stroke-width="2"/>`;
+  g += `<rect id="eq-hit" x="${M.l}" y="${M.t}" width="${w - M.l - M.r}" height="${h - M.t - M.b}" fill="transparent"/>` +
+       `<g id="eq-cross" style="display:none"><line y1="${M.t}" y2="${h - M.b}" stroke="var(--baseline)" stroke-dasharray="3 3"/><circle r="4" fill="var(--equity)" stroke="var(--surface)" stroke-width="2"/><circle r="4" fill="var(--bench)" stroke="var(--surface)" stroke-width="2"/></g>`;
+  svg.innerHTML = g;
+  hover(svg, run, bench, s, w);
+}
+
+function drawUnderwater(run) {
+  const w = 760, h = 170, svg = $("ddchart");
+  const lo = Math.min(...run.curve.dd, -5);
+  const s = scales(run.curve.d, w, h, lo * 1.08, 0, false);
+  let g = "";
+  for (const v of linTicksPlain(lo, 0)) {
+    const yy = s.y(v);
+    g += `<line x1="${M.l}" x2="${w - M.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
+         `<text x="${M.l - 6}" y="${yy + 3.5}" text-anchor="end">${v}%</text>`;
+  }
+  for (const yr of yearTicks(s.t0, s.t1))
+    g += `<text x="${s.x(yr + "-01-01")}" y="${h - 6}" text-anchor="middle">${yr}</text>`;
+  const pts = run.curve.d.map((d, i) => [s.x(d), s.y(run.curve.dd[i])]);
+  g += `<path d="${line(pts)}L${s.x(run.curve.d.at(-1)).toFixed(1)} ${s.y(0).toFixed(1)}L${M.l} ${s.y(0).toFixed(1)}Z" fill="var(--dd)" opacity="0.16"/>`;
+  g += `<path d="${line(pts)}" fill="none" stroke="var(--dd)" stroke-width="1.7"/>`;
+  g += `<line x1="${M.l}" x2="${w - M.r}" y1="${s.y(0)}" y2="${s.y(0)}" stroke="var(--baseline)"/>`;
+  svg.innerHTML = g;
+}
+
+function drawRiskBars() {
+  barChart($("riskbars"), DATA.risks.map((rk, i) => ({
+    label: rk + "%", value: runFor(i, state.capIdx).cagr, on: i === state.riskIdx
+  })), "var(--equity)", v => v.toFixed(1) + "%");
+  barChart($("riskdd"), DATA.risks.map((rk, i) => ({
+    label: rk + "%", value: runFor(i, state.capIdx).maxdd, on: i === state.riskIdx
+  })), "var(--dd)", v => v.toFixed(0) + "%");
+}
+
+function barChart(svg, rows, color, fmt) {
+  const w = 360, h = 120, lp = 44, rp = 44, bh = 18, gap = (h - rows.length * bh) / (rows.length + 1);
+  const maxAbs = Math.max(...rows.map(r => Math.abs(r.value)), 0.001);
+  let g = "";
+  rows.forEach((r, i) => {
+    const y = gap + i * (bh + gap);
+    const bw = Math.abs(r.value) / maxAbs * (w - lp - rp);
+    g += `<text x="${lp - 6}" y="${y + bh / 2 + 3.5}" text-anchor="end">${r.label}</text>`;
+    g += `<rect x="${lp}" y="${y}" width="${Math.max(bw, 1.5)}" height="${bh}" rx="4" fill="${color}" opacity="${r.on ? 1 : 0.35}"/>`;
+    g += `<text x="${lp + Math.max(bw, 1.5) + 6}" y="${y + bh / 2 + 3.5}" style="fill:var(--ink-2);font-weight:${r.on ? 700 : 400}">${fmt(r.value)}</text>`;
+  });
+  svg.innerHTML = g;
+}
+
+function hover(svg, run, bench, s, vw) {
+  const hit = svg.querySelector("#eq-hit"), cross = svg.querySelector("#eq-cross"), tip = $("tip");
+  const move = ev => {
+    const box = svg.getBoundingClientRect();
+    const px = (ev.clientX - box.left) / box.width * vw;
+    const t = s.t0 + (px - M.l) / (vw - M.l - M.r) * (s.t1 - s.t0);
+    let i = run.curve.d.findIndex(d => Date.parse(d) >= t);
+    if (i < 0) i = run.curve.d.length - 1;
+    const d = run.curve.d[i], eq = run.curve.eq[i], dd = run.curve.dd[i];
+    const [lineEl, c1, c2] = cross.children;
+    const xx = s.x(d);
+    lineEl.setAttribute("x1", xx); lineEl.setAttribute("x2", xx);
+    c1.setAttribute("cx", xx); c1.setAttribute("cy", s.y(eq));
+    let bv = null;
+    if (bench) {
+      let j = bench.d.findIndex(x => x >= d);
+      if (j < 0) j = bench.d.length - 1;
+      bv = bench.v[j];
+      c2.setAttribute("cx", xx); c2.setAttribute("cy", s.y(bv)); c2.style.display = "";
+    } else c2.style.display = "none";
+    cross.style.display = "";
+    tip.style.display = "block";
+    tip.innerHTML = `<div class="d">${d}</div>` +
+      `<div class="row"><span>Account</span><b>${inr(eq)}</b></div>` +
+      (bv !== null ? `<div class="row"><span>NIFTY B&amp;H</span><b>${inr(bv)}</b></div>` : "") +
+      `<div class="row"><span>Below peak</span><b>${dd.toFixed(1)}%</b></div>`;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px";
+    tip.style.top = (ev.clientY + 14) + "px";
+  };
+  hit.addEventListener("mousemove", move);
+  hit.addEventListener("mouseleave", () => { cross.style.display = "none"; tip.style.display = "none"; });
+}
+
+function shortInr(v) {
+  if (v >= 1e7) return (v / 1e7).toFixed(1).replace(/\.0$/, "") + "cr";
+  if (v >= 1e5) return (v / 1e5).toFixed(1).replace(/\.0$/, "") + "L";
+  if (v >= 1e3) return Math.round(v / 1e3) + "k";
+  return Math.round(v);
+}
+function niceStep(raw) {
+  const mag = Math.pow(10, Math.floor(Math.log10(Math.abs(raw) || 1)));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+function linTicks(lo, hi) {
+  const step = niceStep((hi - lo) / 5), out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(v);
+  return out;
+}
+function linTicksPlain(lo, hi) {
+  const step = niceStep((hi - lo) / 4), out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(Math.round(v));
+  return out;
+}
+function logTicks(lo, hi) {
+  const out = [];
+  for (let m = Math.pow(10, Math.floor(Math.log10(lo))); m <= hi; m *= 10)
+    for (const k of [1, 2, 5]) { const v = m * k; if (v >= lo && v <= hi) out.push(v); }
+  return out;
+}
+
+// ---------- tables ----------
+function renderEpisodes(r) {
+  const rows = r.episodes.map(e =>
+    `<tr><td>${e.peak}</td><td class="neg">${e.depth.toFixed(1)}%</td>` +
+    `<td>${e.recovered ?? "not yet"}</td><td>${e.years.toFixed(1)}y</td></tr>`).join("");
+  $("episodes").innerHTML =
+    `<thead><tr><th>Peak</th><th>Depth</th><th>Recovered</th><th>Len</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function renderTF() {
+  for (const b of $("tf-tabs").children) b.classList.toggle("on", b.dataset.key === state.tf);
+  const t = DATA.timeframes[state.tf];
+  const maxG = Math.max(...t.rows.map(r => Math.abs(r.gross)), 1);
+  const rows = t.rows.map(r => {
+    const cls = r.sym === "ALL 5" ? ' class="total"' : "";
+    const bw = Math.min(100, Math.abs(r.gross) / maxG * 100).toFixed(0);
+    return `<tr${cls}><td>${r.sym}</td><td>${r.trades}</td><td>${(r.win_rate * 100).toFixed(0)}%</td>` +
+      `<td>${r.profit_factor.toFixed(2)}</td>` +
+      `<td class="databar"><div class="bg" style="width:${bw}%"></div>` +
+      `<span class="${r.gross >= 0 ? "pos" : "neg"}">${Math.round(r.gross).toLocaleString("en-IN")}</span></td></tr>`;
+  }).join("");
+  $("tf-table").innerHTML =
+    `<thead><tr><th>Stock</th><th>Trades</th><th>Win</th><th>PF</th><th>Gross ₹</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function renderAssets() {
+  const maxdd = Math.max(...DATA.assets.map(a => Math.max(-a.maxdd, -a.bh_dd)));
+  const rows = DATA.assets.map(a => {
+    const w1 = (-a.maxdd / maxdd * 100).toFixed(0), w2 = (-a.bh_dd / maxdd * 100).toFixed(0);
+    return `<tr><td>${a.sym}<span style="color:var(--muted)"> · ${a.strat}</span></td>` +
+      `<td class="${a.cagr >= 0 ? "" : "neg"}">${a.cagr.toFixed(1)}%</td>` +
+      `<td class="neg">${a.maxdd.toFixed(1)}%</td>` +
+      `<td style="min-width:130px;padding-top:6px">` +
+      `<div style="height:8px;border-radius:3px;background:var(--equity);width:${w1}%"></div>` +
+      `<div style="height:8px;border-radius:3px;background:var(--baseline);width:${w2}%;margin-top:2px"></div></td>` +
+      `<td>${a.bh_cagr.toFixed(1)}%</td><td class="neg">${a.bh_dd.toFixed(1)}%</td></tr>`;
+  }).join("");
+  $("assets").innerHTML =
+    `<thead><tr><th>Asset</th><th>CAGR</th><th>Max DD</th><th>DD compared</th><th>B&amp;H CAGR</th><th>B&amp;H DD</th></tr></thead><tbody>${rows}</tbody>`;
+}
+</script>
+</body>
+</html>

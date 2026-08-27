@@ -21,6 +21,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import backtest, config, frames, levels
+from .config import DATA
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 EPOCH = datetime(1970, 1, 1)
@@ -109,6 +110,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route in ("/", "/index.html"):
                 self._send((WEB_ROOT / "chart.html").read_bytes(), "text/html; charset=utf-8")
+            elif route == "/dashboard":
+                self._send((WEB_ROOT / "dashboard.html").read_bytes(), "text/html; charset=utf-8")
+            elif route == "/api/dashboard":
+                data_file = DATA / "dashboard.json"
+                if data_file.exists():
+                    self._send(data_file.read_bytes(), "application/json")
+                else:
+                    self._json({"error": "no data yet -- run: python -m scripts.dashboard_data"}, 404)
             elif route == "/api/symbols":
                 self._json({"symbols": self.cfg.all_symbols})
             elif route == "/api/candles":
