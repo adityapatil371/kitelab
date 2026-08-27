@@ -443,7 +443,7 @@ function renderStock() {
   if (!s) return;
   const block = s[state.stockStrat];
   fillTradeKPIs("s", block.stats);
-  $("s-title").textContent = `${state.stock} — price & ${state.stockStrat === "ema" ? "EMA stack" : "Breakout"} trades`;
+  $("s-title").textContent = `${state.stock} — price & ${DATA.strategies[state.stockStrat]} trades`;
   priceChart($("s-chart"), 1140, 300, s.closes, block.trades);
   tradesTable($("s-table"), block.trades);
 }
@@ -528,6 +528,23 @@ function renderTF() {
         `<td class="databar"><div class="bg" style="width:${bw}%"></div>` +
         `<span class="${r.gross >= 0 ? "pos" : "neg"}">${Math.round(r.gross).toLocaleString("en-IN")}</span></td></tr>`;
     }).join("") + "</tbody>";
+  renderTFAssets();
+}
+
+function renderTFAssets() {
+  const el = $("tf-assets");
+  if (!el || el.dataset.done) return;
+  const stacks = ["qmw", "ema", "wdh", "brk"];
+  const names = { qmw: "Q/M/W", ema: "M/W/D", wdh: "W/D/H", brk: "Breakout" };
+  const cell = st => st && st.trades
+    ? `${st.net.toLocaleString("en-IN")} <span style="color:var(--muted)">(${st.trades}t, ${(st.win_rate * 100).toFixed(0)}%, PF ${st.pf ?? "—"})</span>`
+    : '<span style="color:var(--muted)">no hourly data</span>';
+  el.innerHTML =
+    `<thead><tr><th>Asset</th>${stacks.map(k => `<th>${names[k]} net</th>`).join("")}</tr></thead><tbody>` +
+    Object.entries(DATA.assets).map(([sym, a]) =>
+      `<tr><td>${sym}</td>${stacks.map(k => `<td>${a[k] ? cell(a[k].stats) : cell(null)}</td>`).join("")}</tr>`).join("") +
+    "</tbody>";
+  el.dataset.done = "1";
 }
 
 
