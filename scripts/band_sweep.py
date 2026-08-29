@@ -76,11 +76,11 @@ def main() -> None:
                      "GROSS is before charges, NET after Zerodha delivery charges -- a band "
                      "earns its keep by cutting trade count, so judge it on NET.")
     s_cols = ["Stack", "Band", "Trades", "Win %", "Avg Win", "Avg Loss", "Expectancy",
-              "Profit Factor", "Gross", "Charges", "Net", "Charges % of Gross",
-              "Median Hold (days)", "Median Stop %"]
-    s_fmts = ["@", "0%", "0", "0.0%", "#,##0", "#,##0", "#,##0", "0.00", "#,##0", "#,##0",
-              "#,##0", "0.0", "0", "0.00"]
-    for c, (name, width) in enumerate(zip(s_cols, [9, 7, 8, 8, 10, 10, 11, 8, 12, 10, 12, 11, 12, 11]), start=1):
+              "Risk Reward", "Capture (avg per stock)", "Profit Factor", "Gross",
+              "Charges", "Net", "Charges % of Gross", "Median Hold (days)", "Median Stop %"]
+    s_fmts = ["@", "0%", "0", "0.0%", "#,##0", "#,##0", "#,##0", "0.00", "0.0%", "0.00",
+              "#,##0", "#,##0", "#,##0", "0.0", "0", "0.00"]
+    for c, (name, width) in enumerate(zip(s_cols, [9, 7, 8, 8, 10, 10, 11, 11, 13, 8, 12, 10, 12, 11, 12, 11]), start=1):
         s_sheet.cell(3, c, name).font = Font(bold=True)
         s_sheet.column_dimensions[get_column_letter(c)].width = width
     srow = 4
@@ -91,9 +91,26 @@ def main() -> None:
             wins = [x for x in g if x > 0]
             losses = [x for x in g if x <= 0]
             charges = sum(t["charges"] for t in flat)
+            # Capture uses the sheet's own definition (points the strategy took /
+            # the stock's own move) averaged across stocks, skipping stocks whose
+            # price ENDED LOWER than it started -- a negative denominator makes the
+            # ratio meaningless rather than merely small.
+            caps = []
+            for sym, lst in data[(variant, band)].items():
+                if not lst:
+                    continue
+                move = round(lst[0]["exit_price"], 2) - round(lst[-1]["entry_price"], 2)
+                if move <= 0:
+                    continue
+                pts = sum(round(t["exit_price"], 2) - round(t["entry_price"], 2) for t in lst)
+                caps.append(pts / move)
+            avg_win = float(np.mean(wins)) if wins else 0.0
+            avg_loss = float(np.mean(losses)) if losses else 0.0
             vals = [label, band, len(flat), len(wins) / len(g) if g else 0,
-                    round(np.mean(wins)) if wins else 0, round(np.mean(losses)) if losses else 0,
+                    round(avg_win), round(avg_loss),
                     round(sum(g) / len(g)) if g else 0,
+                    round(avg_win / abs(avg_loss), 2) if avg_loss else None,
+                    round(float(np.mean(caps)), 4) if caps else None,
                     round(sum(wins) / -sum(losses), 2) if losses and sum(losses) < 0 else None,
                     round(sum(g)), round(charges), round(sum(g) - charges),
                     round(100 * charges / sum(g), 1) if sum(g) else None,
