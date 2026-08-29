@@ -223,8 +223,8 @@ def main() -> None:
         "figure, and every one is far shallower than buy-and-hold on the same asset "
         "(see Assets).",
         "3. CORRECT: crude oil buy-and-hold bottomed at ~-100% in April 2020.",
-        "THE TEACHER'S QUESTION: at 1% risk, drawdowns run -56% to -66% with 5-6 "
-        "YEARS underwater -- his 'unsustainable' verdict stands on the pain, though "
+        "THE SUSTAINABILITY QUESTION: at 1% risk, drawdowns run -56% to -66% with 5-6 "
+        "YEARS underwater -- the 'unsustainable' verdict stands on the pain, though "
         "under the class's close-only exit convention the returns at 1% are no longer "
         "FD-level (EMA ~12% CAGR). The refinement the data adds: risk per trade, not "
         "the strategy alone, sets the pain -- at 0.25% risk the same signals produce "

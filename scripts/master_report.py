@@ -149,8 +149,8 @@ def main() -> None:
         "This whole file: python -m scripts.master_report (signal caches in "
         "data/signal_cache feed it; delete them to force a full rebuild).",
         "Deeper detail lives one script away: scripts.tf_compare (full trade lists "
-        "per timeframe), scripts.dd_proof (the formula-audited drawdown proof for "
-        "the teacher), scripts.drawdown_report, scripts.full_report (the original "
+        "per timeframe), scripts.dd_proof (the formula-audited drawdown proof"
+        "), scripts.drawdown_report, scripts.full_report (the original "
         "25-minute deep-dive), scripts.showcase (practice-format trade sheets).",
         "The separate report files that used to fill this folder were removed on "
         "2026-08-28; every one of them is regenerable from those scripts. The BTC "
@@ -273,7 +273,7 @@ def main() -> None:
         "Equity 100, 110, 70, 80 -> peak 110, worst day 70, max drawdown "
         "(70-110)/110 = -36%. Highest-minus-lowest is NOT a drawdown unless the "
         "peak came FIRST, and a settlement-only view would only ever see -20%.",
-        "The formula-audited proof file for the teacher (every day's equity as "
+        "The formula-audited drawdown proof (every day's equity as "
         "live Excel formulas, worst-day position x-ray at checkable prices): "
         "python -m scripts.dd_proof.",
     ], span=6)

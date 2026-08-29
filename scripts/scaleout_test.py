@@ -1,4 +1,4 @@
-"""Test the teacher's scale-out rule: sell half at +1R, let the rest run.
+"""Test the scale-out rule: sell half at +1R, let the rest run.
 
     python -m scripts.scaleout_test --universe assets
     python -m scripts.scaleout_test --universe stocks
@@ -115,7 +115,7 @@ def main() -> None:
     book.remove(book.active)
     sheet = book.create_sheet("Scale-Out Test")
     row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
-        "The teacher's rule under test: once profit equals the initial risk (+1R), sell "
+        "The rule under test: once profit equals the initial risk (+1R), sell "
         "HALF the position, then let the rest run. Two versions: with the stop left "
         "alone, and with the stop moved to breakeven (the 'free trade'). Entries are "
         "IDENTICAL in all three rows of each table -- only the exit changes.",

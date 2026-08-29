@@ -11,7 +11,7 @@ Everything is combinable with everything:
                 M/W/D, Q/M/W and W/D/H timeframes, plus ATH Breakout)
                 x universe (all 199 / 49 in-sample / 150 holdout)
                 x risk (0.25-2%) x capital (50k-5L)
-    scaleout    the teacher's "sell half at +1R" idea, per strategy AND per
+    scaleout    the "sell half at +1R" scale-out idea, per strategy AND per
                 universe, columns matching the old Scale-Out Test sheet --
                 measured per trade (a two-part exit cannot be priced by the
                 one-account simulation)
