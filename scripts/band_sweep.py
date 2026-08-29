@@ -67,6 +67,7 @@ def main() -> None:
     book = Workbook()
     book.remove(book.active)
     cached: dict[tuple[str, str], float] = {}
+    ranges: dict[tuple[str, float, str], tuple[int, int, int]] = {}
 
     # ---------- Summary sheet ----------
     s_sheet = book.create_sheet("Summary")
@@ -166,6 +167,7 @@ def main() -> None:
                 cached[(label, f"F{row}")] = move
                 cached[(label, f"L{row}")] = points
                 total_row = row
+                ranges[(label, band, symbol)] = (lo, hi, total_row)
                 row += 2
 
                 # summary block row for this (band, stock)
@@ -202,6 +204,68 @@ def main() -> None:
                     cached[(label, f"W{sum_row}")] = round(points / move, 2)
                 sum_row += 1
             sum_row += 1
+
+    # ---------- consolidated per-stock comparison, all stacks and bands ----
+    ps = book.create_sheet("Per Stock")
+    ps["A1"] = ("Every stack, every band, every stock -- the same nine metrics as the "
+                "timeframe workbook. Formulas read straight from the trade sheets, so "
+                "changing Capital or Risk there flows through to here.")
+    ps_cols = ["Stock", "Win Trades", "Total Win", "Avg Win", "Lose Trades", "Total Loss",
+               "Avg Loss", "Expectancy", "Capture", "Risk Reward"]
+    for c, width in enumerate([12, 11, 12, 11, 11, 12, 11, 12, 10, 11], start=1):
+        ps.column_dimensions[get_column_letter(c)].width = width
+    prow = 3
+    for variant, label in STACKS:
+        for band in BANDS:
+            title = ps.cell(prow, 1, f"{label.replace('-', '/')}  ~  band {band:.0%}")
+            title.font = Font(bold=True)
+            title.fill = BAND_FILL
+            prow += 1
+            for c, name in enumerate(ps_cols, start=1):
+                ps.cell(prow, c, name).font = Font(bold=True)
+            prow += 1
+            for symbol in ASSIGNED:
+                key = (label, band, symbol)
+                if key not in ranges:
+                    continue
+                lo, hi, total_row = ranges[key]
+                q = f"'{label}'!"
+                rng = f"{q}J{lo}:J{hi}"
+                ps.cell(prow, 1, symbol)
+                ps.cell(prow, 2, f'=COUNTIF({rng},">0")')
+                ps.cell(prow, 3, f'=SUMIF({rng},">0")').number_format = "#,##0.00"
+                ps.cell(prow, 4, f'=IFERROR(C{prow}/B{prow},"-")').number_format = "#,##0.00"
+                ps.cell(prow, 5, f'=COUNTIF({rng},"<0")')
+                ps.cell(prow, 6, f'=SUMIF({rng},"<0")').number_format = "#,##0.00"
+                ps.cell(prow, 7, f'=IFERROR(F{prow}/E{prow},"-")').number_format = "#,##0.00"
+                ps.cell(prow, 8, f'=IFERROR((B{prow}/(B{prow}+E{prow}))*D{prow}'
+                                 f'+(E{prow}/(B{prow}+E{prow}))*G{prow},"-")').number_format = "#,##0.00"
+                ps.cell(prow, 9, f'=IFERROR({q}L{total_row}/{q}F{total_row},"-")').number_format = "0.0%"
+                ps.cell(prow, 10, f'=IFERROR(D{prow}/(G{prow}*-1),"-")').number_format = "0.00"
+                profits = [cached[(label, f"J{r}")] for r in range(lo, hi + 1)]
+                wins = [x for x in profits if x > 0]
+                losses = [x for x in profits if x < 0]
+                cached[("Per Stock", f"B{prow}")] = len(wins)
+                cached[("Per Stock", f"C{prow}")] = round(sum(wins), 2)
+                cached[("Per Stock", f"E{prow}")] = len(losses)
+                cached[("Per Stock", f"F{prow}")] = round(sum(losses), 2)
+                if wins:
+                    cached[("Per Stock", f"D{prow}")] = round(sum(wins) / len(wins), 2)
+                if losses:
+                    cached[("Per Stock", f"G{prow}")] = round(sum(losses) / len(losses), 2)
+                if wins and losses:
+                    n = len(wins) + len(losses)
+                    cached[("Per Stock", f"H{prow}")] = round(
+                        (len(wins) / n) * (sum(wins) / len(wins))
+                        + (len(losses) / n) * (sum(losses) / len(losses)), 2)
+                    cached[("Per Stock", f"J{prow}")] = round(
+                        (sum(wins) / len(wins)) / abs(sum(losses) / len(losses)), 2)
+                move = cached[(label, f"F{total_row}")]
+                pts = cached[(label, f"L{total_row}")]
+                if move:
+                    cached[("Per Stock", f"I{prow}")] = round(pts / move, 4)
+                prow += 1
+            prow += 1
 
     target = report.save(book, "EMA Band Sweep.xlsx")
 
