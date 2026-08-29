@@ -178,6 +178,12 @@
       </div>
 
       <div class="card span12">
+        <h2>Trade metrics by universe</h2>
+        <div class="sub" id="tm-sub"></div>
+        <div class="table-scroll"><table id="tm-table"></table></div>
+      </div>
+
+      <div class="card span12">
         <h2>Teacher's idea: sell half when risk is covered (+1R)</h2>
         <div class="sub" id="so-sub">All 199 stocks, fixed capital per trade, net of charges, all history — measured per trade
           (a two-part exit cannot be priced by the one-account simulation). Verdict: banking half caps roughly half the profit
@@ -206,6 +212,12 @@
           <div><h2 id="s-title">Price &amp; trades</h2><div class="sub">weekly closes · <span style="color:var(--good)">&#9650;</span> entry &nbsp;<span style="color:var(--dd)">&#9660;</span> exit · log scale</div></div>
         </div>
         <svg id="s-chart" viewBox="0 0 1140 300"></svg>
+      </div>
+
+      <div class="card span12">
+        <h2>Trade metrics, every strategy on this stock</h2>
+        <div class="sub">2% band · fixed ₹1,00,000 per trade · net of charges</div>
+        <div class="table-scroll"><table id="s-metrics"></table></div>
       </div>
 
       <div class="card span12">
@@ -242,6 +254,12 @@
         <div class="sub">weekly closes · <span style="color:var(--good)">&#9650;</span> entry &nbsp;<span style="color:var(--dd)">&#9660;</span> exit · log scale</div>
         <svg id="a-chart" viewBox="0 0 1140 280"></svg>
       </div>
+      <div class="card span12">
+        <h2>Trade metrics, every strategy on this instrument</h2>
+        <div class="sub">100,000 units · 1% risk · flat fees</div>
+        <div class="table-scroll"><table id="a-metrics"></table></div>
+      </div>
+
       <div class="card span12">
         <h2>Every trade, newest first</h2>
         <div class="table-scroll tall"><table id="a-table"></table></div>
@@ -408,6 +426,7 @@ function renderPortfolio() {
     on: i === state.bandIdx || state.strat === "brk"
   })), "var(--bench)", v => v.toFixed(1) + "%", 160);
   renderEpisodes(r);
+  renderTradeMetrics();
   renderScaleout();
   renderBasket();
 }
@@ -452,6 +471,40 @@ function renderBasket() {
   $("bk-hist").innerHTML = g;
 }
 
+const METRIC_COLS = ["Win Trades", "Total Win", "Avg Win", "Lose Trades", "Total Loss",
+                     "Avg Loss", "Expectancy", "Capture", "Risk Reward"];
+
+function metricsTable(el, rows, firstHeader) {
+  // rows: [label, stats]
+  el.innerHTML =
+    `<thead><tr><th>${firstHeader}</th>${METRIC_COLS.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>` +
+    rows.map(([label, st]) => {
+      if (!st || !st.trades)
+        return `<tr><td>${label}</td>` + METRIC_COLS.map(() => '<td style="color:var(--muted)">—</td>').join("") + "</tr>";
+      const cap = st.capture === null || st.capture === undefined
+        ? '<span style="color:var(--muted)">—</span>' : (st.capture * 100).toFixed(1) + "%";
+      return `<tr><td>${label}</td>` +
+        `<td>${st.wins}</td><td class="pos">${st.total_win.toLocaleString("en-IN")}</td>` +
+        `<td>${st.avg_win.toLocaleString("en-IN")}</td>` +
+        `<td>${st.losses}</td><td class="neg">${st.total_loss.toLocaleString("en-IN")}</td>` +
+        `<td>${st.avg_loss.toLocaleString("en-IN")}</td>` +
+        `<td class="${st.expectancy >= 0 ? "pos" : "neg"}">${st.expectancy.toLocaleString("en-IN")}</td>` +
+        `<td>${cap}</td><td>${st.rr ?? "—"}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+function renderTradeMetrics() {
+  if (!DATA.tradestats) return;
+  const band = bandOf(state.strat, state.bandIdx);
+  $("tm-sub").textContent =
+    `${DATA.strategies[state.strat]} · ${(band * 100)}% band · every trade the rule produced ` +
+    `(fixed ₹1,00,000 per trade, net of charges) — not the one-account view above, so the ` +
+    `universes are directly comparable.`;
+  const rows = Object.entries(DATA.universes).map(([u, label]) =>
+    [label + (u === state.uni ? "  ←" : ""), DATA.tradestats[`${state.strat}|${band}|${u}`]]);
+  metricsTable($("tm-table"), rows, "Universe");
+}
+
 function renderScaleout() {
   const block = DATA.scaleout[state.strat];
   if (!block) {
@@ -489,6 +542,9 @@ function renderStock() {
   const block = s[state.stockStrat];
   fillTradeKPIs("s", block.stats);
   $("s-title").textContent = `${state.stock} — price & ${DATA.strategies[state.stockStrat]} trades`;
+  metricsTable($("s-metrics"),
+               Object.keys(DATA.strategies).map(k => [DATA.strategies[k], (s[k] || {}).stats]),
+               "Strategy");
   priceChart($("s-chart"), 1140, 300, s.closes, block.trades);
   tradesTable($("s-table"), block.trades);
 }
@@ -553,6 +609,9 @@ function renderAsset() {
     ], { log: false, money: true, hover: { dd: acc.curve } });
     underwaterChart($("a-uw"), 360, 260, acc.curve);
   } else { $("a-eq").innerHTML = ""; $("a-uw").innerHTML = ""; }
+  metricsTable($("a-metrics"),
+               Object.keys(DATA.strategies).map(k => [DATA.strategies[k], (a[k] || {}).stats]),
+               "Strategy");
   priceChart($("a-chart"), 1140, 280, a.closes, block.trades);
   tradesTable($("a-table"), block.trades);
 }

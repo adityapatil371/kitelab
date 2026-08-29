@@ -111,6 +111,26 @@ def variant_builder(key: str, band: float = 0.02):
     return build
 
 
+def capture_ratio(trades: list[dict]):
+    """Points the strategy took / the stock's own move, averaged per stock.
+
+    The class sheet's metric. A stock that ENDED LOWER than it started has a
+    negative denominator, which makes the ratio meaningless rather than merely
+    small, so those stocks are skipped instead of averaged in.
+    """
+    by_symbol: dict[str, list] = {}
+    for t in trades:
+        by_symbol.setdefault(t["symbol"], []).append(t)
+    caps = []
+    for lst in by_symbol.values():
+        lst = sorted(lst, key=lambda t: t["entry_ts"])
+        move = lst[-1]["exit_price"] - lst[0]["entry_price"]
+        if move <= 0:
+            continue
+        caps.append(sum(t["exit_price"] - t["entry_price"] for t in lst) / move)
+    return round(sum(caps) / len(caps), 4) if caps else None
+
+
 def trade_stats(trades: list[dict]) -> dict:
     nets = [t["net_profit"] for t in trades]
     wins = [n for n in nets if n > 0]
@@ -121,7 +141,14 @@ def trade_stats(trades: list[dict]) -> dict:
         running += t["net_profit"]
         peak = max(peak, running)
         worst_run = min(worst_run, running - peak)
-    return {"trades": len(trades), "wins": len(wins),
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    return {"trades": len(trades), "wins": len(wins), "losses": len(losses),
+            "total_win": round(sum(wins)), "total_loss": round(sum(losses)),
+            "avg_win": round(avg_win), "avg_loss": round(avg_loss),
+            "expectancy": round(sum(nets) / len(nets)) if nets else 0,
+            "rr": round(avg_win / abs(avg_loss), 2) if avg_loss else None,
+            "capture": capture_ratio(trades),
             "win_rate": round(len(wins) / len(nets), 3) if nets else 0,
             "banked": sum(1 for t in trades if "banked" in t["exit_reason"]),
             "gross": round(sum(t["gross_profit"] for t in trades)),
@@ -222,6 +249,14 @@ def main() -> None:
                     r = portfolio.run(subset, capital, risk / 100)
                     grid[f"{skey}|{band:g}|{ukey}|{risk:g}|{capital}"] = run_payload(r)
         print(f"  grid: {skey} band {band:.0%} done", flush=True)
+
+    tradestats = {}
+    for (skey, band), signals in base.items():
+        for ukey, (_, members) in universes.items():
+            subset = (signals if members is None
+                      else [t for t in signals if t["symbol"] in members])
+            tradestats[f"{skey}|{band:g}|{ukey}"] = trade_stats(subset)
+    print("  universe trade metrics done", flush=True)
 
     scaleout = {}
     for skey in ("ema", "brk"):
@@ -362,7 +397,7 @@ def main() -> None:
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),
-        "grid": grid, "scaleout": scaleout, "stocks": stocks, "assets": assets,
+        "grid": grid, "tradestats": tradestats, "scaleout": scaleout, "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
     OUT.write_text(json.dumps(payload))
