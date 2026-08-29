@@ -189,7 +189,26 @@ def main() -> None:
                                                s, trailing_stops=True, scale_out="half_be")),
     }
 
+    # Nobody at class level follows 199 stocks; ~10 is realistic. Draw 75 random
+    # baskets (fixed seed) and promote the MEDIAN performer -- at a fixed
+    # reference setting -- to a universe of its own, so every chart can be read
+    # through it. Median, not best: picking the winner would be cherry-picking.
+    import random
+    rng = random.Random(20260823)
+    symbols_all = sorted(cfg.all_symbols)
+    baskets = [rng.sample(symbols_all, 10) for _ in range(75)]
+    scored = []
+    for basket in baskets:
+        members = set(basket)
+        subset = [t for t in base[("ema", 0.02)] if t["symbol"] in members]
+        scored.append((portfolio.run(subset, 100_000, 0.01)["cagr_pct"], basket))
+    scored.sort(key=lambda x: x[0])
+    median_basket = scored[len(scored) // 2][1]
+    print(f"  10-stock universe (median of 75 draws, {scored[len(scored)//2][0]:.1f}% CAGR "
+          f"at the reference setting): {', '.join(sorted(median_basket))}", flush=True)
+
     universes = {"all": ("All 199 stocks", None),
+                 "b10": ("10 random stocks", set(median_basket)),
                  "in": ("49 in-sample", set(cfg.in_sample)),
                  "out": ("150 holdout", set(cfg.out_of_sample))}
 
@@ -306,10 +325,6 @@ def main() -> None:
     # many random baskets and report the distribution. Fixed Rs1,00,000
     # capital (class level); risk follows the slider; baskets identical
     # across strategies/risks so comparisons are apples-to-apples.
-    import random
-    rng = random.Random(20260823)
-    symbols = sorted(cfg.all_symbols)
-    baskets = [rng.sample(symbols, 10) for _ in range(75)]
     basket10 = {}
     for (skey, band), signals in base.items():
         by_sym = {}
@@ -346,6 +361,7 @@ def main() -> None:
         "universes": {k: v[0] for k, v in universes.items()},
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
         "assigned": list(ASSIGNED),
+        "basket_members": sorted(median_basket),
         "grid": grid, "scaleout": scaleout, "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
