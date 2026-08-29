@@ -1,0 +1,199 @@
+"""What actually drives the profit? Every lever, ranked by how much it moves the result.
+
+    python -m scripts.factor_analysis
+
+One reference account -- EMA M/W/D, 2% band, all 199 stocks, 1% risk,
+Rs2,50,000 -- and then each factor is varied ON ITS OWN across its plausible
+range while everything else is held still. The swing in CAGR is that factor's
+influence. This is a tornado analysis, not a regression: the levers interact,
+so the ranking says "what would change my outcome most", not "what causes
+profit" in a causal sense.
+
+Writes output/Factor Analysis.xlsx and prints the ranking.
+"""
+from __future__ import annotations
+
+import json
+import pickle
+from pathlib import Path
+
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+from kitelab import backtest, config, portfolio, report
+
+CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
+DASH = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
+CAPITAL = 250_000.0
+RISK = 0.01
+
+
+def load_cache(name):
+    return pickle.loads((CACHE / f"{name}.pkl").read_bytes())
+
+
+def cagr(trades, capital=CAPITAL, risk=RISK):
+    return portfolio.run(trades, capital, risk)["cagr_pct"]
+
+
+def with_slippage(trades, per_side):
+    out = []
+    for t in trades:
+        t = dict(t)
+        t["entry_price"] *= (1 + per_side)      # you buy a little higher
+        t["exit_price"] *= (1 - per_side)       # and sell a little lower
+        out.append(t)
+    return out
+
+
+def main() -> None:
+    d = json.loads(DASH.read_text())
+    grid = d["grid"]
+    ref_key = "ema|0.02|all|1|250000"
+    ref = grid[ref_key]["cagr"]
+    print(f"\n  reference account: EMA M/W/D, 2% band, all 199, 1% risk, Rs2,50,000 "
+          f"-> CAGR {ref:.1f}%\n")
+
+    factors = []      # (name, low_label, low, high_label, high, note)
+
+    # ---- everything already in the precomputed grid ----------------------
+    def sweep(name, keys_labels, note):
+        vals = [(lab, grid[k]["cagr"]) for lab, k in keys_labels if k in grid]
+        vals.sort(key=lambda x: x[1])
+        factors.append((name, vals[0][0], vals[0][1], vals[-1][0], vals[-1][1], note, vals))
+
+    sweep("Strategy / timeframe stack",
+          [("EMA W/D/H (hourly)", "wdh|0.02|all|1|250000"),
+           ("EMA M/W/D (daily)", "ema|0.02|all|1|250000"),
+           ("EMA Q/M/W (weekly)", "qmw|0.02|all|1|250000"),
+           ("ATH Breakout", "brk|0.02|all|1|250000")],
+          "which rule you trade at all")
+    sweep("Band (dead zone) 0-5%",
+          [(f"{b*100:g}% band", f"ema|{b:g}|all|1|250000") for b in d["bands"]],
+          "how far past the EMA price must close")
+    sweep("Risk per trade 0.25-2%",
+          [(f"{r}% risk", f"ema|0.02|all|{r:g}|250000") for r in d["risks"]],
+          "position size as a share of equity")
+    sweep("Universe / breadth",
+          [(d["universes"][u], f"ema|0.02|{u}|1|250000") for u in d["universes"]],
+          "how many stocks you follow")
+    sweep("Starting capital",
+          [(f"Rs{c:,}", f"ema|0.02|all|1|{c}") for c in d["capitals"]],
+          "how much money you begin with")
+
+    # ---- which ten stocks you happen to pick ------------------------------
+    b = d["basket10"]["ema|0.02|1"]
+    factors.append(("WHICH 10 stocks you pick", "worst of 75 draws", b["worst"],
+                    "best of 75 draws", b["best"],
+                    "pure luck of the draw (measured at Rs1,00,000)",
+                    [("worst", b["worst"]), ("p10", b["p10"]), ("median", b["median"]),
+                     ("p90", b["p90"]), ("best", b["best"])]))
+
+    # ---- levers that need their own runs ----------------------------------
+    ema = load_cache("EMA_199")
+    print("  running the extra scenarios:", flush=True)
+
+    real_charges = portfolio.charges
+    portfolio.charges = lambda *a, **k: 0.0
+    free = cagr(ema)
+    portfolio.charges = real_charges
+    factors.append(("Brokerage charges", "charged (real)", ref, "zero fees", free,
+                    "Zerodha delivery costs", [("real fees", ref), ("no fees", free)]))
+    print(f"    charges: {ref:.1f}% -> {free:.1f}% without fees", flush=True)
+
+    slip = [("none (our model)", ref)]
+    for s in (0.0005, 0.001, 0.002):
+        slip.append((f"{s*100:.2f}%/side", cagr(with_slippage(ema, s))))
+    slip.sort(key=lambda x: x[1])
+    factors.append(("Slippage (not modelled anywhere else)", slip[0][0], slip[0][1],
+                    slip[-1][0], slip[-1][1],
+                    "the gap between the price you see and the price you get", slip))
+    print(f"    slippage 0 -> 0.2%/side: {slip[-1][1]:.1f}% -> {slip[0][1]:.1f}%", flush=True)
+
+    scale = [("keep full position", ref)]
+    for label, name in (("sell half at +1R", "EMA_half_199"),
+                        ("half + breakeven stop", "EMA_halfbe_199")):
+        try:
+            scale.append((label, cagr(load_cache(name))))
+        except FileNotFoundError:
+            pass
+    scale.sort(key=lambda x: x[1])
+    factors.append(("Scale-out exit rule", scale[0][0], scale[0][1], scale[-1][0], scale[-1][1],
+                    "banking half the position early", scale))
+    print(f"    scale-out variants done", flush=True)
+
+    cfg = config.load()
+    intrabar = []
+    for s in cfg.all_symbols:
+        try:
+            intrabar.extend(backtest.simulate(s, stop_on_close=False))
+        except SystemExit:
+            pass
+    ib = cagr(intrabar)
+    factors.append(("Stop convention", "broker stop (intrabar)", ib,
+                    "class rule (checked at closes)", ref,
+                    "whether a wick can stop you out", [("intrabar", ib), ("close-only", ref)]))
+    print(f"    convention: intrabar {ib:.1f}% vs close-only {ref:.1f}%", flush=True)
+
+    # data quality: measured on Breakout, before and after the corrupt-bar repair
+    factors.append(("Data quality (corrupt bars)", "before repair", 5.3, "after repair", 11.9,
+                    "zero-price bars in Kite's 2015-18 intraday history; measured on "
+                    "Breakout, same settings", [("before", 5.3), ("after", 11.9)]))
+
+    factors.sort(key=lambda f: abs(f[4] - f[2]), reverse=True)
+
+    print(f"\n  {'factor':<38} {'low':>8} {'high':>8} {'swing':>8}")
+    print("  " + "-" * 66)
+    for name, lo_l, lo, hi_l, hi, note, _ in factors:
+        print(f"  {name:<38} {lo:>7.1f}% {hi:>7.1f}% {hi-lo:>7.1f}")
+
+    # ---- workbook --------------------------------------------------------
+    book = Workbook()
+    book.remove(book.active)
+    sheet = book.create_sheet("Ranking")
+    sheet["A1"] = (f"What moves the profit, most to least. Reference account: EMA M/W/D, 2% band, "
+                   f"all 199 stocks, 1% risk, Rs2,50,000 = {ref:.1f}% CAGR. Each factor is varied "
+                   f"ALONE across its plausible range; the swing is how many CAGR points that "
+                   f"single choice is worth. Levers interact, so read this as 'what would change "
+                   f"my outcome most', not as a causal model.")
+    cols = ["Rank", "Factor", "Worst setting", "Worst CAGR %", "Best setting", "Best CAGR %",
+            "Swing (points)", "What it means"]
+    for c, (name, w) in enumerate(zip(cols, [6, 34, 24, 12, 26, 12, 13, 52]), start=1):
+        sheet.cell(3, c, name).font = Font(bold=True)
+        sheet.column_dimensions[get_column_letter(c)].width = w
+    for i, (name, lo_l, lo, hi_l, hi, note, _) in enumerate(factors, start=1):
+        row = 3 + i
+        for c, v in enumerate([i, name, lo_l, round(lo, 1), hi_l, round(hi, 1),
+                               round(hi - lo, 1), note], start=1):
+            cell = sheet.cell(row, c, v)
+            if c in (4, 6, 7):
+                cell.number_format = "0.0"
+        sheet.cell(row, 7).font = Font(bold=True)
+
+    detail = book.create_sheet("Every setting")
+    detail["A1"] = "Every value behind the ranking, factor by factor."
+    r = 3
+    for name, *_rest, values in factors:
+        cell = detail.cell(r, 1, name)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="BDD7EE")
+        r += 1
+        detail.cell(r, 1, "setting").font = Font(bold=True)
+        detail.cell(r, 2, "CAGR %").font = Font(bold=True)
+        r += 1
+        for label, value in values:
+            detail.cell(r, 1, label)
+            detail.cell(r, 2, round(value, 2)).number_format = "0.00"
+            r += 1
+        r += 1
+    detail.column_dimensions["A"].width = 34
+    detail.column_dimensions["B"].width = 10
+
+    target = report.save(book, "Factor Analysis.xlsx")
+    print(f"\n  written: {target}")
+
+
+if __name__ == "__main__":
+    main()
