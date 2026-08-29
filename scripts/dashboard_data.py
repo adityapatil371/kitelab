@@ -3,7 +3,7 @@
     python -m scripts.dashboard_data
 
 Writes data/dashboard.json for http://localhost:8765/dashboard (served by
-python -m scripts.chart). The page is a pure viewer -- every control selects
+python -m scripts.dashboard). The page is a pure viewer -- every control selects
 among these precomputed results, nothing is simulated in the browser.
 
 Everything is combinable with everything:
