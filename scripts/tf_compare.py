@@ -102,14 +102,15 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
 
 
 def simulate_variant(symbol: str, variant: str,
-                     stop_on_close: bool = True) -> list[dict]:
+                     stop_on_close: bool = True,
+                     band: float = BAND) -> list[dict]:
     """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly.
 
     stop_on_close=True is the class convention (everything checked at bar
     closes only); False is the pre-2026-08-28 broker convention.
     """
     base, highers = _stack_frames(symbol, variant)
-    signal = stack_signal(base, highers)
+    signal = stack_signal(base, highers, band=band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
     open_, high, low, close = (signal[c].to_numpy()
