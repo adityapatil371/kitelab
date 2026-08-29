@@ -46,7 +46,8 @@ CAPITALS = [50_000, 100_000, 250_000, 500_000]
 ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
           ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
           ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005)]
-STEP = 5
+STEP = 10
+BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
                    "wdh": "EMA · W/D/H", "brk": "ATH Breakout"}
 
@@ -96,11 +97,11 @@ def cached_signals(name: str, build) -> list[dict]:
     return out
 
 
-def variant_builder(key: str):
+def variant_builder(key: str, band: float = 0.02):
     """simulate_variant trades, padded with the fields portfolio.run needs."""
     def build(symbol):
         out = []
-        for t in simulate_variant(symbol, key):
+        for t in simulate_variant(symbol, key, band=band):
             t = dict(t)
             t["same_session"] = (pd.Timestamp(t["entry_ts"]).date()
                                  == pd.Timestamp(t["exit_ts"]).date())
@@ -163,13 +164,18 @@ def main() -> None:
     cfg = config.load()
 
     print("  signal lists (cached where possible):", flush=True)
-    base = {
-        "ema": cached_signals("EMA_199", backtest.simulate),
-        "qmw": cached_signals("QMW_199", variant_builder("QMW")),
-        "wdh": cached_signals("WDH_199", variant_builder("WDH")),
-        "brk": cached_signals("Breakout_199",
-                              lambda s: strategies.ath_breakout_trades(s, trailing_stops=True)),
-    }
+    base = {}
+    for band in BANDS:
+        tag = "" if band == 0.02 else f"_b{band*100:g}"      # band 2% keeps the old cache names
+        base[("ema", band)] = cached_signals(
+            f"EMA{tag}_199", lambda s, b=band: backtest.simulate(s, band=b))
+        base[("qmw", band)] = cached_signals(
+            f"QMW{tag}_199", variant_builder("QMW", band))
+        base[("wdh", band)] = cached_signals(
+            f"WDH{tag}_199", variant_builder("WDH", band))
+        print(f"    band {band:.0%} ready", flush=True)
+    base[("brk", 0.02)] = cached_signals(
+        "Breakout_199", lambda s: strategies.ath_breakout_trades(s, trailing_stops=True))
     scale_lists = {
         ("ema", "half"): cached_signals("EMA_half_199",
                                         lambda s: backtest.simulate(s, scale_out="half")),
@@ -188,19 +194,19 @@ def main() -> None:
                  "out": ("150 holdout", set(cfg.out_of_sample))}
 
     grid = {}
-    for skey, signals in base.items():
+    for (skey, band), signals in base.items():
         for ukey, (ulabel, members) in universes.items():
             subset = (signals if members is None
                       else [t for t in signals if t["symbol"] in members])
             for risk in RISKS:
                 for capital in CAPITALS:
                     r = portfolio.run(subset, capital, risk / 100)
-                    grid[f"{skey}|{ukey}|{risk:g}|{capital}"] = run_payload(r)
-            print(f"  grid: {skey} / {ulabel} done", flush=True)
+                    grid[f"{skey}|{band:g}|{ukey}|{risk:g}|{capital}"] = run_payload(r)
+        print(f"  grid: {skey} band {band:.0%} done", flush=True)
 
     scaleout = {}
     for skey in ("ema", "brk"):
-        lists = {None: base[skey], "half": scale_lists[(skey, "half")],
+        lists = {None: base[(skey, 0.02)], "half": scale_lists[(skey, "half")],
                  "half_be": scale_lists[(skey, "half_be")]}
         scaleout[skey] = {}
         for ukey, (_, members) in universes.items():
@@ -214,8 +220,10 @@ def main() -> None:
         print(f"  scale-out: {skey} done", flush=True)
 
     print("  per-stock detail:", flush=True)
-    by_symbol = {k: {} for k in base}
-    for skey, signals in base.items():
+    by_symbol = {k: {} for k in STRATEGY_LABELS}
+    for (skey, band), signals in base.items():
+        if band != 0.02:
+            continue
         for t in signals:
             by_symbol[skey].setdefault(t["symbol"], []).append(t)
     stocks = {}
@@ -225,7 +233,7 @@ def main() -> None:
         except SystemExit:
             continue
         entry = {"closes": close_series(daily), "assigned": symbol in set(ASSIGNED)}
-        for skey in base:
+        for skey in STRATEGY_LABELS:
             tr = by_symbol[skey].get(symbol, [])
             entry[skey] = {"stats": trade_stats(tr), "trades": slim_trades(tr)}
         stocks[symbol] = entry
@@ -301,9 +309,9 @@ def main() -> None:
     import random
     rng = random.Random(20260823)
     symbols = sorted(cfg.all_symbols)
-    baskets = [rng.sample(symbols, 10) for _ in range(150)]
+    baskets = [rng.sample(symbols, 10) for _ in range(75)]
     basket10 = {}
-    for skey, signals in base.items():
+    for (skey, band), signals in base.items():
         by_sym = {}
         for t in signals:
             by_sym.setdefault(t["symbol"], []).append(t)
@@ -318,7 +326,7 @@ def main() -> None:
                 dds.append(round(r["max_drawdown_pct"], 1))
             cagrs_sorted = sorted(cagrs)
             n = len(cagrs_sorted)
-            basket10[f"{skey}|{risk:g}"] = {
+            basket10[f"{skey}|{band:g}|{risk:g}"] = {
                 "cagrs": cagrs,
                 "median": cagrs_sorted[n // 2],
                 "mean": round(sum(cagrs) / n, 1),
@@ -329,14 +337,14 @@ def main() -> None:
                 "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
                 "median_dd": sorted(dds)[len(dds) // 2],
             }
-        print(f"  baskets: {skey} done", flush=True)
+        print(f"  baskets: {skey} band {band:.0%} done", flush=True)
 
     nifty = frames.daily("NIFTY 50")
     payload = {
         "built": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
-        "risks": RISKS, "capitals": CAPITALS,
+        "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
         "assigned": list(ASSIGNED),
         "grid": grid, "scaleout": scaleout, "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),

@@ -113,6 +113,7 @@
     <div id="rail-portfolio">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
+      <div class="slicer"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
       <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
       <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
     </div>
@@ -127,7 +128,9 @@
       <div class="slicer"><span class="eyebrow">Instrument</span><div class="slist" id="sl-asset"></div></div>
     </div>
 
-    <div class="note">Every number is a real precomputed backtest — nothing is simulated in the browser.
+    <div class="note">Band applies to the three EMA stacks; ATH Breakout has none, so it pins to 2%.
+      Individual stocks, assets and the scale-out table are at the 2% band.
+      Every number is a real precomputed backtest — nothing is simulated in the browser.
       Survivorship bias applies. Rebuild: <code>python -m scripts.dashboard_data</code></div>
   </aside>
 
@@ -158,6 +161,8 @@
         <svg id="riskbars" viewBox="0 0 360 120"></svg>
         <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
         <svg id="riskdd" viewBox="0 0 360 120"></svg>
+        <h2 style="margin-top:0.7rem">CAGR by band</h2>
+        <svg id="bandbars" viewBox="0 0 360 160"></svg>
         <h2 style="margin-top:0.7rem">CAGR by strategy stack</h2>
         <svg id="stackbars" viewBox="0 0 360 120"></svg>
       </div>
@@ -254,7 +259,7 @@ const inr = v => (v < 0 ? "−₹" : "₹") + Math.round(Math.abs(v)).toLocaleSt
 const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 
 let DATA = null;
-const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, log: false,
+const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2, log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
@@ -276,6 +281,8 @@ function init() {
   const stratNames = DATA.strategies;
   slicer("sl-strat", Object.entries(stratNames), () => state.strat, k => { state.strat = k; renderPortfolio(); });
   slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
+  slicer("sl-band", (DATA.bands || [0.02]).map((b, i) => [String(i), (b * 100) + "% band"]),
+         () => String(state.bandIdx), k => { state.bandIdx = +k; renderPortfolio(); });
   slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
          () => String(state.riskIdx), k => { state.riskIdx = +k; renderPortfolio(); });
   slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
@@ -347,11 +354,15 @@ function syncStockList() {
 }
 
 // =================================================== portfolio page ====
+const bandOf = (strat, bandIdx) =>
+  strat === "brk" ? 0.02 : (DATA.bands || [0.02])[bandIdx];
+const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
+  `${strat}|${bandOf(strat, bandIdx)}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`;
 const runFor = (riskIdx, capIdx) =>
-  DATA.grid[`${state.strat}|${state.uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`];
+  DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
 
 function renderPortfolio() {
-  for (const id of ["sl-strat", "sl-uni", "sl-risk", "sl-cap"]) $(id)._sync();
+  for (const id of ["sl-strat", "sl-uni", "sl-band", "sl-risk", "sl-cap"]) $(id)._sync();
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
   const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
@@ -372,7 +383,7 @@ function renderPortfolio() {
   $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
   $("k-trades").textContent = r.taken.toLocaleString("en-IN");
   $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
-  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${risk}% risk · start ${inr(cap)}`;
+  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${(bandOf(state.strat, state.bandIdx)*100)}% band · ${risk}% risk · start ${inr(cap)}`;
 
   lineChart($("eqchart"), 760, 280, [
     { d: bench.d, v: bench.v, color: "var(--bench)", width: 1.5, opacity: 0.85, name: "NIFTY B&H" },
@@ -388,9 +399,14 @@ function renderPortfolio() {
   const stackNames = { ema: "M/W/D", qmw: "Q/M/W", wdh: "W/D/H", brk: "Brk" };
   barChart($("stackbars"), Object.keys(stackNames).map(k => ({
     label: stackNames[k],
-    value: DATA.grid[`${k}|${state.uni}|${DATA.risks[state.riskIdx]}|${DATA.capitals[state.capIdx]}`].cagr,
+    value: (DATA.grid[keyFor(k, state.bandIdx, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
     on: k === state.strat
   })), "var(--equity)", v => v.toFixed(1) + "%");
+  barChart($("bandbars"), (DATA.bands || [0.02]).map((b, i) => ({
+    label: (b * 100) + "%",
+    value: (DATA.grid[keyFor(state.strat, i, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
+    on: i === state.bandIdx || state.strat === "brk"
+  })), "var(--bench)", v => v.toFixed(1) + "%", 160);
   renderEpisodes(r);
   renderScaleout();
   renderBasket();
@@ -399,9 +415,9 @@ function renderPortfolio() {
 function renderBasket() {
   const tile = (v, sub, cls) =>
     `<div class="card kpi" style="border:1px solid var(--grid)"><div class="v ${cls}">${v}</div><div class="s" style="color:var(--muted);font-size:0.7rem">${sub}</div></div>`;
-  const b = DATA.basket10 && DATA.basket10[`${state.strat}|${DATA.risks[state.riskIdx]}`];
+  const b = DATA.basket10 && DATA.basket10[`${state.strat}|${bandOf(state.strat, state.bandIdx)}|${DATA.risks[state.riskIdx]}`];
   if (!b) { $("bk-sub").textContent = "No basket data — rebuild with scripts.dashboard_data."; return; }
-  const full = DATA.grid[`${state.strat}|all|${DATA.risks[state.riskIdx]}|100000`];
+  const full = DATA.grid[keyFor(state.strat, state.bandIdx, "all", state.riskIdx, 1)];
   $("bk-sub").textContent =
     `Nobody tracks 199 stocks — so here are ${b.cagrs.length} random 10-stock baskets, each run as its own ` +
     `₹1,00,000 account at ${DATA.risks[state.riskIdx]}% risk with the selected strategy. Which 10 you pick matters ` +
@@ -443,7 +459,7 @@ function renderScaleout() {
     $("so-sub").textContent = "Scale-out was tested on the class stack (M/W/D) and Breakout — pick one of those in the Strategy slicer to see it. The verdict there: banking half caps roughly half the profit; adding a breakeven stop was the worst of the three.";
     return;
   }
-  $("so-sub").textContent = `${DATA.universes[state.uni]} · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`;
+  $("so-sub").textContent = `${DATA.universes[state.uni]} · 2% band · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`;
   const rows = block[state.uni];
   const maxNet = Math.max(...rows.map(r => Math.abs(r.net)), 1);
   $("so-table").innerHTML =
@@ -678,8 +694,8 @@ function priceChart(svg, w, h, closes, trades) {
   svg.innerHTML = g;
 }
 
-function barChart(svg, rows, color, fmt) {
-  const w = 360, h = 120, lp = 44, rp = 48, bh = 18, gap = (h - rows.length * bh) / (rows.length + 1);
+function barChart(svg, rows, color, fmt, height) {
+  const w = 360, h = height || 120, lp = 44, rp = 48, bh = 18, gap = (h - rows.length * bh) / (rows.length + 1);
   const maxAbs = Math.max(...rows.map(r => Math.abs(r.value)), 0.001);
   let g = "";
   rows.forEach((r, i) => {
