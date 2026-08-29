@@ -63,6 +63,45 @@ def _path(symbol: str, interval: str):
 
 _TRIM_WARNED: set[str] = set()
 
+_CLEAN_WARNED: set[str] = set()
+
+
+def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
+    """Repair non-positive OHLC values in the stored candles.
+
+    Kite's 2015-2018 intraday history contains bars for thinly traded stocks
+    where `open` and `low` are recorded as 0.00 (high/close are fine). Any
+    intrabar rule then reads low=0 as "the stop was gapped through" and fills
+    at open=0 -- manufacturing catastrophic losses that never happened. The
+    zeros are missing data, not prices, so they are rebuilt from the same
+    bar's surviving fields; a bar with no usable close is dropped outright.
+    """
+    cols = ["open", "high", "low", "close"]
+    broken = (frame[cols] <= 0).any(axis=1)
+    if not broken.any():
+        return frame
+    count = int(broken.sum())
+    dead = frame["close"] <= 0
+    frame = frame.loc[~dead].copy()
+    for name, fallback in (("open", "close"), ("high", None), ("low", None)):
+        column = frame[name]
+        if name == "open":
+            frame[name] = column.where(column > 0, frame[fallback])
+        elif name == "high":
+            frame[name] = column.where(column > 0, frame[["open", "close"]].max(axis=1))
+        else:
+            frame[name] = column.where(column > 0, frame[["open", "close"]].min(axis=1))
+    # a repaired bar must still contain its own open and close
+    frame["high"] = frame[["high", "open", "close"]].max(axis=1)
+    frame["low"] = frame[["low", "open", "close"]].min(axis=1)
+    tag = f"{symbol}:{interval}"
+    if tag not in _CLEAN_WARNED:
+        print(f"[kitelab] {symbol}: repaired {count:,} {interval} bars with "
+              f"non-positive prices (Kite data gaps), dropped {int(dead.sum())}")
+        _CLEAN_WARNED.add(tag)
+    return frame.reset_index(drop=True)
+
+
 
 def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
     """15-minute bars.
@@ -76,6 +115,7 @@ def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
     if not path.exists():
         raise SystemExit(f"No 15-minute data for {symbol}. Run: python -m scripts.backfill")
     frame = pd.read_parquet(path).sort_values("ts").reset_index(drop=True)
+    frame = sanitise(frame, symbol, "15-minute")
 
     native = _path(symbol, "day")
     if trim_orphans and native.exists():
@@ -131,7 +171,8 @@ def daily(symbol: str, prefer_native: bool = True) -> pd.DataFrame:
     if prefer_native and native.exists():
         frame = pd.read_parquet(native)
         frame["ts"] = pd.to_datetime(frame["ts"]).dt.normalize()
-        return frame.sort_values("ts").reset_index(drop=True)
+        frame = frame.sort_values("ts").reset_index(drop=True)
+        return sanitise(frame, symbol, "daily")
     return _daily_from_intraday(base_15m(symbol))
 
 
