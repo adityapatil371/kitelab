@@ -128,7 +128,14 @@ def capture_ratio(trades: list[dict]):
         if move <= 0:
             continue
         caps.append(sum(t["exit_price"] - t["entry_price"] for t in lst) / move)
-    return round(sum(caps) / len(caps), 4) if caps else None
+    # MEDIAN, not mean: a stock that moved +5 points while the strategy lost 500
+    # gives a ratio of -100, and a couple of those drag a mean into nonsense.
+    if not caps:
+        return None
+    caps.sort()
+    middle = len(caps) // 2
+    value = caps[middle] if len(caps) % 2 else (caps[middle - 1] + caps[middle]) / 2
+    return round(value, 4)
 
 
 def trade_stats(trades: list[dict]) -> dict:
