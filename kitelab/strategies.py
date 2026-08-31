@@ -28,7 +28,7 @@ import math
 
 import pandas as pd
 
-from . import frames, levels, sizing, trailing
+from . import frames, levels, sizing, trailing, slippage
 from .backtest import charges
 
 TIMEFRAME = "30m"
@@ -115,6 +115,15 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         final_stop = stop
 
     entry_ts, exit_ts = bars.iloc[entry_pos]["ts"], bars.iloc[exit_pos]["ts"]
+    # Sized on the quoted price above, filled at the price the book actually gives.
+    # The banked half is priced at the exit timestamp rather than its own bar --
+    # trailing.resolve does not return that index, and the liquidity profile moves
+    # slowly enough that the difference is immaterial on a leg that is off by default.
+    quoted_entry, quoted_exit = entry_price, exit_price
+    entry_price = slippage.fill(symbol, entry_ts, quoted_entry, +1)
+    exit_price = slippage.fill(symbol, exit_ts, quoted_exit, -1)
+    if banked_fraction:
+        banked_price = slippage.fill(symbol, exit_ts, banked_price, -1)
     buy_value = entry_price * shares
     banked_shares = shares * banked_fraction
     remaining = shares - banked_shares
@@ -141,6 +150,8 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         "risk_taken": risk_taken,
         "capital_capped": capped,
         "entry_price": entry_price,
+        "quoted_entry": quoted_entry,
+        "quoted_exit": quoted_exit,
         "stop": stop,
         "range": risk,
         "reward_ratio": REWARD_RATIO if target is not None else None,

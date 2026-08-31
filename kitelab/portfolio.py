@@ -25,7 +25,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from . import frames, sizing
+from . import frames, sizing, slippage
 from .backtest import charges
 
 
@@ -134,7 +134,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
     open_by_symbol: dict[str, dict] = {}
     curve: list[tuple] = [(entries[0]["entry_ts"], capital)] if entries else []
     taken: list[dict] = []
-    skipped_cash = skipped_size = skipped_busy = 0
+    skipped_cash = skipped_size = skipped_busy = skipped_liquidity = 0
     max_drawdown = 0.0
     max_concurrent = 0
 
@@ -179,8 +179,31 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
                 skipped_cash += 1      # the risk rule allows it, the bank balance does not
             continue
 
-        cash -= shares * trade["entry_price"]
-        open_by_symbol[trade["symbol"]] = {**trade, "shares": shares}
+        # What the stock can actually absorb. The trade-level sizer works off a
+        # fixed Rs1,00,000 book; by the time this account has compounded, the same
+        # signal can call for an order many times the stock's whole daily turnover.
+        allowed = slippage.capped_shares(trade["symbol"], trade["entry_ts"],
+                                         trade["entry_price"], shares)
+        if allowed < shares:
+            shares = allowed if sizing.FRACTIONAL else math.floor(allowed)
+            if shares < 1 and not sizing.FRACTIONAL:
+                skipped_liquidity += 1
+                continue
+
+        # Market impact belongs here and nowhere else: it is a function of the order
+        # size, and this is the only place the real order size exists. The spread was
+        # already paid at the trade level (kitelab.slippage.fill).
+        entry_fill, exit_fill = trade["entry_price"], trade["exit_price"]
+        if slippage.ENABLED:
+            entry_fill *= 1.0 + slippage.impact(trade["symbol"], trade["entry_ts"],
+                                                entry_fill * shares)
+            exit_fill *= 1.0 - slippage.impact(trade["symbol"], trade["exit_ts"],
+                                               exit_fill * shares)
+
+        cash -= shares * entry_fill
+        open_by_symbol[trade["symbol"]] = {**trade, "shares": shares,
+                                           "entry_price": entry_fill,
+                                           "exit_price": exit_fill}
         max_concurrent = max(max_concurrent, len(open_by_symbol))
 
     settle(max(t["exit_ts"] for t in entries)) if entries else None
@@ -197,6 +220,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         "signals": len(entries),
         "skipped_cash": skipped_cash, "skipped_size": skipped_size,
         "skipped_busy": skipped_busy,
+        "skipped_liquidity": skipped_liquidity,
         # True drawdown: daily mark-to-market, percent of the concurrent peak.
         "max_drawdown": marked["max_drawdown"],
         "max_drawdown_pct": marked["max_drawdown_pct"],

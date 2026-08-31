@@ -32,10 +32,24 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import frames, indicators, screener, sizing
+from . import frames, indicators, screener, sizing, slippage
 
 EMA_LENGTH = 20
 SHARES = 10
+
+# Where a decision taken at a close actually gets filled.
+#
+# False (default, and every result before 2026-08-31): the fill happens AT the close
+# that produced the decision. That is a mild lookahead -- you cannot trade a print
+# you are still waiting to see -- but it is what the class does on paper, and it is
+# what every stored number assumes.
+#
+# True: you read the close after the bell and act at the NEXT session's open, which
+# is what an end-of-day trader who cannot watch the screen actually does. Entry, stop
+# exit and EMA-break exit all move one session later; the stop LEVEL is unchanged,
+# because that is the line drawn on the chart. This is the honest execution model and
+# it is measured, not assumed -- the opens are in our data.
+NEXT_OPEN_FILLS = False
 
 # Hysteresis: enter only when price is BAND above every EMA, exit only when it is BAND
 # below one of them. The gap between those two lines is a dead zone where nothing
@@ -155,6 +169,12 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     2026-08-28: the stop is a live intrabar order (a touch fills at the stop,
     a gap through it fills at the open).
     """
+    if NEXT_OPEN_FILLS and scale_out:
+        raise ValueError("scale_out under NEXT_OPEN_FILLS is not modelled: the banked "
+                         "leg would need its own next-open fill. Run them separately.")
+    if NEXT_OPEN_FILLS and not stop_on_close:
+        raise ValueError("NEXT_OPEN_FILLS assumes decisions are taken at closes; it is "
+                         "meaningless with a live intrabar stop (stop_on_close=False).")
     signal = ema_stack_signal(symbol, length, band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
@@ -170,8 +190,20 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             position += 1
             continue
 
-        entry_price = float(close[position])
         stop = float(low[position])
+        if NEXT_OPEN_FILLS:
+            if position + 1 >= total:
+                break                       # signal on the last bar; nothing to fill at
+            entry_index = position + 1
+            entry_price = float(open_[entry_index])
+            if entry_price <= stop:
+                # It opened below the line you were going to defend. You would not
+                # buy into that, so the signal is skipped rather than filled.
+                position += 1
+                continue
+        else:
+            entry_index = position
+            entry_price = float(close[position])
         exit_at = None
 
         # scale_out: sell half at entry + 1R ("half"), optionally moving the stop on
@@ -180,7 +212,8 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         trigger = entry_price + risk0 if scale_out and risk0 > 0 else None
         current_stop = stop
         banked_fraction = banked_price = 0.0
-        for step in range(position + 1, total):
+        banked_index = None
+        for step in range(entry_index if NEXT_OPEN_FILLS else position + 1, total):
             if stop_on_close:
                 if close[step] <= current_stop:
                     exit_at = (step, float(close[step]), "stop (close)")
@@ -197,6 +230,7 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
                     banked_price = (float(close[step]) if stop_on_close
                                     else max(trigger, float(open_[step])))
                     banked_fraction = 0.5
+                    banked_index = step
                     if scale_out == "half_be":
                         current_stop = max(current_stop, entry_price)
             if exit_ok[step]:
@@ -207,26 +241,45 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             break  # still open at the end of the data; not a closed trade
 
         exit_index, exit_price, reason = exit_at
+        if NEXT_OPEN_FILLS:
+            if exit_index + 1 >= total:
+                break                       # exit signalled on the last bar, unfillable
+            exit_index += 1
+            exit_price = float(open_[exit_index])
         risk = entry_price - stop
         shares, risk_taken, capped = sizing.position(entry_price, stop)
         if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
             position = exit_index + 1
             continue
+        # Size on the quoted price -- you place the order before you know the fill --
+        # then pay the spread on top. Your own market impact is NOT here; it depends
+        # on the real position size, which only the account engine knows. entry_price/exit_price below
+        # are the FILLED prices, because that is the cash that actually moves; the
+        # untouched screen prices are kept alongside as quoted_*.
+        quoted_entry, quoted_exit = entry_price, exit_price
+        entry_price = slippage.fill(symbol, stamps[entry_index], quoted_entry, +1)
+        exit_price = slippage.fill(symbol, stamps[exit_index], quoted_exit, -1)
+        if banked_fraction:
+            banked_price = slippage.fill(symbol, stamps[banked_index], banked_price, -1)
         buy_value = entry_price * shares
         banked_shares = shares * banked_fraction
         remaining = shares - banked_shares
         sell_value = banked_price * banked_shares + exit_price * remaining
         gross = ((banked_price - entry_price) * banked_shares
                  + (exit_price - entry_price) * remaining)
+        # Spread only -- impact is charged by the account engine, which is the only
+        # place that knows the real order size.
+        spread_cost = ((quoted_exit - exit_price) * remaining
+                       + (entry_price - quoted_entry) * shares)
         if banked_fraction:
             reason = reason + " (half banked at 1R)"
-        same_session = stamps[position].date() == stamps[exit_index].date()
+        same_session = stamps[entry_index].date() == stamps[exit_index].date()
         cost = charges(buy_value, sell_value)
         cost_best = charges(buy_value, sell_value, intraday=same_session)
 
         trades.append({
             "symbol": symbol,
-            "entry_ts": stamps[position],
+            "entry_ts": stamps[entry_index],
             "exit_ts": stamps[exit_index],
             "same_session": same_session,
             "entry_time": "EOD",
@@ -238,18 +291,21 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             "range": risk,
             "target": None,
             "final_stop": stop,
-            "bars_held": exit_index - position,
+            "bars_held": exit_index - entry_index,
             "charges_best": cost_best,
             "net_profit_best": gross - cost_best,
-            "entry_date": stamps[position],
+            "entry_date": stamps[entry_index],
             "entry_price": entry_price,
+            "quoted_entry": quoted_entry,
+            "quoted_exit": quoted_exit,
+            "spread_cost": spread_cost,
             "stop": stop,
             "risk_per_share": risk,
             "exit_date": stamps[exit_index],
             "exit_price": exit_price,
             "exit_reason": reason,
-            "days_held": (stamps[exit_index] - stamps[position]).days,
-            "sessions_held": exit_index - position,
+            "days_held": (stamps[exit_index] - stamps[entry_index]).days,
+            "sessions_held": exit_index - entry_index,
             "shares": shares,
             "cost_of_entry": buy_value,
             "gross_profit": gross,
