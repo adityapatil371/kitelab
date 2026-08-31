@@ -74,6 +74,10 @@
   .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
 
   svg { display: block; width: 100%; height: auto; }
+  /* The small horizontal-bar charts are drawn in a 360-unit box. Left to stretch they
+     hit 2.3x on a narrow window -- 24px axis labels and bars thicker than the rows they
+     describe. Cap them so they keep roughly the scale the line charts render at. */
+  svg.barchart { max-width: 460px; }
   svg text { font: 10.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); font-variant-numeric: tabular-nums; }
   .tip { position: fixed; pointer-events: none; z-index: 20; display: none;
          background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
@@ -168,13 +172,13 @@
       </div>
       <div class="card span4">
         <h2>CAGR by risk %</h2><div class="sub">this strategy &amp; universe &amp; capital</div>
-        <svg id="riskbars" viewBox="0 0 360 120"></svg>
+        <svg id="riskbars" class="barchart" viewBox="0 0 360 120"></svg>
         <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
-        <svg id="riskdd" viewBox="0 0 360 120"></svg>
+        <svg id="riskdd" class="barchart" viewBox="0 0 360 120"></svg>
         <h2 style="margin-top:0.7rem">CAGR by band</h2>
-        <svg id="bandbars" viewBox="0 0 360 160"></svg>
+        <svg id="bandbars" class="barchart" viewBox="0 0 360 160"></svg>
         <h2 style="margin-top:0.7rem">CAGR by strategy stack</h2>
-        <svg id="stackbars" viewBox="0 0 360 120"></svg>
+        <svg id="stackbars" class="barchart" viewBox="0 0 360 120"></svg>
       </div>
 
       <div class="card span8">
@@ -216,14 +220,20 @@
         <div class="sub" id="sor-sub"></div>
         <div class="table-scroll"><table id="sor-table"></table></div>
       </div>
-      <div class="card span12">
-        <h2>What it costs, by trigger</h2>
-        <div class="sub">Total net against keeping the whole position, which is the zero line.
-          Every bar below it means the rule took money off you.</div>
-        <svg id="sor-bars" viewBox="0 0 360 240" role="img" aria-label="Scale-out cost by R multiple"></svg>
+      <div class="card span6">
+        <h2>Sell half &mdash; what each trigger costs</h2>
+        <div class="sub">Total net against keeping the whole position, which is zero.
+          Red means the rule cost you, green means it helped.</div>
+        <svg id="sor-bars" class="barchart" viewBox="0 0 360 130" role="img" aria-label="Cost of selling half, by R multiple"></svg>
+      </div>
+      <div class="card span6">
+        <h2>&hellip;and with the stop moved to breakeven</h2>
+        <div class="sub">Same comparison for the second rule, which on the full
+          universe is worse at every trigger.</div>
+        <svg id="sor-bars-be" class="barchart" viewBox="0 0 360 130" role="img" aria-label="Cost of selling half with a breakeven stop, by R multiple"></svg>
       </div>
       <div class="card span12">
-        <h2>Why it cannot win</h2>
+        <h2 id="sor-why-title">What banking early actually does</h2>
         <div class="sub" id="sor-why"></div>
       </div>
     </div>
@@ -275,7 +285,7 @@
       </div>
       <div class="card span4">
         <h2>Underwater</h2><div class="sub">strategy account, % below its own peak</div>
-        <svg id="a-uw" viewBox="0 0 360 260"></svg>
+        <svg id="a-uw" class="barchart" viewBox="0 0 360 260"></svg>
       </div>
 
       <div class="card span12">
@@ -363,6 +373,7 @@ function init() {
 }
 
 function setPage(key) {
+  const changed = state.page !== key;
   state.page = key;
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.key === key);
   for (const [k] of PAGES) document.getElementById("page-" + k).classList.toggle("on", k === key);
@@ -374,6 +385,8 @@ function setPage(key) {
   if (key === "stocks") renderStock();
   if (key === "scaleout") renderScaleoutPage();
   if (key === "assets") renderAsset();
+  // Pages differ in height; landing halfway down a fresh page looks like a dead button.
+  if (changed) window.scrollTo(0, 0);
 }
 
 function slicer(id, options, get, set) {
@@ -422,7 +435,7 @@ const runFor = (riskIdx, capIdx) =>
   DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
 
 function renderPortfolio() {
-  for (const id of ["sl-strat", "sl-uni", "sl-band", "sl-risk", "sl-cap"]) $(id)._sync();
+  for (const id of ["sl-fill", "sl-strat", "sl-uni", "sl-band", "sl-risk", "sl-cap"]) $(id)._sync();
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
   const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
@@ -545,6 +558,7 @@ function metricsTable(el, rows, firstHeader) {
 }
 
 function renderScaleoutPage() {
+  $("sl-so-strat")._sync(); $("sl-so-uni")._sync();
   const rows = DATA.scaleout_r && DATA.scaleout_r[`${state.soStrat}|${state.soUni}`];
   if (!rows) {
     $("sor-table").innerHTML = "";
@@ -577,26 +591,45 @@ function renderScaleoutPage() {
         `<td>${vs}</td></tr>`;
     }).join("") + "</tbody>";
 
-  barChart($("sor-bars"), rows.slice(1).map(r => ({
-    label: `${r.variant === "half" ? "half" : "half+BE"} ${r.multiple}R`,
-    value: r.vs_keep, on: r.multiple === 1
-  })), "var(--dd)", v => `${v}%`, 240);
+  const costBars = variant => rows.filter(r => r.variant === variant).map(r => ({
+    label: `${r.multiple}R`, value: r.vs_keep, on: r.multiple === 1
+  }));
+  const sign = r => (r.value >= 0 ? "var(--bench)" : "var(--dd)");
+  barChart($("sor-bars"), costBars("half"), sign, v => `${v}%`, 130);
+  barChart($("sor-bars-be"), costBars("half_be"), sign, v => `${v}%`, 130);
 
-  // The one comparison that explains the whole page.
-  const rs = v => (v < 0 ? "−₹" : "₹") + Math.abs(v).toLocaleString("en-IN");
-  const worst = rows.slice(1).reduce((a, b) => (a.vs_keep < b.vs_keep ? a : b));
+  // The mechanism is always true; the VERDICT depends on the slice, so it is computed
+  // rather than asserted. On a 30-trade universe this rule can look like a winner.
+  const rs = v => (v < 0 ? "\u2212\u20b9" : "\u20b9") + Math.abs(v).toLocaleString("en-IN");
+  const settings = rows.slice(1);
+  const costly = settings.filter(r => r.vs_keep < 0).length;
+  const worst = settings.reduce((a, b) => (a.vs_keep < b.vs_keep ? a : b));
+  const thin = keep.trades < 300;
+  const verdict = costly === settings.length
+    ? `Every one of the ${settings.length} settings here ends up behind keeping the whole position.`
+    : costly === 0
+      ? `On this slice every setting came out AHEAD of keeping the whole position, which is the
+         opposite of the full-universe result — treat it as a quirk of the sample, not a finding.`
+      : `${costly} of the ${settings.length} settings here end up behind keeping the whole
+         position, and ${settings.length - costly} ahead.`;
+  $("sor-why-title").textContent = thin
+    ? "What banking early does \u2014 careful, small sample"
+    : "What banking early actually does";
   $("sor-why").innerHTML =
-    `Compare the two loss columns above and then the two win columns. Keeping the whole position ` +
-    `averages <b>${rs(keep.avg_win)}</b> on a win and ` +
-    `<b>${rs(keep.avg_loss)}</b> on a loss. Under the costliest setting here ` +
-    `(<i>${worst.rule.toLowerCase()} at ${worst.multiple}R</i>) the average loss is ` +
-    `<b>${rs(worst.avg_loss)}</b> — essentially unchanged — while the average win falls to ` +
-    `<b>${rs(worst.avg_win)}</b>. That is the whole story: the rule can only fire on a ` +
-    `trade that is already going your way, so it trims winners and never touches losers. What you buy ` +
-    `is a higher win rate — ${(keep.win_rate * 100).toFixed(1)}% becomes ` +
-    `${(worst.win_rate * 100).toFixed(1)}% — which is comfort, not money. Pushing the trigger further out ` +
-    `costs less only because the rule fires less often: at 3R it banks on a small minority of trades, so ` +
-    `it converges on keeping everything by quietly switching itself off.`;
+    `Compare the two loss columns above, then the two win columns. Keeping the whole position ` +
+    `averages <b>${rs(keep.avg_win)}</b> on a win and <b>${rs(keep.avg_loss)}</b> on a loss. ` +
+    `Under the costliest setting here (<i>${worst.rule.toLowerCase()} at ${worst.multiple}R</i>) ` +
+    `the average loss is <b>${rs(worst.avg_loss)}</b> \u2014 barely moved \u2014 while the average win ` +
+    `falls to <b>${rs(worst.avg_win)}</b>. That is the mechanism: the rule can only fire on a trade ` +
+    `that is already going your way, so it trims winners and never touches losers. What it buys is a ` +
+    `higher win rate \u2014 ${(keep.win_rate * 100).toFixed(1)}% becomes ` +
+    `${(worst.win_rate * 100).toFixed(1)}% \u2014 which is comfort, not money. ` +
+    `Pushing the trigger further out costs less mainly because the rule fires less often: by 3R it ` +
+    `banks on a minority of trades, converging on keeping everything by quietly switching itself off. ` +
+    `<br><br><b>On this selection:</b> ${verdict}` +
+    (thin ? ` Only <b>${keep.trades.toLocaleString("en-IN")}</b> trades sit behind these numbers, so
+       single trades can swing a column by tens of percent. Read the 199-stock or 150-holdout
+       universes for a verdict you can lean on.` : "");
 }
 
 function renderTradeMetrics() {
@@ -869,7 +902,8 @@ function barChart(svg, rows, color, fmt, height) {
     const y = gap + i * (bh + gap);
     const bw = Math.abs(r.value) / maxAbs * (w - lp - rp);
     g += `<text x="${lp - 6}" y="${y + bh / 2 + 3.5}" text-anchor="end">${r.label}</text>`;
-    g += `<rect x="${lp}" y="${y}" width="${Math.max(bw, 1.5)}" height="${bh}" rx="4" fill="${color}" opacity="${r.on ? 1 : 0.35}"/>`;
+    const fill = typeof color === "function" ? color(r) : color;
+    g += `<rect x="${lp}" y="${y}" width="${Math.max(bw, 1.5)}" height="${bh}" rx="4" fill="${fill}" opacity="${r.on ? 1 : 0.35}"/>`;
     g += `<text x="${lp + Math.max(bw, 1.5) + 6}" y="${y + bh / 2 + 3.5}" style="fill:var(--ink-2);font-weight:${r.on ? 700 : 400}">${fmt(r.value)}</text>`;
   });
   svg.innerHTML = g;
