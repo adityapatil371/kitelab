@@ -88,22 +88,24 @@ def main() -> None:
                 sizing.FRACTIONAL = False
             print(f"    {symbol} done", flush=True)
     else:
-        # The six 199-stock signal lists are the same ones the dashboard builds,
-        # so reuse its cache (delete data/signal_cache to force a fresh sweep).
+        # The six whole-universe signal lists are the same ones the dashboard
+        # builds, so reuse its cache (delete data/signal_cache to force a fresh
+        # sweep).
         from scripts.dashboard_data import cached_signals
-        tag = "199 Stocks"
+        from kitelab import config
+        tag = f"{len(config.load().all_symbols)} Stocks"
         print(f"\n  universe: {tag} (cached signal lists)\n", flush=True)
-        cache_names = {("EMA", None): ("EMA_199", lambda s: backtest.simulate(s)),
-                       ("EMA", "half"): ("EMA_half_199",
+        cache_names = {("EMA", None): ("EMA_all", lambda s: backtest.simulate(s)),
+                       ("EMA", "half"): ("EMA_half_all",
                                          lambda s: backtest.simulate(s, scale_out="half")),
-                       ("EMA", "half_be"): ("EMA_halfbe_199",
+                       ("EMA", "half_be"): ("EMA_halfbe_all",
                                             lambda s: backtest.simulate(s, scale_out="half_be")),
-                       ("Breakout", None): ("Breakout_199",
+                       ("Breakout", None): ("Breakout_all",
                                             lambda s: strategies.ath_breakout_trades(s, True)),
-                       ("Breakout", "half"): ("Breakout_half_199",
+                       ("Breakout", "half"): ("Breakout_half_all",
                                               lambda s: strategies.ath_breakout_trades(
                                                   s, True, scale_out="half")),
-                       ("Breakout", "half_be"): ("Breakout_halfbe_199",
+                       ("Breakout", "half_be"): ("Breakout_halfbe_all",
                                                  lambda s: strategies.ath_breakout_trades(
                                                      s, True, scale_out="half_be"))}
         for label, mode in MODES:

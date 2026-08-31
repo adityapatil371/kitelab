@@ -2,7 +2,7 @@
 
     python -m scripts.darvas_breadth
 
-Darvas earned 18.5% across all 199 stocks and 5.7% on a ten-stock basket, with a
+Darvas earned 18.5% across the whole universe and 5.7% on a ten-stock basket, with a
 stop about 13% below entry (measured 2026-08-31 at 1% risk, Rs2,50,000; these four
 figures are a snapshot of that run, not recomputed on import -- the table this
 script prints is the live version and wins any disagreement). That is not a
@@ -35,11 +35,12 @@ from kitelab import config, portfolio, report
 
 CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000.0
-SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150, 199]
+# The whole universe is appended at run time, whatever size it currently is.
+SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150]
 SEED = 20260831
 # Big baskets are slow to simulate and barely vary; small ones are fast and wild.
-DRAWS = {5: 60, 10: 60, 15: 60, 20: 60, 30: 40, 50: 40, 75: 25, 100: 25, 150: 15, 199: 1}
-STRATEGIES = [("Darvas 20/10", "Darvas_20_10_199"), ("EMA M/W/D", "EMA_199")]
+DRAWS = {5: 60, 10: 60, 15: 60, 20: 60, 30: 40, 50: 40, 75: 25, 100: 25, 150: 15}
+STRATEGIES = [("Darvas 20/10", "Darvas_20_10_all"), ("EMA M/W/D", "EMA_all")]
 RISKS = [0.5, 1.0, 2.0]
 
 
@@ -53,7 +54,10 @@ def load(name: str) -> dict:
 
 def sweep(by_symbol, symbols, risk_pct) -> list[dict]:
     rows = []
-    for size in SIZES:
+    # SIZES stops below the universe; the whole universe is the final row, one
+    # draw, because there is only one way to pick all of them.
+    sizes = [n for n in SIZES if n < len(symbols)] + [len(symbols)]
+    for size in sizes:
         rng = random.Random(SEED + size)
         draws = ([sorted(symbols)] if size >= len(symbols)
                  else [rng.sample(symbols, size) for _ in range(DRAWS[size])])
@@ -155,7 +159,7 @@ def main() -> None:
         show(f"{label} at 1% risk", rows)
         dump(label, 1.0, rows)
 
-    darvas = load("Darvas_20_10_199")
+    darvas = load("Darvas_20_10_all")
     for risk in RISKS:
         if risk == 1.0:
             continue

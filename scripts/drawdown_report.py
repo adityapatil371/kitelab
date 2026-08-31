@@ -5,8 +5,8 @@
 Writes output/Drawdown Analysis.xlsx:
 
     Read Me          -- what drawdown is, how it is measured, predictions vs verdicts
-    Stock Portfolios -- EMA & Breakout accounts on 199 NSE stocks: risk sweep x
-                        universe (all / 49 in-sample / 150 holdout), true daily
+    Stock Portfolios -- EMA & Breakout accounts on the NSE universe: risk sweep x
+                        universe (all / in-sample / holdout), true daily
                         mark-to-market drawdown, time spent underwater
     Worst Episodes   -- the five deepest dips of each headline account, with dates
                         and recovery times
@@ -42,7 +42,7 @@ ASSETS = [  # symbol, breakout timeframe, flat per-side fee (assets_report conve
 
 PREDICTIONS = [
     "1. The low-risk surprise (0.25% risk beating 1% on the full universe) survives on "
-    "the 150 holdout stocks: better CAGR AND shallower drawdown, though holdout "
+    "the holdout stocks: better CAGR AND shallower drawdown, though holdout "
     "drawdowns run somewhat deeper than in-sample at every risk level.",
     "2. Every asset strategy-account shows a deeper true drawdown than the old at-cost "
     "method reported, but still far shallower than buy-and-hold on the same asset.",
@@ -119,12 +119,15 @@ def bh_stats(daily: pd.DataFrame):
 
 def main() -> None:
     cfg = config.load()
-    universes = [("all 199", None),
-                 ("49 in-sample", set(cfg.in_sample)),
-                 ("150 holdout", set(cfg.out_of_sample))]
+    # Counted, never typed -- see kitelab.config.EXCLUDED.
+    uni_all = f"all {len(cfg.all_symbols)}"
+    uni_hold = f"{len(cfg.out_of_sample)} holdout"
+    universes = [(uni_all, None),
+                 (f"{len(cfg.in_sample)} in-sample", set(cfg.in_sample)),
+                 (uni_hold, set(cfg.out_of_sample))]
 
-    ema_all = pickle.loads((CACHE / "EMA_199.pkl").read_bytes())
-    brk_all = pickle.loads((CACHE / "Breakout_199.pkl").read_bytes())
+    ema_all = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
+    brk_all = pickle.loads((CACHE / "Breakout_all.pkl").read_bytes())
     since_2015 = pd.Timestamp("2015-02-02")
     strat_windows = [
         ("EMA, 2006-2026", ema_all),
@@ -192,7 +195,8 @@ def main() -> None:
     sheet.column_dimensions["A"].width = 110
     row = explain(sheet, 1, "WHAT THIS FILE IS", [
         "Drawdown -- the peak-to-valley fall of the ACCOUNT, not the stock -- measured "
-        "properly across everything we trade: both strategies on 199 NSE stocks, and "
+        f"properly across everything we trade: both strategies on {len(cfg.all_symbols)} "
+        "NSE stocks, and "
         "the six class instruments (Bitcoin, two indices, three MCX futures) against "
         "buy-and-hold.",
         "Proper means: equity is re-priced EVERY trading day as cash + shares x that "
@@ -220,9 +224,9 @@ def main() -> None:
                 return r[2], r[3]
         raise KeyError(f"no row for {label} / {uni} / {risk_pct}%")
 
-    ema_lo, ema_hi = cell("EMA, 2006-2026", "all 199", 0.25), cell("EMA, 2006-2026", "all 199", 1.0)
-    hold_lo, hold_hi = cell("EMA, 2006-2026", "150 holdout", 0.25), cell("EMA, 2006-2026", "150 holdout", 1.0)
-    brk_lo, brk_hi = cell("Breakout, 2015-2026", "all 199", 0.25), cell("Breakout, 2015-2026", "all 199", 1.0)
+    ema_lo, ema_hi = cell("EMA, 2006-2026", uni_all, 0.25), cell("EMA, 2006-2026", uni_all, 1.0)
+    hold_lo, hold_hi = cell("EMA, 2006-2026", uni_hold, 0.25), cell("EMA, 2006-2026", uni_hold, 1.0)
+    brk_lo, brk_hi = cell("Breakout, 2015-2026", uni_all, 0.25), cell("Breakout, 2015-2026", uni_all, 1.0)
     # "drawdowns run X to Y at 1% risk" is about the EMA accounts, across universes.
     # Breakout belongs to the sentence above it and its much shallower dip (~-15%)
     # would silently widen this range into meaninglessness if it were swept in.
@@ -235,7 +239,7 @@ def main() -> None:
     row = explain(sheet, row, "VERDICTS", [
         f"1. {'PARTLY CORRECT' if ema_holds and not brk_holds else 'MIXED'}. For EMA "
         f"the direction {'survives' if ema_holds else 'does NOT survive'} everywhere it "
-        f"matters: full history all-199 (0.25% risk: {ema_lo[0]:.1f}% CAGR / "
+        f"matters: full history {uni_all} (0.25% risk: {ema_lo[0]:.1f}% CAGR / "
         f"{ema_lo[1]:.1f}% DD vs 1%: {ema_hi[0]:.1f}% / {ema_hi[1]:.1f}%) and on the 150 "
         f"holdout stocks no parameter ever saw ({hold_lo[0]:.1f}% / {hold_lo[1]:.1f}% vs "
         f"{hold_hi[0]:.1f}% / {hold_hi[1]:.1f}%). It "
@@ -305,7 +309,7 @@ def main() -> None:
         "A drawdown is not one bad day -- it is a spell: the account peaks, sinks to a "
         "trough, and (maybe) climbs back. 'Recovered' empty means the account was "
         "still below that peak when the data ended. Length is peak to recovery.",
-        "All accounts here: Rs250,000, all 199 stocks.",
+        f"All accounts here: Rs250,000, {uni_all} stocks.",
     ], span=7)
     ep_headers = ["Peak", "Trough", "Depth %", "Recovered", "Length (yrs)"]
     ep_widths = [13, 13, 10, 13, 11]

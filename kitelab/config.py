@@ -9,6 +9,47 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 CONFIG_PATH = ROOT / "config.local.toml"
 
+# Stocks removed from EVERY universe on 2026-08-31 because their daily price
+# history cannot be trusted. The raw lists live in config.local.toml, which is
+# gitignored (it holds the Kite secrets), so the exclusions live HERE instead --
+# in version control, each with the measurement that justifies it. Removing a
+# stock changes every published number, so it must never be a silent edit.
+#
+# Two kinds of defect, both found 2026-08-31:
+#
+#   SEAM     a long trading gap with the price on a completely different level
+#            either side. Either the company was restructured and Kite's history
+#            is unadjusted, or the symbol was reused. Kite sells no corporate
+#            actions, so it cannot be told which, and it cannot be repaired.
+#
+#   PADDING  zero-volume bars carrying a made-up price in front of the stock's
+#            first real trade. frames.drop_untraded_outliers() removes the worst
+#            of these, but a history that STARTS with hundreds of invented bars
+#            has no usable early period at all.
+EXCLUDED: dict[str, str] = {
+    "VINEETLAB": "SEAM x2: Rs1,556 -> Rs41 across a 350-day gap (2018-05-23 -> "
+                 "2019-05-08), then Rs1,547 -> Rs43 across 769 days. Also carried "
+                 "6 zero-volume bars at Rs7.60 that cost the Q/M/W reference "
+                 "account a manufactured -Rs43,200.",
+    "LANCER":    "SEAM: Rs49.90 -> Rs10.42 across a 1,207-day gap "
+                 "(2023-04-28 -> 2026-08-17). Only 249 daily bars in total.",
+    "LAGNAM":    "SEAM: Rs99.98 -> Rs35.20 across a 945-day gap "
+                 "(2016-02-16 -> 2018-09-18). Also the worst intraday file in the "
+                 "universe after SHAHALLOYS: 431 of 40,165 bars non-positive.",
+    "PVP":       "SEAM: Rs1.80 -> Rs5.25 across a 632-day gap "
+                 "(2019-10-29 -> 2021-07-22).",
+    "JMFINANCIL": "PADDING: 191 zero-volume bars at Rs0.14 before the first real "
+                  "trade at Rs30.99 (2006-01-02 .. 2006-10-09). They seeded the "
+                  "20-day EMA at 0.14 and manufactured a buy signal on the stock's "
+                  "first trading day; Darvas took it with a stop of Rs0.14.",
+    "TVSSRICHAK": "PADDING: 275 zero-volume bars at Rs39.90 before the first real "
+                  "trade at Rs107.65 (2007-02-13). Produces a trade on that exact "
+                  "day, worth -Rs5,256 on the EMA list.",
+    "SUDARSCHEM": "PADDING: 88 zero-volume bars at Rs4.47 before the first real "
+                  "trade at Rs20.27 (2006-05-16). Same first-day trade, "
+                  "-Rs1,458 on the EMA list.",
+}
+
 
 @dataclass(frozen=True)
 class Config:
@@ -24,12 +65,20 @@ class Config:
 
     @staticmethod
     def _dedupe(*groups) -> list[str]:
+        """De-duplicate, preserve order, and drop everything in EXCLUDED."""
         seen, out = set(), []
         for group in groups:
             for symbol in group:
-                if symbol not in seen:
-                    seen.add(symbol); out.append(symbol)
+                if symbol in EXCLUDED or symbol in seen:
+                    continue
+                seen.add(symbol); out.append(symbol)
         return out
+
+    @property
+    def excluded(self) -> dict[str, str]:
+        """Symbols dropped from every universe, and why. See EXCLUDED."""
+        listed = {*self.symbols, *self.extended, *self.holdout}
+        return {s: why for s, why in EXCLUDED.items() if s in listed}
 
     @property
     def in_sample(self) -> list[str]:
@@ -39,7 +88,8 @@ class Config:
     @property
     def out_of_sample(self) -> list[str]:
         """Stocks no parameter has ever seen."""
-        return [s for s in self.holdout if s not in set(self.in_sample)]
+        inside = set(self.in_sample)
+        return [s for s in self.holdout if s not in EXCLUDED and s not in inside]
 
     @property
     def all_symbols(self) -> list[str]:
@@ -48,11 +98,7 @@ class Config:
     @property
     def everything(self) -> list[str]:
         """Hand-drawn universe plus the wider list, de-duplicated, order preserved."""
-        seen, out = set(), []
-        for symbol in [*self.symbols, *self.extended]:
-            if symbol not in seen:
-                seen.add(symbol); out.append(symbol)
-        return out
+        return self._dedupe(self.symbols, self.extended)
 
 
 def load() -> Config:

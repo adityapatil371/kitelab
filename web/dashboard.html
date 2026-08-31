@@ -133,7 +133,7 @@
     <div id="rail-stocks" style="display:none">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-stock-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Stock</span>
-        <input id="stock-search" type="search" placeholder="Search 199 stocks…" autocomplete="off">
+        <input id="stock-search" type="search" placeholder="Search stocks…" autocomplete="off">
         <div class="slist" id="sl-stock"></div></div>
     </div>
     <div id="rail-scaleout" style="display:none">
@@ -213,7 +213,7 @@
 
       <div class="card span12">
         <h2>Scale-out: sell half when risk is covered (+1R)</h2>
-        <div class="sub" id="so-sub">All 199 stocks, fixed capital per trade, net of charges, all history — measured per trade
+        <div class="sub" id="so-sub">Fixed capital per trade, net of charges, all history — measured per trade
           (a two-part exit cannot be priced by the one-account simulation). Verdict: banking half caps roughly half the profit
           for a shallower worst losing run; moving the stop to breakeven as well was the worst of the three — it ejects winners into noise.
           The full sweep from 0.5R to 3R, for both rules, is on the <b>Scale-out</b> page.</div>
@@ -357,6 +357,10 @@ const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 //   cagr === 0.0                    -> genuinely flat, and 0.0% is the true answer
 // Anything that displays a CAGR goes through these, so the three stay distinct.
 const MISSING = "—", WIPED = "Wiped";
+// How many stocks are in the universe. NEVER type this: seven stocks were removed
+// on 2026-08-31 (kitelab.config.EXCLUDED) and every literal "199" on this page
+// would have gone on being wrong. dashboard_data publishes the count.
+const uniN = () => (DATA.universe_size || Object.keys(DATA.stocks || {}).length);
 const isWiped  = c => c === null;
 const isAbsent = c => c === undefined;
 const cagrText = c => isAbsent(c) ? MISSING : isWiped(c) ? WIPED : pct1(c) + "/yr";
@@ -620,9 +624,9 @@ function renderBasket() {
   if (!b) { $("bk-sub").textContent = "No basket data — rebuild with scripts.dashboard_data."; return; }
   const full = DATA.grid[keyFor(state.strat, state.bandIdx, "all", state.riskIdx, 1)];
   $("bk-sub").textContent =
-    `Nobody tracks 199 stocks — so here are ${b.cagrs.length} random 10-stock baskets, each run as its own ` +
+    `Nobody tracks ${uniN()} stocks — so here are ${b.cagrs.length} random 10-stock baskets, each run as its own ` +
     `₹1,00,000 account at ${DATA.risks[state.riskIdx]}% risk with the selected strategy. Which 10 you pick matters ` +
-    `more than anything else on this page. (Full 199-stock account at ₹1L for reference: ` +
+    `more than anything else on this page. (Full ${uniN()}-stock account at ₹1L for reference: ` +
     `${cagrText(full && full.cagr)}.)` +
     (b.wiped ? ` ${b.wiped} of these ${b.cagrs.length} baskets were WIPED OUT — they have no CAGR at all, ` +
                `so they sit below every basket that merely lost money.` : "");
@@ -696,8 +700,8 @@ function renderBreadth() {
   const setting = state.brStrat === "dv" ? "20/10 windows"
                 : state.brStrat === "brk" ? "" : "2% band";
   $("br-sub").textContent = joinParts([DATA.strategies[state.brStrat], setting])
-    + ` · random baskets drawn from all 199, one ₹2,50,000 account each at 1% risk, perfect fills. `
-    + `The 199-stock row is the single full universe, so it has no spread.`;
+    + ` · random baskets drawn from all ${uniN()}, one ₹2,50,000 account each at 1% risk, perfect fills. `
+    + `The ${uniN()}-stock row is the single full universe, so it has no spread.`;
 
   $("br-table").innerHTML =
     `<thead><tr><th>Stocks</th><th>Baskets</th><th>Median CAGR</th><th>p10</th><th>p90</th>` +
@@ -825,8 +829,8 @@ function renderScaleoutPage() {
     `banks on a minority of trades, converging on keeping everything by quietly switching itself off. ` +
     `<br><br><b>On this selection:</b> ${verdict}` +
     (thin ? ` Only <b>${keep.trades.toLocaleString("en-IN")}</b> trades sit behind these numbers, so
-       single trades can swing a column by tens of percent. Read the 199-stock or 150-holdout
-       universes for a verdict you can lean on.` : "");
+       single trades can swing a column by tens of percent. Read the ${uniN()}-stock or
+       ${DATA.universes.out} universes for a verdict you can lean on.` : "");
 }
 
 function renderTradeMetrics() {

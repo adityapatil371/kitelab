@@ -97,8 +97,9 @@ def main() -> None:
     print("\n  2. Darvas 20/10 by universe -- 'holdout' is the 150 nothing was tuned on")
     print(HEAD)
     print("  " + "-" * 99)
-    universes = [("All 199 stocks", None), ("49 in-sample", set(cfg.in_sample)),
-                 ("150 holdout", set(cfg.out_of_sample))]
+    universes = [(f"All {len(cfg.all_symbols)} stocks", None),
+                 (f"{len(cfg.in_sample)} in-sample", set(cfg.in_sample)),
+                 (f"{len(cfg.out_of_sample)} holdout", set(cfg.out_of_sample))]
     for label, members in universes:
         stats = summarise(darvas_all, members)
         rows.append(("By universe", label, stats))

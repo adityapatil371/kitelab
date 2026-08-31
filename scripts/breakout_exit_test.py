@@ -99,7 +99,8 @@ def main() -> None:
     book.remove(book.active)
     sheet = book.create_sheet("Exit rules")
     sheet["A1"] = (
-        "ATH breakout, all 199 stocks, same entries and the same pivot-low stop in "
+        f"ATH breakout, all {len(config.load().all_symbols)} stocks, same entries and "
+        "the same pivot-low stop in "
         "every column -- only the way the trade ENDS changes. Trade columns sum every "
         "signal as if separately funded; account columns are one Rs2,50,000 pot at 1% "
         "risk that can only take what it can afford. Perfect fills (no spread, no "

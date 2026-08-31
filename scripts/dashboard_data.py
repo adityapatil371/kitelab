@@ -9,13 +9,14 @@ among these precomputed results, nothing is simulated in the browser.
 Everything is combinable with everything:
     grid        one-account simulations for FOUR strategy stacks (EMA on
                 M/W/D, Q/M/W and W/D/H timeframes, plus ATH Breakout)
-                x universe (all 199 / 49 in-sample / 150 holdout)
+                x universe (all / in-sample / holdout -- sizes are counted from
+                config, never hardcoded)
                 x risk (0.25-2%) x capital (50k-5L)
     scaleout    the "sell half at +1R" scale-out idea, per strategy AND per
                 universe, columns matching the old Scale-Out Test sheet --
                 measured per trade (a two-part exit cannot be priced by the
                 one-account simulation)
-    stocks      every one of the 199 stocks: weekly closes + trades + stats
+    stocks      every stock in the universe: weekly closes + trades + stats
                 for all four stacks
     assets      the six class instruments: closes, per-stack trades/accounts,
                 scale-out variants, buy-and-hold comparison (W/D/H exists only
@@ -248,9 +249,11 @@ SCALE_MULTIPLES = [0.5, 1.0, 1.5, 2.0, 3.0]
 # stop sits far below entry buys small positions and needs many at once before the
 # money is working. DRAWS is smaller for big baskets -- they are slow to simulate
 # and barely vary.
-BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150, 199]
+# The final size is the WHOLE universe, whatever that currently is -- one draw,
+# because there is only one way to pick all of them.
+BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150]
 BREADTH_DRAWS = {5: 30, 10: 30, 15: 30, 20: 30, 30: 20, 50: 20, 75: 10, 100: 10,
-                 150: 10, 199: 1}
+                 150: 10}
 BREADTH_SEED = 20260831
 SCALE_RULES = [("half", "Sell half"), ("half_be", "Sell half, stop to breakeven")]
 
@@ -267,33 +270,33 @@ def main() -> None:
         # module-level key formatter and a local of that name shadows it.
         cache_tag = "" if band == 0.02 else f"_b{band*100:g}"
         base[("ema", band)] = cached_signals(
-            f"EMA{cache_tag}_199", lambda s, b=band: backtest.simulate(s, band=b))
+            f"EMA{cache_tag}_all", lambda s, b=band: backtest.simulate(s, band=b))
         base[("qmw", band)] = cached_signals(
-            f"QMW{cache_tag}_199", variant_builder("QMW", band))
+            f"QMW{cache_tag}_all", variant_builder("QMW", band))
         base[("wdh", band)] = cached_signals(
-            f"WDH{cache_tag}_199", variant_builder("WDH", band))
+            f"WDH{cache_tag}_all", variant_builder("WDH", band))
         print(f"    band {band:.0%} ready", flush=True)
     base[("brk", 0.02)] = cached_signals(
-        "Breakout_199", lambda s: strategies.ath_breakout_trades(s, trailing_stops=True))
+        "Breakout_all", lambda s: strategies.ath_breakout_trades(s, trailing_stops=True))
     for (entry_len, exit_len), window_tag in zip(DARVAS_WINDOWS, DARVAS_TAGS):
         base[("dv", window_tag)] = cached_signals(
-            f"Darvas_{entry_len}_{exit_len}_199",
+            f"Darvas_{entry_len}_{exit_len}_all",
             lambda s, a=entry_len, b=exit_len: darvas.simulate(s, a, b))
     print("    darvas windows ready", flush=True)
     scale_lists = {
-        ("ema", "half"): cached_signals("EMA_half_199",
+        ("ema", "half"): cached_signals("EMA_half_all",
                                         lambda s: backtest.simulate(s, scale_out="half")),
-        ("ema", "half_be"): cached_signals("EMA_halfbe_199",
+        ("ema", "half_be"): cached_signals("EMA_halfbe_all",
                                            lambda s: backtest.simulate(s, scale_out="half_be")),
-        ("brk", "half"): cached_signals("Breakout_half_199",
+        ("brk", "half"): cached_signals("Breakout_half_all",
                                         lambda s: strategies.ath_breakout_trades(
                                             s, trailing_stops=True, scale_out="half")),
-        ("brk", "half_be"): cached_signals("Breakout_halfbe_199",
+        ("brk", "half_be"): cached_signals("Breakout_halfbe_all",
                                            lambda s: strategies.ath_breakout_trades(
                                                s, trailing_stops=True, scale_out="half_be")),
     }
 
-    # Nobody at class level follows 199 stocks; ~10 is realistic. Draw 75 random
+    # Nobody at class level follows the whole universe; ~10 is realistic. Draw 75 random
     # baskets (fixed seed) and promote the MEDIAN performer -- at a fixed
     # reference setting -- to a universe of its own, so every chart can be read
     # through it. Median, not best: picking the winner would be cherry-picking.
@@ -315,10 +318,13 @@ def main() -> None:
           f"{'wiped out' if median_cagr is None else f'{median_cagr:.1f}% CAGR'} "
           f"at the reference setting): {', '.join(sorted(median_basket))}", flush=True)
 
-    universes = {"all": ("All 199 stocks", None),
+    # Counted, not typed. Seven stocks were removed from the universe on
+    # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
+    # otherwise have quietly gone on saying it.
+    universes = {"all": (f"All {len(cfg.all_symbols)} stocks", None),
                  "b10": ("10 random stocks", set(median_basket)),
-                 "in": ("49 in-sample", set(cfg.in_sample)),
-                 "out": ("150 holdout", set(cfg.out_of_sample))}
+                 "in": (f"{len(cfg.in_sample)} in-sample", set(cfg.in_sample)),
+                 "out": (f"{len(cfg.out_of_sample)} holdout", set(cfg.out_of_sample))}
 
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and
@@ -395,7 +401,7 @@ def main() -> None:
                     continue          # the 1R runs are already cached under old names
                 r_tag = f"{multiple:g}".replace(".", "p")
                 name = ("EMA" if skey == "ema" else "Breakout")
-                name += ("_half" if variant == "half" else "_halfbe") + f"_r{r_tag}_199"
+                name += ("_half" if variant == "half" else "_halfbe") + f"_r{r_tag}_all"
                 r_lists[(skey, variant, multiple)] = cached_signals(
                     name, lambda s, v=variant, r=multiple: builder(s, v, r))
 
@@ -428,8 +434,9 @@ def main() -> None:
         for t in signals:
             by_sym.setdefault(t["symbol"], []).append(t)
         pool = sorted(cfg.all_symbols)
+        sizes = [n for n in BREADTH_SIZES if n < len(pool)] + [len(pool)]
         rows = []
-        for size in BREADTH_SIZES:
+        for size in sizes:
             rng = random.Random(BREADTH_SEED + size)
             draws = ([pool] if size >= len(pool)
                      else [rng.sample(pool, size) for _ in range(BREADTH_DRAWS[size])])
@@ -549,7 +556,7 @@ def main() -> None:
         print(f"  timeframes: {label} done", flush=True)
 
     # ---- the 10-stock reality check: Monte Carlo over random baskets -------
-    # Nobody at class level tracks 199 stocks; ~10 is realistic. Which 10 you
+    # Nobody at class level tracks the whole universe; ~10 is realistic. Which 10 you
     # pick dominates the outcome, so we run the SAME account simulation on
     # many random baskets and report the distribution. Fixed Rs1,00,000
     # capital (class level); risk follows the slider; baskets identical
@@ -603,6 +610,8 @@ def main() -> None:
         "built": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
+        "universe_size": len(cfg.all_symbols),
+        "excluded": cfg.excluded,
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
         "breadth": breadth, "tie_break": portfolio.TIE_BREAK,

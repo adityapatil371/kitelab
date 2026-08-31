@@ -98,7 +98,8 @@ def main() -> None:
     book.remove(book.active)
     sheet = book.create_sheet("Scale-out R")
     sheet["A1"] = (
-        "Banking half the position at a multiple of R, all 199 stocks, all history. "
+        f"Banking half the position at a multiple of R, all "
+        f"{len(config.load().all_symbols)} stocks, all history. "
         "R is the risk taken: entry minus the initial stop. TRADE LEVEL -- every "
         "signal separately funded at a fixed Rs1,00,000 book, summed. There is no "
         "CAGR here on purpose: the one-account simulator prices a trade as shares x "

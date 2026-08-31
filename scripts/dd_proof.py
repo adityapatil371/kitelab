@@ -2,7 +2,7 @@
 
     python -m scripts.dd_proof
 
-Writes output/Drawdown Proof.xlsx for the EMA account (199 stocks, Rs250,000,
+Writes output/Drawdown Proof.xlsx for the EMA account (the whole universe, Rs250,000,
 1% risk, class close-only convention) and its headline true max drawdown:
 
     How To Check  -- instructions for auditing this file by hand
@@ -93,7 +93,8 @@ def account_walk(taken: list[dict], capital: float):
 
 
 def main() -> None:
-    signals = pickle.loads((CACHE / "EMA_199.pkl").read_bytes())
+    signals = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
+    n_stocks = len({t["symbol"] for t in signals})
     r = portfolio.run(signals, CAPITAL, RISK)
     days, snapshots = account_walk(r["taken"], CAPITAL)
 
@@ -116,7 +117,7 @@ def main() -> None:
     sheet.column_dimensions["A"].width = 110
     lines = [
         ("THE CLAIM BEING PROVEN", True),
-        (f"One account, Rs2,50,000, trading the 20-EMA stack on 199 NSE stocks at 1% "
+        (f"One account, Rs2,50,000, trading the 20-EMA stack on {n_stocks} NSE stocks at 1% "
          f"risk per trade (class convention: stop checked at closes only), suffered a "
          f"maximum drawdown of {r['max_drawdown_pct']:.1f}%: from its equity peak on "
          f"{peak_day.date()} to its low on {trough_day.date()}.", False),
@@ -153,7 +154,7 @@ def main() -> None:
          "does -- is what produces the headline number.", False),
         ("", False),
         ("HONEST CAVEATS", True),
-        ("The stock universe is today's surviving 199 stocks (survivorship bias: the "
+        (f"The stock universe is today's surviving {n_stocks} stocks (survivorship bias: the "
          "real 2008 would have been WORSE). No slippage is modelled. Fees use "
          "Zerodha's delivery charge model.", False),
     ]

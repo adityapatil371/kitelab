@@ -2,7 +2,7 @@
 
     python -m scripts.survivorship_test
 
-Our 199 stocks are the ones still listed today, so nothing in the backtest
+Our stocks are the ones still listed today, so nothing in the backtest
 ever went to zero. NSE's own delisting list (data/nse_delisted.csv) says how
 often that really happens: 261 harmful Main-Board delistings 2006-2026, but
 196 of them were the 2016-2018 clean-out of companies already suspended for
@@ -56,7 +56,7 @@ def apply_deaths(trades: list[dict], deaths: dict[str, pd.Timestamp]) -> list[di
 
 
 def main() -> None:
-    trades = pickle.loads((CACHE / "EMA_199.pkl").read_bytes())
+    trades = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
     symbols = sorted({t["symbol"] for t in trades})
     start = min(pd.Timestamp(t["entry_ts"]) for t in trades)
     end = max(pd.Timestamp(t["exit_ts"]) for t in trades)

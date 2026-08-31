@@ -44,9 +44,9 @@ DRAWS = 30
 SEED = 20260831
 BUCKETS = [("Micro", 0.0, 0.5), ("Small", 0.5, 5.0), ("Mid", 5.0, 50.0),
            ("Large", 50.0, float("inf"))]
-STRATEGIES = [("EMA · M/W/D", "EMA_199"), ("EMA · Q/M/W", "QMW_199"),
-              ("EMA · W/D/H", "WDH_199"), ("ATH Breakout", "Breakout_199"),
-              ("Darvas 20/10", "Darvas_20_10_199")]
+STRATEGIES = [("EMA · M/W/D", "EMA_all"), ("EMA · Q/M/W", "QMW_all"),
+              ("EMA · W/D/H", "WDH_all"), ("ATH Breakout", "Breakout_all"),
+              ("Darvas 20/10", "Darvas_20_10_all")]
 
 
 def turnover_buckets(symbols) -> dict[str, list[str]]:

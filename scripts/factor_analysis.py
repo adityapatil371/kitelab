@@ -2,7 +2,7 @@
 
     python -m scripts.factor_analysis
 
-One reference account -- EMA M/W/D, 2% band, all 199 stocks, 1% risk,
+One reference account -- EMA M/W/D, 2% band, the whole universe, 1% risk,
 Rs2,50,000 -- and then each factor is varied ON ITS OWN across its plausible
 range while everything else is held still. The swing in CAGR is that factor's
 influence. This is a tornado analysis, not a regression: the levers interact,
@@ -51,6 +51,7 @@ def cagr(trades, capital=CAPITAL, risk=RISK):
 
 
 def main() -> None:
+    cfg = config.load()
     d = json.loads(DASH.read_text())
     # The grid and basket keys gained a fills dimension on 2026-08-31. This study
     # compares LEVERS against one another, so it holds fills at perfect ("0") and
@@ -61,7 +62,8 @@ def main() -> None:
                      if k.endswith("|0")}
     ref_key = "ema|0.02|all|1|250000"
     ref = grid[ref_key]["cagr"]
-    print(f"\n  reference account: EMA M/W/D, 2% band, all 199, 1% risk, Rs2,50,000 "
+    print(f"\n  reference account: EMA M/W/D, 2% band, all {len(cfg.all_symbols)}, "
+          f"1% risk, Rs2,50,000 "
           f"-> CAGR {ref:.1f}%\n")
 
     factors = []      # (name, low_label, low, high_label, high, note)
@@ -101,7 +103,7 @@ def main() -> None:
                      ("p90", b["p90"]), ("best", b["best"])]))
 
     # ---- levers that need their own runs ----------------------------------
-    ema = load_cache("EMA_199")
+    ema = load_cache("EMA_all")
     print("  running the extra scenarios:", flush=True)
 
     real_charges = portfolio.charges
@@ -135,7 +137,6 @@ def main() -> None:
     # sweep is scripts/scaleout_r_test.py and the dashboard's Scale-out page.
     print("    scale-out: deliberately excluded, see the comment", flush=True)
 
-    cfg = config.load()
     intrabar = []
     for s in cfg.all_symbols:
         try:
@@ -165,7 +166,8 @@ def main() -> None:
     if breadth_rows:
         pts = sorted(((f"{r['size']} stocks", r["median"]) for r in breadth_rows),
                      key=lambda x: x[1])
-        factors.append(("Watchlist size (5 to 199 stocks)", pts[0][0], pts[0][1],
+        factors.append((f"Watchlist size (5 to {len(cfg.all_symbols)} stocks)",
+                        pts[0][0], pts[0][1],
                         pts[-1][0], pts[-1][1],
                         "how many stocks you follow at all", pts))
 
@@ -181,7 +183,8 @@ def main() -> None:
     book.remove(book.active)
     sheet = book.create_sheet("Ranking")
     sheet["A1"] = (f"What moves the profit, most to least. Reference account: EMA M/W/D, 2% band, "
-                   f"all 199 stocks, 1% risk, Rs2,50,000 = {ref:.1f}% CAGR. Each factor is varied "
+                   f"all {len(cfg.all_symbols)} stocks, 1% risk, Rs2,50,000 = {ref:.1f}% CAGR. "
+                   f"Each factor is varied "
                    f"ALONE across its plausible range; the swing is how many CAGR points that "
                    f"single choice is worth. Levers interact, so read this as 'what would change "
                    f"my outcome most', not as a causal model.")

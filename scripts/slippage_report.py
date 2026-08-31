@@ -9,7 +9,7 @@ fact. This replaces the flat guess with a per-stock, per-day model (kitelab.slip
 and, separately, with the honest fill convention -- an end-of-day trader reads the
 close after the bell and deals at the next open, not at the print they just watched.
 
-Every scenario is the same reference account: EMA M/W/D, 2% band, all 199 stocks,
+Every scenario is the same reference account: EMA M/W/D, 2% band, the whole universe,
 1% risk, Rs2,50,000.
 """
 from __future__ import annotations
@@ -187,7 +187,8 @@ def main() -> None:
 
     sheet = book.create_sheet("Scenarios")
     sheet["A1"] = (
-        "Execution cost on the reference account: EMA M/W/D, 2% band, all 199 stocks, "
+        f"Execution cost on the reference account: EMA M/W/D, 2% band, "
+        f"all {len(config.load().all_symbols)} stocks, "
         f"1% risk, Rs2,50,000. Row 1 is the old baseline, {base:.1f}% CAGR, which assumed "
         "a perfect fill at any size. Rows 2-4 add cost but keep that impossible sizing, "
         "so they overstate the damage: without a size limit this account puts up to 37x "

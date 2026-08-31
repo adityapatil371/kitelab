@@ -1,4 +1,4 @@
-"""One workbook containing every analysis run on the 199-stock universe, written so
+"""One workbook containing every analysis run on the NSE stock universe, written so
 that someone new to backtesting can read it cold.
 
     python -m scripts.full_report
@@ -6,7 +6,7 @@ that someone new to backtesting can read it cold.
 Every sheet opens with WHAT THIS SHEET SHOWS and HOW TO READ IT in plain words, a
 Glossary defines the jargon, and the Read Me tells the whole story in order.
 Everything is recomputed fresh from the Parquet files at build time. Takes several
-minutes -- the breakout scan over 199 stocks is the slow part.
+minutes -- the breakout scan over the whole universe is the slow part.
 """
 from __future__ import annotations
 
@@ -294,12 +294,12 @@ def main() -> None:
         "improves smoothly in one direction, the effect is real, not luck.",
     ])
     sweeps = [
-        ("the 49 tuning stocks", in_sample, [
+        (f"the {len(in_sample)} tuning stocks", in_sample, [
             "The band cut fee bills by {fee_cut:.0f}% by removing pointless churn. 2% was "
             "picked as the balance between profit-per-trade and total profit. Honesty "
             "note: because 2% was CHOSEN by looking at THIS table, these 49 stocks "
             "stopped being evidence."]),
-        ("the 150 never-seen stocks -- VALIDATION", out_sample, [
+        (f"the {len(out_sample)} never-seen stocks -- VALIDATION", out_sample, [
             "The same sweep on stocks the 2% was never chosen from. The same smooth "
             "pattern appearing here -- fewer trades, collapsing charges, rising profit "
             "per trade as the band widens -- means the band captures something real "
@@ -330,7 +330,7 @@ def main() -> None:
                    if charges_by_band.get("0.0%") else 0.0)
         meaning = [line.format(fee_cut=fee_cut) if "{fee_cut" in line else line
                    for line in meaning]
-        if "49 tuning" in sweep_label:
+        if "tuning" in sweep_label:
             in_sample_fee_cut = fee_cut
         row = write_table(sheet, row, f"EMA with different band widths (on {sweep_label})",
                           ["Band", "Trades", "Median Days Held", "Gross Profit", "Charges",
@@ -562,7 +562,8 @@ def main() -> None:
                     for t in trades), key=lambda x: x[0])[:10]
     rows = [[name, t["symbol"], t["entry_ts"].date(), r, t["exit_reason"],
              t["net_profit"]] for r, name, t in worst]
-    row = write_table(sheet, row, "Ten worst trades (all 199 stocks, both strategies)",
+    row = write_table(sheet, row,
+                      f"Ten worst trades (all {len(everything)} stocks, both strategies)",
                       ["Strategy", "Stock", "Entry Date", "R Multiple", "Exit Reason",
                        "Net P&L (at 1% risk)"],
                       [11, 12, 12, 11, 20, 18], rows,
@@ -577,7 +578,8 @@ def main() -> None:
     # ---- Per Stock -------------------------------------------------------
     sheet = book.create_sheet("Per Stock")
     row = explain(sheet, 1, "WHAT THIS SHEET SHOWS", [
-        "Every one of the 199 stocks individually: which test group it was in, how "
+        f"Every one of the {len(everything)} stocks individually: which test group it "
+        "was in, how "
         "liquid it is, what simply holding it returned per year, and how each strategy "
         "did on it. Use this to look up any stock you care about.",
         "HOW TO READ IT: expect MOST stocks to be small losers for the strategies and a "
@@ -647,7 +649,8 @@ def main() -> None:
         ("WHAT THIS FILE IS", True),
         ("We took two trading strategies -- one that buys all-time-high breakouts, one "
          "that follows 20-period average lines on three timeframes -- and tested them "
-         "the hard way: on 199 NSE stocks, over up to 20 years of real Zerodha price "
+         f"the hard way: on {len(everything)} NSE stocks, over up to 20 years of real "
+         "Zerodha price "
          "data, with real fees, and with every trick we could think of to catch "
          "ourselves being fooled. This file is everything we found.", False),
         ("", False),
@@ -733,7 +736,9 @@ def main() -> None:
         elif text:
             sheet.row_dimensions[row_index].height = 15 * (1 + len(text) // 105)
 
-    target = report.save(book, "Full Analysis 199 Stocks.xlsx")
+    # The count used to be in the FILENAME, which is the one place it can never
+    # update itself. It is in the Read Me instead, computed.
+    target = report.save(book, "Full Analysis.xlsx")
     print(f"\n  written: {target}\n")
 
 
