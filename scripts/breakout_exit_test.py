@@ -85,7 +85,9 @@ def main() -> None:
     print(f"\n  {'exit rule':<34}{'CAGR':>8}{'maxDD':>9}{'taken':>8}{'final':>14}")
     print("  " + "-" * 75)
     for _rule, label, _stats, account, _trades in rows:
-        print(f"  {label:<34}{account['cagr_pct']:>7.1f}%{account['max_drawdown_pct']:>8.1f}%"
+        cagr = ("  wiped" if account["cagr_pct"] is None
+                else f"{account['cagr_pct']:>6.1f}%")
+        print(f"  {label:<34}{cagr:>8}{account['max_drawdown_pct']:>8.1f}%"
               f"{len(account['taken']):>8}{account['final']:>14,.0f}")
 
     print("\n  how each rule ended its trades:")
@@ -115,7 +117,7 @@ def main() -> None:
         values = [label, stats["trades"], stats["win_rate"], stats["avg_win"],
                   stats["avg_loss"], stats["expectancy"], stats["net"], stats["pf"],
                   stats["avg_r"], stats["median_bars"],
-                  round(account["cagr_pct"], 2), round(account["max_drawdown_pct"], 1),
+                  report.cagr_cell(account), round(account["max_drawdown_pct"], 1),
                   len(account["taken"]), round(account["final"])]
         for index, value in enumerate(values, start=1):
             cell = sheet.cell(row, index, value)

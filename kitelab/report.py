@@ -296,3 +296,16 @@ class FormulaValues:
             print(f"  WARNING  {blank:,} of {filled + blank:,} formula cells in "
                   f"{target.name} have no cached value")
         return filled, blank
+
+
+# CAGR is None when the rate is undefined -- portfolio.run returns that for an
+# account wiped out to zero or below, rather than the 0.0 that used to read as
+# "broke even". Spreadsheet cells say so in a word; number_format leaves a string
+# alone, so the column stays readable either way.
+WIPED_LABEL = "wiped"
+
+
+def cagr_cell(result: dict):
+    """The CAGR of a portfolio.run() result, ready for a worksheet cell."""
+    value = result.get("cagr_pct")
+    return WIPED_LABEL if value is None else value

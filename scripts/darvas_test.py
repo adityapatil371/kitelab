@@ -55,7 +55,8 @@ def summarise(trades: list[dict], subset=None) -> dict:
         "net": round(float(net.sum())),
         "pf": round(gross_win / gross_loss, 2) if gross_loss else None,
         "median_bars": int(np.median([t["bars_held"] for t in trades])),
-        "cagr": round(account["cagr_pct"], 2),
+        "cagr": (None if account["cagr_pct"] is None
+                 else round(account["cagr_pct"], 2)),
         "maxdd": round(account["max_drawdown_pct"], 1),
         "taken": len(account["taken"]),
     }

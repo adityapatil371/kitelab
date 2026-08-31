@@ -243,10 +243,23 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
     years = ((entries[-1]["exit_ts"] - entries[0]["entry_ts"]).days / 365.25) if entries else 0
     growth = final / capital
     marked = daily_curve(taken, capital)
+
+    # An account that ended at or below zero has NO compound growth rate: there is
+    # no rate r with capital x (1+r)^years <= 0. This used to return 0.0 for that
+    # case, so an account destroyed down to -Rs7 displayed as "+0.0%/yr" -- the one
+    # number a beginner reads as "broke even". 157 of the 3,072 dashboard grid cells
+    # were doing exactly that on 2026-08-31.
+    #
+    # cagr_pct is None when the rate is undefined -- the account was wiped out, or no
+    # time elapsed. `wiped` says which. A genuinely flat account still returns 0.0,
+    # because for it 0.0 is the true answer. Callers must not coerce None to 0.
+    wiped = growth <= 0
     return {
         "capital": capital, "final": final, "profit": final - capital,
         "return_pct": 100 * (growth - 1),
-        "cagr_pct": 100 * (growth ** (1 / years) - 1) if years > 0 and growth > 0 else 0.0,
+        "cagr_pct": (100 * (growth ** (1 / years) - 1)
+                     if years > 0 and growth > 0 else None),
+        "wiped": wiped,
         "years": years,
         "signals": len(entries),
         "skipped_cash": skipped_cash, "skipped_size": skipped_size,

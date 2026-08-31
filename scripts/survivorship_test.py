@@ -63,6 +63,8 @@ def main() -> None:
     span_days = (end - start).days
     years = span_days / 365.25
     base = portfolio.run(trades, CAPITAL, RISK)
+    if base["cagr_pct"] is None:
+        raise SystemExit("  baseline account was WIPED OUT -- nothing to compare against")
     print(f"\n  baseline (nothing dies): CAGR {base['cagr_pct']:.2f}%  "
           f"maxDD {base['max_drawdown_pct']:.1f}%  final {base['final']:,.0f}")
     print(f"  {len(symbols)} stocks, {years:.1f} years, {len(trades):,} signals\n", flush=True)
@@ -77,15 +79,24 @@ def main() -> None:
                 if rng.random() < p_death:
                     deaths[s] = start + pd.Timedelta(days=rng.random() * span_days)
             r = portfolio.run(apply_deaths(trades, deaths), CAPITAL, RISK)
-            cagrs.append(r["cagr_pct"])
+            cagrs.append(r["cagr_pct"])          # None if that run wiped the account
             dds.append(r["max_drawdown_pct"])
             killed.append(len(deaths))
             if (run + 1) % 25 == 0:
                 print(f"    rate {rate:.1%}/yr: {run+1}/{RUNS} runs", flush=True)
-        c = np.array(cagrs)
+        # A wiped run has no CAGR, so it cannot enter a median or a mean. It is
+        # reported as its own count rather than folded in as a 0.
+        n_wiped = sum(1 for x in cagrs if x is None)
+        c = np.array([x for x in cagrs if x is not None])
         d = np.array(dds)
         print(f"\n  DEATH RATE {rate:.1%} per stock per year "
               f"({p_death:.0%} chance over {years:.0f} years, {np.mean(killed):.0f} stocks die per run)")
+        if n_wiped:
+            print(f"    WIPED OUT in {n_wiped} of {len(cagrs)} runs -- excluded from the "
+                  "CAGR statistics below, which therefore FLATTER the outcome")
+        if not len(c):
+            print("    every run wiped the account; no CAGR statistics possible")
+            continue
         print(f"    CAGR   median {np.median(c):.2f}%   mean {c.mean():.2f}%   "
               f"p10 {np.percentile(c,10):.2f}%   p90 {np.percentile(c,90):.2f}%   worst {c.min():.2f}%")
         print(f"    cost vs baseline: median {np.median(c)-base['cagr_pct']:+.2f} points   "

@@ -130,7 +130,8 @@ def main() -> None:
         r = results[symbol]
         for name, port in [("EMA", r["port_ema"]), ("Breakout", r["port_brk"])]:
             rows.append([f"{symbol} - {name}", port["final"], port["return_pct"],
-                         port["cagr_pct"], port["max_drawdown_pct"], len(port["taken"])])
+                         report.cagr_cell(port), port["max_drawdown_pct"],
+                         len(port["taken"])])
         rows.append([f"{symbol} - BUY & HOLD", None, None, r["bh_cagr"], r["bh_dd"], None])
     row = write_table(sheet, row,
                       "One account per asset: 100,000 at 1% risk, versus just holding it",

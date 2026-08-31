@@ -96,7 +96,7 @@ def run_scenario(symbols, *, enabled: bool, next_open: bool,
     return {
         "signals": len(trades),
         "taken": len(taken),
-        "cagr": result["cagr_pct"],
+        "cagr": report.cagr_cell(result),
         "maxdd": result["max_drawdown_pct"],
         "final": result["final"],
         "slippage_rs": slipped,

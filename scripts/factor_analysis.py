@@ -35,7 +35,19 @@ def load_cache(name):
 
 
 def cagr(trades, capital=CAPITAL, risk=RISK):
-    return portfolio.run(trades, capital, risk)["cagr_pct"]
+    """CAGR of the one-account run. Raises if the account was wiped out.
+
+    Every lever in this tornado is measured as a SWING in CAGR, so a configuration
+    with no CAGR at all cannot be ranked against the others. It used to arrive here
+    as 0.0 and quietly take part in the ranking as if it were break-even.
+    """
+    r = portfolio.run(trades, capital, risk)
+    if r["cagr_pct"] is None:
+        raise SystemExit(
+            f"  account WIPED OUT at capital {capital:,.0f} / risk {risk:.2%} "
+            f"(final Rs{r['final']:,.2f}) -- it has no CAGR, so this lever cannot "
+            "be ranked by CAGR swing")
+    return r["cagr_pct"]
 
 
 def main() -> None:

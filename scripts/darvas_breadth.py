@@ -70,14 +70,28 @@ def sweep(by_symbol, symbols, risk_pct) -> list[dict]:
             starved.append(100 * r["skipped_cash"] / max(r["signals"], 1))
         if not cagr:
             continue
+        # Wiped baskets have no CAGR. They are counted, not averaged in as 0 --
+        # a 0 would sit above every basket that merely lost money.
+        n_wiped = sum(1 for c in cagr if c is None)
+        cagr = [c for c in cagr if c is not None]
+        if not cagr:
+            rows.append({"size": size, "draws": n_wiped, "wiped": n_wiped,
+                         "median": None, "p10": None, "p90": None, "worst": None,
+                         "best": None, "spread": None, "losing": 100,
+                         "median_dd": round(float(np.median(dd)), 1),
+                         "concurrent": round(float(np.median(concurrent)), 1),
+                         "starved": round(float(np.median(starved)), 1),
+                         "taken": int(np.median(taken))})
+            continue
         rows.append({
-            "size": size, "draws": len(cagr),
+            "size": size, "draws": len(cagr) + n_wiped, "wiped": n_wiped,
             "median": round(float(np.median(cagr)), 2),
             "p10": round(float(np.percentile(cagr, 10)), 2),
             "p90": round(float(np.percentile(cagr, 90)), 2),
             "worst": round(min(cagr), 2), "best": round(max(cagr), 2),
             "spread": round(float(np.percentile(cagr, 90) - np.percentile(cagr, 10)), 2),
-            "losing": round(100 * sum(1 for c in cagr if c < 0) / len(cagr)),
+            "losing": round(100 * (n_wiped + sum(1 for c in cagr if c < 0))
+                            / (len(cagr) + n_wiped)),
             "median_dd": round(float(np.median(dd)), 1),
             "concurrent": round(float(np.median(concurrent)), 1),
             "starved": round(float(np.median(starved)), 1),

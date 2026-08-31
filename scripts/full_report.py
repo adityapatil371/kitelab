@@ -359,7 +359,7 @@ def main() -> None:
         rows = []
         for capital in CAPITALS:
             r = portfolio.run(signals[name], capital, 0.01)
-            rows.append([capital, 0.01, r["final"], r["return_pct"], r["cagr_pct"],
+            rows.append([capital, 0.01, r["final"], r["return_pct"], report.cagr_cell(r),
                          r["max_drawdown_pct"], len(r["taken"]),
                          r["skipped_size"], r["skipped_cash"]])
         row = write_table(sheet, row, f"{name}: same strategy, different account sizes",
@@ -368,7 +368,7 @@ def main() -> None:
     for capital in (10_000, 100_000):
         for risk in RISKS:
             r = portfolio.run(signals["Breakout"], capital, risk)
-            rows.append([capital, risk, r["final"], r["return_pct"], r["cagr_pct"],
+            rows.append([capital, risk, r["final"], r["return_pct"], report.cagr_cell(r),
                          r["max_drawdown_pct"], len(r["taken"]),
                          r["skipped_size"], r["skipped_cash"]])
     row = write_table(sheet, row,
@@ -426,9 +426,15 @@ def main() -> None:
             cap_cell.font = Font(bold=True)
             for j, riskv in enumerate(RISK_GRID, start=2):
                 result = portfolio.run(signals[name], capital, riskv)
+                # A destroyed account has no CAGR. It used to land here as 0.0 and
+                # be painted mid-scale, the same colour as a break-even account.
+                value = result["cagr_pct"]
                 cell = sheet.cell(row=r_index, column=j,
-                                  value=round(result["cagr_pct"], 1))
-                cell.number_format = "0.0"
+                                  value=report.WIPED_LABEL if value is None
+                                  else round(value, 1))
+                cell.number_format = "@" if value is None else "0.0"
+                if value is None:
+                    cell.font = Font(bold=True, color="C00000")
         last_col = get_column_letter(1 + len(RISK_GRID))
         data_range = f"B{hdr + 1}:{last_col}{hdr + len(CAP_GRID)}"
         # Same fixed colour scale on both grids so their colours are comparable.

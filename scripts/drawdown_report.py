@@ -144,7 +144,7 @@ def main() -> None:
             for risk in RISKS:
                 r = portfolio.run(subset, CAPITAL, risk)
                 longest, current = underwater_stats(r["curve"])
-                rows.append([uni_label, 100 * risk, r["cagr_pct"],
+                rows.append([uni_label, 100 * risk, report.cagr_cell(r),
                              r["max_drawdown_pct"], r["legacy_max_drawdown_pct"],
                              longest / 365.25, current / 365.25,
                              len(r["taken"]), r["signals"], r["final"]])
@@ -176,7 +176,7 @@ def main() -> None:
                 r = portfolio.run(trades, 100_000, 0.01)
                 longest, current = underwater_stats(r["curve"])
                 asset_rows.append([
-                    symbol, strat_label, r["cagr_pct"], r["max_drawdown_pct"],
+                    symbol, strat_label, report.cagr_cell(r), r["max_drawdown_pct"],
                     r["legacy_max_drawdown_pct"], longest / 365.25, current / 365.25,
                     bh["cagr"], bh["maxdd"], bh["longest_uw"] / 365.25])
         finally:

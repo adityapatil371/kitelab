@@ -84,6 +84,8 @@ def account(trades, realistic: bool) -> dict | None:
     net = np.array([t["net_profit"] for t in trades], dtype=float)
     wins = net[net > 0]
     losses = net[net <= 0]
+    # None when the account was wiped out: it has no CAGR. Rendered as the word
+    # "wiped" at the display boundary, never sorted or averaged as a 0.
     return {"cagr": result["cagr_pct"], "maxdd": result["max_drawdown_pct"],
             "trades": len(trades), "taken": len(result["taken"]),
             "win_rate": 100 * len(wins) / len(net),
@@ -110,12 +112,15 @@ def sampled(by_symbol, members, realistic) -> dict | None:
                 pfs.append(r["pf"])
     if not cagrs:
         return None
-    order = sorted(cagrs)
+    # A wiped draw has no CAGR, so it sorts BELOW every draw that merely lost money
+    # rather than landing on 0.0 in the middle of the distribution.
+    order = sorted(cagrs, key=lambda c: (c is not None, c))
     return {"cagr": order[len(order) // 2], "p10": order[len(order) // 10],
             "p90": order[9 * len(order) // 10],
             "maxdd": sorted(dds)[len(dds) // 2],
             "pf": sorted(pfs)[len(pfs) // 2] if pfs else None,
-            "draws": len(cagrs)}
+            "draws": len(cagrs),
+            "wiped": sum(1 for c in cagrs if c is None)}
 
 
 def table(title, note, rows, buckets, key="cagr"):
@@ -126,7 +131,12 @@ def table(title, note, rows, buckets, key="cagr"):
         line = f"  {label:<16}"
         for name, _l, _h in BUCKETS:
             c = cells.get(name)
-            line += f"{c[key]:>12.1f}%" if c else f"{'—':>13}"
+            if not c:
+                line += f"{'—':>13}"
+            elif c[key] is None:
+                line += f"{'wiped':>13}"
+            else:
+                line += f"{c[key]:>12.1f}%"
         print(line, flush=True)
 
 
@@ -186,9 +196,10 @@ def main() -> None:
                 c = cells.get(name)
                 if not c:
                     continue
+                pc = lambda v: (report.WIPED_LABEL if v is None else round(v, 2))
                 values = [section, label, name, len(buckets[name]),
-                          round(c["cagr"], 2), round(c.get("p10", c["cagr"]), 2),
-                          round(c.get("p90", c["cagr"]), 2), round(c["maxdd"], 1),
+                          pc(c["cagr"]), pc(c.get("p10", c["cagr"])),
+                          pc(c.get("p90", c["cagr"])), round(c["maxdd"], 1),
                           round(c["pf"], 2) if c.get("pf") else None, c.get("trades")]
                 for index, value in enumerate(values, start=1):
                     cell = sheet.cell(line, index, value)

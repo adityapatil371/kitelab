@@ -68,7 +68,8 @@ def run_stock_portfolios():
             for risk in RISKS:
                 r = portfolio.run(subset, CAPITAL, risk)
                 longest, current = underwater_stats(r["curve"])
-                rows.append([uni_label, 100 * risk, r["cagr_pct"], r["max_drawdown_pct"],
+                rows.append([uni_label, 100 * risk, report.cagr_cell(r),
+                             r["max_drawdown_pct"],
                              longest / 365.25, current / 365.25,
                              len(r["taken"]), r["final"]])
                 if members is None and risk in (0.0025, 0.01):
@@ -201,7 +202,7 @@ def main() -> None:
     for name, r in headline.items():
         longest, _ = underwater_stats(r["curve"])
         first = pd.Timestamp(min(t["entry_ts"] for t in r["taken"])).year
-        p_rows.append([name, f"{first}-2026", len(r["taken"]), r["cagr_pct"],
+        p_rows.append([name, f"{first}-2026", len(r["taken"]), report.cagr_cell(r),
                        r["max_drawdown_pct"], longest / 365.25, r["final"]])
     p_rows.append(["NIFTY 50 buy-and-hold", "2006-2026", "-", nifty_full["cagr"],
                    nifty_full["maxdd"], nifty_full["longest_uw"] / 365.25, "-"])
@@ -221,7 +222,8 @@ def main() -> None:
                       ["@", "0", "0.0%", "0.00", "#,##0", "#,##0"]) + 1
     a_headers = ["Asset", "Strategy", "CAGR %", "True Max DD %",
                  "Buy&Hold CAGR %", "Buy&Hold Max DD %"]
-    a_rows = [[sym, strat, r["cagr_pct"], r["max_drawdown_pct"], bh["cagr"], bh["maxdd"]]
+    a_rows = [[sym, strat, report.cagr_cell(r), r["max_drawdown_pct"],
+               bh["cagr"], bh["maxdd"]]
               for (sym, strat), (r, _, bh) in assets.items()]
     write_table(sheet, row, "Six class instruments (100,000 units, 1% risk)",
                 a_headers, [13, 10, 8, 12, 12, 13], a_rows,
@@ -270,7 +272,7 @@ def main() -> None:
                "B&H Longest UW (yrs)"]
     widths = [13, 10, 9, 12, 14, 12, 13, 13]
     fmts = ["@", "@", "0.0", "0.0", "0.0", "0.0", "0.0", "0.0"]
-    rows = [[sym, strat, r["cagr_pct"], r["max_drawdown_pct"], longest / 365.25,
+    rows = [[sym, strat, report.cagr_cell(r), r["max_drawdown_pct"], longest / 365.25,
              bh["cagr"], bh["maxdd"], bh["longest_uw"] / 365.25]
             for (sym, strat), (r, longest, bh) in assets.items()]
     row = explain(sheet, 1, "THE SIX CLASS INSTRUMENTS", [

@@ -104,7 +104,11 @@ def run_payload(r):
             "depth": round(e["depth_pct"], 1),
             "recovered": str(e["recovered"].date()) if e["recovered"] is not None else None,
             "years": round(e["days"] / 365.25, 1)} for e in episodes(r["curve"])]
-    return {"cagr": round(r["cagr_pct"], 1), "final": round(r["final"]),
+    # cagr is null when the account was wiped out -- the rate is undefined, and the
+    # 0.0 this used to emit read as "broke even" on 157 of these 3,072 cells.
+    # The page renders null as "Wiped", and a MISSING key as an em dash.
+    return {"cagr": None if r["cagr_pct"] is None else round(r["cagr_pct"], 1),
+            "wiped": r["wiped"], "final": round(r["final"]),
             "ret": round(r["return_pct"]), "maxdd": round(r["max_drawdown_pct"], 1),
             "uw_long": round(longest / 365.25, 1), "uw_now": round(current / 365.25, 1),
             "taken": len(r["taken"]), "signals": r["signals"],
@@ -289,9 +293,13 @@ def main() -> None:
         members = set(basket)
         subset = [t for t in base[("ema", 0.02)] if t["symbol"] in members]
         scored.append((portfolio.run(subset, 100_000, 0.01)["cagr_pct"], basket))
-    scored.sort(key=lambda x: x[0])
-    median_basket = scored[len(scored) // 2][1]
-    print(f"  10-stock universe (median of 75 draws, {scored[len(scored)//2][0]:.1f}% CAGR "
+    # A wiped basket has no CAGR at all, so it sorts BELOW every basket that merely
+    # lost money -- which is where it belongs. (None of the 75 wipe at this setting,
+    # verified 2026-08-31, so the chosen basket is unchanged by this ordering.)
+    scored.sort(key=lambda x: (x[0] is not None, x[0]))
+    median_cagr, median_basket = scored[len(scored) // 2]
+    print(f"  10-stock universe (median of 75 draws, "
+          f"{'wiped out' if median_cagr is None else f'{median_cagr:.1f}% CAGR'} "
           f"at the reference setting): {', '.join(sorted(median_basket))}", flush=True)
 
     universes = {"all": ("All 199 stocks", None),
@@ -423,11 +431,19 @@ def main() -> None:
                 starved.append(100 * r["skipped_cash"] / max(r["signals"], 1))
             if not cagrs:
                 continue
-            ordered = sorted(cagrs)
-            pick = lambda q: round(ordered[min(len(ordered) - 1, int(q * len(ordered)))], 1)
-            rows.append({"size": size, "draws": len(ordered),
+            # Wiped baskets (no CAGR) sort to the BOTTOM, not to 0.0. A quantile that
+            # lands on one is reported as null, and the count is published so the page
+            # can say how many of the draws were destroyed rather than hiding them
+            # among the flat results.
+            ordered = sorted(cagrs, key=lambda c: (c is not None, c))
+            n_wiped = sum(1 for c in cagrs if c is None)
+            def pick(q, ordered=ordered):
+                v = ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+                return None if v is None else round(v, 1)
+            rows.append({"size": size, "draws": len(ordered), "wiped": n_wiped,
                          "median": pick(0.5), "p10": pick(0.1), "p90": pick(0.9),
-                         "worst": round(ordered[0], 1), "best": round(ordered[-1], 1),
+                         "worst": None if ordered[0] is None else round(ordered[0], 1),
+                         "best": None if ordered[-1] is None else round(ordered[-1], 1),
                          "dd": round(sorted(dds)[len(dds) // 2], 1),
                          "held": round(sorted(held)[len(held) // 2], 1),
                          "starved": round(sorted(starved)[len(starved) // 2], 1)})
@@ -538,19 +554,31 @@ def main() -> None:
                     if not subset:
                         continue
                     r = portfolio.run(subset, 100_000, risk / 100)
-                    cagrs.append(round(r["cagr_pct"], 1))
+                    cagrs.append(None if r["cagr_pct"] is None
+                                 else round(r["cagr_pct"], 1))
                     dds.append(round(r["max_drawdown_pct"], 1))
-                cagrs_sorted = sorted(cagrs)
+                # A wiped basket has no CAGR. It used to arrive here as 0.0, which
+                # sorted it ABOVE every basket that merely lost money and kept it out
+                # of the "negative %" count entirely -- so a distribution where 29 of
+                # 75 baskets were destroyed reported a median of -35.5 and 61%
+                # negative instead of wiped-out and 100% negative.
+                cagrs_sorted = sorted(cagrs, key=lambda c: (c is not None, c))
                 n = len(cagrs_sorted)
+                alive = [c for c in cagrs if c is not None]
+                n_wiped = n - len(alive)
                 basket10[f"{skey}|{tag(band)}|{risk:g}|{fkey}"] = {
                     "cagrs": cagrs,
+                    "wiped": n_wiped,
                     "median": cagrs_sorted[n // 2],
-                    "mean": round(sum(cagrs) / n, 1),
+                    # the mean of a set containing a destroyed account is not a number
+                    "mean": round(sum(alive) / len(alive), 1) if not n_wiped else None,
                     "p10": cagrs_sorted[n // 10],
                     "p90": cagrs_sorted[9 * n // 10],
                     "best": cagrs_sorted[-1], "worst": cagrs_sorted[0],
-                    "beat_fd": round(100 * sum(1 for c in cagrs if c >= 7) / n),
-                    "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
+                    "beat_fd": round(100 * sum(1 for c in alive if c >= 7) / n),
+                    # wiped counts as negative: it lost more than any survivor did
+                    "negative": round(100 * (n_wiped
+                                             + sum(1 for c in alive if c < 0)) / n),
                     "median_dd": sorted(dds)[len(dds) // 2],
                 }
             print(f"  baskets[{fkey}]: {skey} {tag(band)} done", flush=True)
