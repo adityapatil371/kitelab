@@ -66,8 +66,68 @@ _TRIM_WARNED: set[str] = set()
 _CLEAN_WARNED: set[str] = set()
 
 
+# A zero-volume bar this far from the traded price around it is not a price.
+# 0.2 = five times out of line in either direction; the closest thing to a false
+# positive in the whole universe is TVSSRICHAK's padding at 0.371 of the first
+# real trade, which this deliberately leaves alone (see drop_untraded_outliers).
+UNTRADED_OUTLIER_FACTOR = 0.2
+UNTRADED_REF_WINDOW = 41      # centred, so ~20 sessions of context each side
+UNTRADED_REF_MIN = 5
+
+
+def drop_untraded_outliers(frame: pd.DataFrame, symbol: str,
+                           interval: str) -> pd.DataFrame:
+    """Drop zero-volume bars whose price is wildly out of line with the tape.
+
+    VINEETLAB carried six bars reading 7.60/7.60/7.60/7.60 with volume 0 amid
+    prices around Rs1,600. Nothing traded at 7.60 -- there was no volume -- but a
+    close-based stop reads it as a 99.5% collapse and sells into it. One of them
+    cost the Q/M/W reference account a manufactured -Rs43,200.
+
+    The reference is a CENTRED ROLLING MEDIAN OF THE TRADED BARS ONLY. That is
+    what makes this work on RUNS: five consecutive corrupt bars cannot drag their
+    own reference down, because they are excluded from it by construction. An
+    earlier detector compared each bar with its immediate neighbours and so found
+    only the one isolated bar, missing the run of five.
+
+    At the ends of a series there is no centred window, so the reference falls
+    back to the nearest traded close. That is what catches JMFINANCIL: 191
+    zero-volume bars at Rs0.14 sitting in front of the stock's first real trade at
+    Rs30.99, which seeded its 20-day EMA at 0.14 and manufactured a buy signal on
+    the first day it ever traded.
+
+    Dropped, not repaired: no volume means no trade, so there is no price to
+    repair towards. The bar did not happen.
+    """
+    if "volume" not in frame.columns or frame.empty:
+        return frame
+    traded = frame["volume"] > 0
+    if not traded.any():
+        return frame
+    reference = (frame["close"].where(traded)
+                 .rolling(UNTRADED_REF_WINDOW, center=True,
+                          min_periods=UNTRADED_REF_MIN)
+                 .median().ffill().bfill())
+    if reference.isna().all():
+        return frame
+    out_of_line = ((frame["close"] < UNTRADED_OUTLIER_FACTOR * reference)
+                   | (frame["close"] > reference / UNTRADED_OUTLIER_FACTOR))
+    doomed = (~traded) & reference.notna() & out_of_line
+    if not doomed.any():
+        return frame
+    tag = f"{symbol}:{interval}:untraded"
+    if tag not in _CLEAN_WARNED:
+        first, last = frame.loc[doomed, "ts"].iloc[0], frame.loc[doomed, "ts"].iloc[-1]
+        print(f"[kitelab] {symbol}: dropped {int(doomed.sum()):,} {interval} bars with "
+              f"ZERO VOLUME and a price far off the tape "
+              f"({pd.Timestamp(first).date()} .. {pd.Timestamp(last).date()})")
+        _CLEAN_WARNED.add(tag)
+    return frame.loc[~doomed].reset_index(drop=True)
+
+
 def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
-    """Repair non-positive OHLC values in the stored candles.
+    """Repair non-positive OHLC values in the stored candles, and drop bars that
+    record a price nothing traded at.
 
     Kite's 2015-2018 intraday history contains bars for thinly traded stocks
     where `open` and `low` are recorded as 0.00 (high/close are fine). Any
@@ -75,11 +135,15 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
     at open=0 -- manufacturing catastrophic losses that never happened. The
     zeros are missing data, not prices, so they are rebuilt from the same
     bar's surviving fields; a bar with no usable close is dropped outright.
+
+    A second family survives that repair because its prices are positive: bars
+    with ZERO VOLUME carrying a price nowhere near the tape. See
+    drop_untraded_outliers.
     """
     cols = ["open", "high", "low", "close"]
     broken = (frame[cols] <= 0).any(axis=1)
     if not broken.any():
-        return frame
+        return drop_untraded_outliers(frame, symbol, interval)
     count = int(broken.sum())
     dead = frame["close"] <= 0
     frame = frame.loc[~dead].copy()
@@ -99,7 +163,7 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
         print(f"[kitelab] {symbol}: repaired {count:,} {interval} bars with "
               f"non-positive prices (Kite data gaps), dropped {int(dead.sum())}")
         _CLEAN_WARNED.add(tag)
-    return frame.reset_index(drop=True)
+    return drop_untraded_outliers(frame.reset_index(drop=True), symbol, interval)
 
 
 
