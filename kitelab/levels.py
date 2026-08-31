@@ -120,20 +120,3 @@ def pivot_lows(frame: pd.DataFrame, span: int = 5) -> list[int]:
         if low[position] == window.min() and (window == low[position]).sum() == 1:
             found.append(position)
     return found
-
-
-def describe(symbol: str, daily: pd.DataFrame) -> list[dict]:
-    """Levels for a symbol, enriched with touch count and valid_from."""
-    out = []
-    for index, raw in enumerate(load_all().get(symbol, [])):
-        # The sidebar should show what actually qualifies a level, so this uses the
-        # validation band, not the tighter trigger band.
-        events = touch_events(daily, raw["price"], tolerance=VALIDATION_TOLERANCE)
-        established = daily.iloc[events[1]]["ts"] if len(events) >= 2 else None
-        out.append({
-            **raw,
-            "index": index,
-            "touches": len(events),
-            "valid_from": established.strftime("%Y-%m-%d") if established is not None else None,
-        })
-    return out

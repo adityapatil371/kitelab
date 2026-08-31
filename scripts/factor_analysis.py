@@ -38,16 +38,6 @@ def cagr(trades, capital=CAPITAL, risk=RISK):
     return portfolio.run(trades, capital, risk)["cagr_pct"]
 
 
-def with_slippage(trades, per_side):
-    out = []
-    for t in trades:
-        t = dict(t)
-        t["entry_price"] *= (1 + per_side)      # you buy a little higher
-        t["exit_price"] *= (1 - per_side)       # and sell a little lower
-        out.append(t)
-    return out
-
-
 def main() -> None:
     d = json.loads(DASH.read_text())
     # The grid and basket keys gained a fills dimension on 2026-08-31. This study
