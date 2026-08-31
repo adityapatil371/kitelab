@@ -120,7 +120,11 @@
         <p class="fillnote" id="fillnote"></p></div>
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
-      <div class="slicer"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
+      <div class="slicer" id="wrap-band"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
+      <div class="slicer" id="wrap-dvwin" style="display:none"><span class="eyebrow">Darvas windows</span><div class="slist" id="sl-dvwin"></div>
+        <p class="fillnote">In on a close above the highest high of the first number of
+          candles, out on a close at or below the lowest low of the second. 20/10 is what
+          the class specified; it is the weakest of the five.</p></div>
       <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
       <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
     </div>
@@ -143,7 +147,9 @@
     </div>
 
     <div class="note">Band applies to the three EMA stacks; ATH Breakout has none, so it pins to 2%.
-      Individual stocks, assets and the scale-out table are at the 2% band.
+      Darvas has no band either &mdash; it has the two window lengths instead, which swap into
+      the same slot. Individual stocks and assets show each strategy at one setting (2% band,
+      Darvas 20/10); the scale-out table is at the 2% band.
       Every number is a real precomputed backtest — nothing is simulated in the browser.
       Survivorship bias applies. Rebuild: <code>python -m scripts.dashboard_data</code></div>
   </aside>
@@ -175,7 +181,7 @@
         <svg id="riskbars" class="barchart" viewBox="0 0 360 120"></svg>
         <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
         <svg id="riskdd" class="barchart" viewBox="0 0 360 120"></svg>
-        <h2 style="margin-top:0.7rem">CAGR by band</h2>
+        <h2 style="margin-top:0.7rem" id="bandbars-title">CAGR by band</h2>
         <svg id="bandbars" class="barchart" viewBox="0 0 360 160"></svg>
         <h2 style="margin-top:0.7rem">CAGR by strategy stack</h2>
         <svg id="stackbars" class="barchart" viewBox="0 0 360 120"></svg>
@@ -319,7 +325,7 @@ let DATA = null;
 const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
-                soStrat: "ema", soUni: "all" };
+                soStrat: "ema", soUni: "all", dvIdx: 1 };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
                ["scaleout", "Scale-out"], ["assets", "Futures & assets"]];
@@ -344,6 +350,10 @@ function init() {
   slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
   slicer("sl-band", (DATA.bands || [0.02]).map((b, i) => [String(i), (b * 100) + "% band"]),
          () => String(state.bandIdx), k => { state.bandIdx = +k; renderPortfolio(); });
+  const dvWins = DATA.darvas_windows || ["20-10"];
+  state.dvIdx = Math.max(0, dvWins.indexOf(DATA.darvas_default || "20-10"));
+  slicer("sl-dvwin", dvWins.map((w, i) => [String(i), "in " + w.split("-")[0] + " / out " + w.split("-")[1]]),
+         () => String(state.dvIdx), k => { state.dvIdx = +k; renderPortfolio(); });
   slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
          () => String(state.riskIdx), k => { state.riskIdx = +k; renderPortfolio(); });
   slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
@@ -424,18 +434,30 @@ function syncStockList() {
 }
 
 // =================================================== portfolio page ====
+// Darvas has no band; its two window lengths ride in the same slot of the key.
+const dvWindow = () => (DATA.darvas_windows || ["20-10"])[state.dvIdx];
 const bandOf = (strat, bandIdx) =>
-  strat === "brk" ? 0.02 : (DATA.bands || [0.02])[bandIdx];
+  strat === "dv" ? dvWindow()
+  : strat === "brk" ? 0.02
+  : (DATA.bands || [0.02])[bandIdx];
+// The band slot means different things per strategy, so describe it in one place
+// rather than assuming it is a number and printing "NaN% band".
+const settingLabel = strat =>
+  strat === "dv" ? `in ${dvWindow().split("-")[0]} / out ${dvWindow().split("-")[1]}`
+  : `${bandOf(strat, state.bandIdx) * 100}% band`;
+const keyWith = (strat, bandVal, uni, riskIdx, capIdx) =>
+  `${strat}|${bandVal}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}|${state.fill}`;
 const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
-  `${strat}|${bandOf(strat, bandIdx)}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`
-  + `|${state.fill}`;
+  keyWith(strat, bandOf(strat, bandIdx), uni, riskIdx, capIdx);
 const fillLabel = () =>
   ((DATA.fills || []).find(([k]) => k === state.fill) || [null, "Perfect fills"])[1];
 const runFor = (riskIdx, capIdx) =>
   DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
 
 function renderPortfolio() {
-  for (const id of ["sl-fill", "sl-strat", "sl-uni", "sl-band", "sl-risk", "sl-cap"]) $(id)._sync();
+  for (const id of ["sl-fill", "sl-strat", "sl-uni", "sl-band", "sl-dvwin", "sl-risk", "sl-cap"]) $(id)._sync();
+  $("wrap-band").style.display = state.strat === "dv" ? "none" : "";
+  $("wrap-dvwin").style.display = state.strat === "dv" ? "" : "none";
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
   const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
@@ -456,7 +478,7 @@ function renderPortfolio() {
   $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
   $("k-trades").textContent = r.taken.toLocaleString("en-IN");
   $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
-  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${(bandOf(state.strat, state.bandIdx)*100)}% band · ${risk}% risk · start ${inr(cap)} · ${fillLabel()}`;
+  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${settingLabel(state.strat)} · ${risk}% risk · start ${inr(cap)} · ${fillLabel()}`;
   $("fillnote").textContent = state.fill === "1"
     ? `You cross a spread on the way in and out, your own order moves the price, and no `
       + `single order may exceed ${((DATA.participation || 0.01) * 100)}% of what the stock `
@@ -477,16 +499,19 @@ function renderPortfolio() {
   barChart($("riskdd"), DATA.risks.map((rk, i) => ({
     label: rk + "%", value: runFor(i, state.capIdx).maxdd, on: i === state.riskIdx
   })), "var(--dd)", v => v.toFixed(0) + "%");
-  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", wdh: "W/D/H", brk: "Brk" };
+  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", wdh: "W/D/H", brk: "Brk", dv: "Darvas" };
   barChart($("stackbars"), Object.keys(stackNames).map(k => ({
     label: stackNames[k],
     value: (DATA.grid[keyFor(k, state.bandIdx, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
     on: k === state.strat
   })), "var(--equity)", v => v.toFixed(1) + "%");
-  barChart($("bandbars"), (DATA.bands || [0.02]).map((b, i) => ({
-    label: (b * 100) + "%",
-    value: (DATA.grid[keyFor(state.strat, i, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
-    on: i === state.bandIdx || state.strat === "brk"
+  const isDv = state.strat === "dv";
+  const bandOpts = isDv ? (DATA.darvas_windows || ["20-10"]) : (DATA.bands || [0.02]);
+  $("bandbars-title").textContent = isDv ? "CAGR by window pair" : "CAGR by band";
+  barChart($("bandbars"), bandOpts.map((b, i) => ({
+    label: isDv ? String(b) : (b * 100) + "%",
+    value: (DATA.grid[keyWith(state.strat, b, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
+    on: isDv ? i === state.dvIdx : (i === state.bandIdx || state.strat === "brk")
   })), "var(--bench)", v => v.toFixed(1) + "%", 160);
   renderEpisodes(r);
   renderTradeMetrics();
@@ -636,7 +661,7 @@ function renderTradeMetrics() {
   if (!DATA.tradestats) return;
   const band = bandOf(state.strat, state.bandIdx);
   $("tm-sub").textContent =
-    `${DATA.strategies[state.strat]} · ${(band * 100)}% band · every trade the rule produced ` +
+    `${DATA.strategies[state.strat]} · ${settingLabel(state.strat)} · every trade the rule produced ` +
     `(fixed ₹1,00,000 per trade, net of charges) — not the one-account view above, so the ` +
     `universes are directly comparable.`;
   const rows = Object.entries(DATA.universes).map(([u, label]) =>

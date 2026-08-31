@@ -34,7 +34,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kitelab import backtest, config, frames, portfolio, sizing, slippage, strategies
+from kitelab import (backtest, config, darvas, frames, portfolio, sizing, slippage,
+                     strategies)
 from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
@@ -61,7 +62,25 @@ ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
 STEP = 10
 BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "wdh": "EMA · W/D/H", "brk": "ATH Breakout"}
+                   "wdh": "EMA · W/D/H", "brk": "ATH Breakout",
+                   "dv": "Darvas channel"}
+
+# Darvas has no band. It has a pair of windows instead, and they matter at least as
+# much, so they ride in the same slot of the key that the band uses for the EMA
+# stacks: "dv|20-10|all|1|250000|0". 20/10 is what the class specified and is the
+# page default; it is not the best of them.
+DARVAS_WINDOWS = [(10, 5), (20, 10), (20, 20), (40, 20), (55, 20)]
+DARVAS_TAGS = [f"{a}-{b}" for a, b in DARVAS_WINDOWS]
+DARVAS_DEFAULT = "20-10"
+
+# The one setting each strategy shows on the per-stock page.
+PRIMARY = {"ema": 0.02, "qmw": 0.02, "wdh": 0.02, "brk": 0.02, "dv": DARVAS_DEFAULT}
+
+
+def tag(band) -> str:
+    """Key fragment for the band slot: a number for the EMA stacks, a window pair
+    like "20-10" for Darvas."""
+    return f"{band:g}" if isinstance(band, (int, float)) else str(band)
 
 
 # ------------------------------------------------------------ helpers ----
@@ -217,16 +236,23 @@ def main() -> None:
     print("  signal lists (cached where possible):", flush=True)
     base = {}
     for band in BANDS:
-        tag = "" if band == 0.02 else f"_b{band*100:g}"      # band 2% keeps the old cache names
+        # band 2% keeps the old cache names. Named cache_tag, not tag: tag() is the
+        # module-level key formatter and a local of that name shadows it.
+        cache_tag = "" if band == 0.02 else f"_b{band*100:g}"
         base[("ema", band)] = cached_signals(
-            f"EMA{tag}_199", lambda s, b=band: backtest.simulate(s, band=b))
+            f"EMA{cache_tag}_199", lambda s, b=band: backtest.simulate(s, band=b))
         base[("qmw", band)] = cached_signals(
-            f"QMW{tag}_199", variant_builder("QMW", band))
+            f"QMW{cache_tag}_199", variant_builder("QMW", band))
         base[("wdh", band)] = cached_signals(
-            f"WDH{tag}_199", variant_builder("WDH", band))
+            f"WDH{cache_tag}_199", variant_builder("WDH", band))
         print(f"    band {band:.0%} ready", flush=True)
     base[("brk", 0.02)] = cached_signals(
         "Breakout_199", lambda s: strategies.ath_breakout_trades(s, trailing_stops=True))
+    for (entry_len, exit_len), window_tag in zip(DARVAS_WINDOWS, DARVAS_TAGS):
+        base[("dv", window_tag)] = cached_signals(
+            f"Darvas_{entry_len}_{exit_len}_199",
+            lambda s, a=entry_len, b=exit_len: darvas.simulate(s, a, b))
+    print("    darvas windows ready", flush=True)
     scale_lists = {
         ("ema", "half"): cached_signals("EMA_half_199",
                                         lambda s: backtest.simulate(s, scale_out="half")),
@@ -290,9 +316,9 @@ def main() -> None:
                 for risk in RISKS:
                     for capital in CAPITALS:
                         r = portfolio.run(subset, capital, risk / 100)
-                        grid[f"{skey}|{band:g}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
+                        grid[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
                             run_payload(r)
-            print(f"  grid[{fkey}]: {skey} band {band:.0%} done", flush=True)
+            print(f"  grid[{fkey}]: {skey} {tag(band)} done", flush=True)
     realistic(False)
 
     tradestats = {}
@@ -301,7 +327,7 @@ def main() -> None:
             for ukey, (_, members) in universes.items():
                 subset = (signals if members is None
                           else [t for t in signals if t["symbol"] in members])
-                tradestats[f"{skey}|{band:g}|{ukey}|{fkey}"] = trade_stats(subset)
+                tradestats[f"{skey}|{tag(band)}|{ukey}|{fkey}"] = trade_stats(subset)
     print("  universe trade metrics done", flush=True)
 
     scaleout = {}
@@ -335,9 +361,9 @@ def main() -> None:
                 if multiple == 1.0:
                     r_lists[(skey, variant, multiple)] = scale_lists[(skey, variant)]
                     continue          # the 1R runs are already cached under old names
-                tag = f"{multiple:g}".replace(".", "p")
+                r_tag = f"{multiple:g}".replace(".", "p")
                 name = ("EMA" if skey == "ema" else "Breakout")
-                name += ("_half" if variant == "half" else "_halfbe") + f"_r{tag}_199"
+                name += ("_half" if variant == "half" else "_halfbe") + f"_r{r_tag}_199"
                 r_lists[(skey, variant, multiple)] = cached_signals(
                     name, lambda s, v=variant, r=multiple: builder(s, v, r))
 
@@ -362,7 +388,7 @@ def main() -> None:
     print("  per-stock detail:", flush=True)
     by_symbol = {k: {} for k in STRATEGY_LABELS}
     for (skey, band), signals in base.items():
-        if band != 0.02:
+        if band != PRIMARY[skey]:
             continue
         for t in signals:
             by_symbol[skey].setdefault(t["symbol"], []).append(t)
@@ -396,7 +422,10 @@ def main() -> None:
                         "brk": lambda so=None: strategies.ath_breakout_trades(
                             symbol, True, timeframe=brk_tf, scale_out=so),
                         "qmw": lambda so=None: variant_builder("QMW")(symbol),
-                        "wdh": lambda so=None: variant_builder("WDH")(symbol)}
+                        "wdh": lambda so=None: variant_builder("WDH")(symbol),
+                        # Darvas needs only daily bars, so it runs on every
+                        # instrument here, at the windows the class specified.
+                        "dv": lambda so=None: darvas.simulate(symbol, 20, 10)}
             for skey, build in builders.items():
                 try:
                     trades = build()
@@ -464,7 +493,7 @@ def main() -> None:
                     dds.append(round(r["max_drawdown_pct"], 1))
                 cagrs_sorted = sorted(cagrs)
                 n = len(cagrs_sorted)
-                basket10[f"{skey}|{band:g}|{risk:g}|{fkey}"] = {
+                basket10[f"{skey}|{tag(band)}|{risk:g}|{fkey}"] = {
                     "cagrs": cagrs,
                     "median": cagrs_sorted[n // 2],
                     "mean": round(sum(cagrs) / n, 1),
@@ -475,7 +504,7 @@ def main() -> None:
                     "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
                     "median_dd": sorted(dds)[len(dds) // 2],
                 }
-            print(f"  baskets[{fkey}]: {skey} band {band:.0%} done", flush=True)
+            print(f"  baskets[{fkey}]: {skey} {tag(band)} done", flush=True)
     realistic(False)
 
     nifty = frames.daily("NIFTY 50")
@@ -484,6 +513,7 @@ def main() -> None:
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
+        "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),
