@@ -94,7 +94,8 @@ def _trigger_entry(bars: pd.DataFrame, signal_pos: int, trigger_price: float):
 def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
                  entry_pos, entry_price, stop, max_hold: int,
                  trail_step=None, scale_out: str | None = None,
-                 exit_signal=None, exit_reason: str = "exit signal") -> dict | None:
+                 exit_signal=None, exit_reason: str = "exit signal",
+                 scale_r: float = 1.0) -> dict | None:
     risk = entry_price - stop
     if risk <= 0:
         return None
@@ -109,7 +110,7 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         (exit_pos, exit_price, reason, final_stop,
          banked_fraction, banked_price) = trailing.resolve(
             bars, entry_pos, stop, trail_step, entry_price, scale_out,
-            exit_signal, exit_reason)
+            exit_signal, exit_reason, scale_r)
     else:
         target = entry_price + REWARD_RATIO * risk
         resolved = _resolve_exit(bars, entry_pos, stop, target, max_hold)
@@ -135,7 +136,7 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
     gross = ((banked_price - entry_price) * banked_shares
              + (exit_price - entry_price) * remaining)
     if banked_fraction:
-        reason = reason + " (half banked at 1R)"
+        reason = reason + f" (half banked at {scale_r:g}R)"
     # Whether a same-day round trip is billed at intraday or delivery rates depends on
     # how the broker classifies it, so carry both and let the report show the range.
     same_session = entry_ts.date() == exit_ts.date()
@@ -363,7 +364,8 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                         pullback: float = ATH_PULLBACK,
                         timeframe: str = TIMEFRAME,
                         scale_out: str | None = None,
-                        exit_rule: str = "trail") -> list[dict]:
+                        exit_rule: str = "trail",
+                        scale_r: float = 1.0) -> list[dict]:
     """Breakouts to new all-time highs, detected automatically.
 
     timeframe="1d" runs entries on daily bars instead of 30-minute ones. That is a
@@ -430,7 +432,7 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
             trade = _build_trade(symbol, active, price, "all-time high", position,
                                  entry_pos, entry_price, stop, BREAKOUT_HOLD_BARS,
                                  make_trail() if make_trail else None, scale_out,
-                                 below_ema, "below 20 EMA")
+                                 below_ema, "below 20 EMA", scale_r)
             if trade:
                 trades.append(trade)
             break   # one trade per armed level; the next needs a fresh pullback

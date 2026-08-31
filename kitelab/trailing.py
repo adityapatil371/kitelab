@@ -70,7 +70,8 @@ def daily_trail(daily: pd.DataFrame, pivots: list[int], stamps, span: int = PIVO
 
 def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
             entry_price: float | None = None, scale_out: str | None = None,
-            exit_signal=None, exit_reason: str = "exit signal"):
+            exit_signal=None, exit_reason: str = "exit signal",
+            scale_r: float = 1.0):
     """Walk forward, ratcheting the stop.
 
     step may be None, meaning the stop never moves -- a plain initial stop. That is
@@ -80,8 +81,10 @@ def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
     a stop, the conservative reading used everywhere in this project.
 
     scale_out (needs entry_price):
-        "half"    -- sell half the position at entry + 1R, rest runs unchanged
+        "half"    -- sell half the position at entry + scale_r x R, rest runs unchanged
         "half_be" -- same, and the stop on the remainder jumps to breakeven
+    R is the risk you took: entry minus the initial stop. scale_r = 1.0 banks when
+    the trade has made exactly what it was risking.
     Same-bar ambiguity resolves to the STOP, the conservative reading throughout
     this project.
 
@@ -94,7 +97,7 @@ def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
     close = bars["close"].to_numpy()
 
     stop = initial_stop
-    trigger = (entry_price + (entry_price - initial_stop)
+    trigger = (entry_price + scale_r * (entry_price - initial_stop)
                if scale_out and entry_price is not None else None)
     banked_fraction, banked_price = 0.0, 0.0
     for position in range(entry_pos, len(bars)):

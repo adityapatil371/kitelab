@@ -158,7 +158,7 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
 
 def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
              band: float = BAND, scale_out: str | None = None,
-             stop_on_close: bool = True) -> list[dict]:
+             stop_on_close: bool = True, scale_r: float = 1.0) -> list[dict]:
     """Walk the signal series and produce closed trades, oldest first.
 
     stop_on_close=True is the CLASS convention (2026-08-28): everything --
@@ -206,10 +206,12 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             entry_price = float(close[position])
         exit_at = None
 
-        # scale_out: sell half at entry + 1R ("half"), optionally moving the stop on
-        # the remainder to breakeven ("half_be"). Same-bar ambiguity goes to the stop.
+        # scale_out: sell half at entry + scale_r x R ("half"), optionally moving the
+        # stop on the remainder to breakeven ("half_be"). R is the risk taken, entry
+        # minus stop, so scale_r = 1 banks once the trade has made what it risked.
+        # Same-bar ambiguity goes to the stop.
         risk0 = entry_price - stop
-        trigger = entry_price + risk0 if scale_out and risk0 > 0 else None
+        trigger = entry_price + scale_r * risk0 if scale_out and risk0 > 0 else None
         current_stop = stop
         banked_fraction = banked_price = 0.0
         banked_index = None
@@ -272,7 +274,7 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         spread_cost = ((quoted_exit - exit_price) * remaining
                        + (entry_price - quoted_entry) * shares)
         if banked_fraction:
-            reason = reason + " (half banked at 1R)"
+            reason = reason + f" (half banked at {scale_r:g}R)"
         same_session = stamps[entry_index].date() == stamps[exit_index].date()
         cost = charges(buy_value, sell_value)
         cost_best = charges(buy_value, sell_value, intraday=same_session)
