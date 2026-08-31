@@ -62,7 +62,23 @@ SUMMARY_FIELDS = [
 ]
 
 
+# The trade fields order() accumulates. Not every producer emits them: the
+# tf_compare timeframe variants (Q/M/W, W/D/H) build 19-key dicts and carry none
+# of these, so an unguarded run raised a bare KeyError several frames deep. Fail
+# with a sentence that names the producer instead.
+_ORDER_REQUIRES = ("cost_of_entry", "gross_profit", "net_profit", "net_profit_best",
+                   "same_session")
+
+
 def order(trades: list[dict], symbols: list[str]) -> list[dict]:
+    if trades:
+        missing = [k for k in _ORDER_REQUIRES if k not in trades[0]]
+        if missing:
+            raise KeyError(
+                f"report.order() needs {missing} and this trade list has none of them "
+                f"({len(trades[0])} keys). Trade lists from scripts.tf_compare "
+                "(the Q/M/W and W/D/H variants) are a reduced shape and cannot be "
+                "written with the full trade-sheet writer.")
     ordered: list[dict] = []
     for symbol in symbols:
         mine = [t for t in trades if t["symbol"] == symbol]

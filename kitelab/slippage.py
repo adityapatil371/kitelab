@@ -192,6 +192,30 @@ def apply_spread(trade: dict) -> dict:
     out = dict(trade)
     quoted_entry, quoted_exit = trade["entry_price"], trade["exit_price"]
     shares = trade["shares"]
+
+    # This function re-prices a trade as ONE buy and ONE sell. A scale-out has two
+    # sells -- half banked at nR, the rest at the exit -- and the banked leg is not
+    # in the trade record at all, so (exit - entry) x shares is simply the wrong
+    # gross and the charges would be billed on the wrong sell value. Nothing calls
+    # it that way today; refuse rather than let a future caller get silent nonsense.
+    # The test is structural, not a name check: every honest producer sets
+    # gross_profit to exactly (exit - entry) x shares (verified: 363,574 trades
+    # across all 44 cached lists, worst relative gap 0.0).
+    own_gross = trade.get("gross_profit")
+    naive_gross = (quoted_exit - quoted_entry) * shares
+    banked = "banked" in str(trade.get("exit_reason", ""))
+    mismatch = (own_gross is not None
+                and abs(naive_gross - own_gross) > 1e-9 * max(1.0, abs(own_gross)))
+    if banked or mismatch:
+        raise ValueError(
+            f"apply_spread cannot price {trade.get('symbol')} {trade.get('entry_ts')}: "
+            f"exit_reason {trade.get('exit_reason')!r}"
+            + (f", and its gross_profit ({own_gross:,.2f}) is not (exit - entry) x "
+               f"shares ({naive_gross:,.2f})" if mismatch else "")
+            + ". This is a multi-leg trade and this function prices one buy against "
+              "one sell. Scale-out lists must be spread-adjusted at simulation time, "
+              "not here.")
+
     entry = fill(trade["symbol"], trade["entry_ts"], quoted_entry, +1)
     exit_ = fill(trade["symbol"], trade["exit_ts"], quoted_exit, -1)
     gross = (exit_ - entry) * shares
