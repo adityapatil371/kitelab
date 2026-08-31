@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
-from . import frames, levels, sizing, trailing, slippage
+from . import frames, indicators, levels, sizing, trailing, slippage
 from .backtest import charges
 
 TIMEFRAME = "30m"
@@ -92,7 +93,8 @@ def _trigger_entry(bars: pd.DataFrame, signal_pos: int, trigger_price: float):
 
 def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
                  entry_pos, entry_price, stop, max_hold: int,
-                 trail_step=None, scale_out: str | None = None) -> dict | None:
+                 trail_step=None, scale_out: str | None = None,
+                 exit_signal=None, exit_reason: str = "exit signal") -> dict | None:
     risk = entry_price - stop
     if risk <= 0:
         return None
@@ -100,12 +102,14 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
     if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
         return None  # position not viable within the risk budget / capital
     banked_fraction, banked_price = 0.0, 0.0
-    if trail_step is not None:
-        # Swing-low trail: no target, the trade ends when the ratcheting stop is hit.
+    if trail_step is not None or exit_signal is not None:
+        # Swing-low trail and/or a close-based exit signal: no target, the trade ends
+        # when the stop is hit or the signal fires, whichever comes first.
         target = None
         (exit_pos, exit_price, reason, final_stop,
          banked_fraction, banked_price) = trailing.resolve(
-            bars, entry_pos, stop, trail_step, entry_price, scale_out)
+            bars, entry_pos, stop, trail_step, entry_price, scale_out,
+            exit_signal, exit_reason)
     else:
         target = entry_price + REWARD_RATIO * risk
         resolved = _resolve_exit(bars, entry_pos, stop, target, max_hold)
@@ -335,17 +339,45 @@ def ath_levels(daily: pd.DataFrame, pullback: float = ATH_PULLBACK) -> list[tupl
     return out
 
 
+def ema_exit_signal(daily: pd.DataFrame, stamps, length: int = 20):
+    """True on the last bar of any session whose DAILY close finished below its EMA.
+
+    The rule is a daily-close rule, but breakout entries run on 30-minute bars, so it
+    has to be evaluated somewhere in the intraday frame. The honest place is the last
+    bar of the session: its close IS the daily close, so acting on it uses nothing you
+    would not have known at the bell. Flagging an earlier bar would let the trade react
+    to a daily close that had not happened yet.
+
+    Works unchanged when the frame IS daily -- every bar is then its own session end.
+    """
+    ema = indicators.ema(daily["close"], length).to_numpy()
+    below = daily["close"].to_numpy() < ema
+    sessions = daily["ts"].dt.normalize().to_numpy()
+    bar_sessions = pd.DatetimeIndex(stamps).normalize().to_numpy()
+    position = np.searchsorted(sessions, bar_sessions, side="right") - 1
+    last_of_session = np.append(bar_sessions[1:] != bar_sessions[:-1], True)
+    return last_of_session & (position >= 0) & below[np.maximum(position, 0)]
+
+
 def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                         pullback: float = ATH_PULLBACK,
                         timeframe: str = TIMEFRAME,
-                        scale_out: str | None = None) -> list[dict]:
+                        scale_out: str | None = None,
+                        exit_rule: str = "trail") -> list[dict]:
     """Breakouts to new all-time highs, detected automatically.
 
     timeframe="1d" runs entries on daily bars instead of 30-minute ones. That is a
     DIFFERENT strategy, not the same one measured differently -- the entry fills at a
     coarser price. It exists only because Kite serves no intraday data before 2015, so
     it is the only way to look at 2008 at all.
+
+    exit_rule picks how the trade ends. The pivot-low stop is always live underneath:
+        "trail"        ratcheting daily swing lows -- the original rule
+        "ema20"        out on the first daily close below the 20-EMA, stop never moves
+        "trail+ema20"  both; whichever comes first
     """
+    if exit_rule not in ("trail", "ema20", "trail+ema20"):
+        raise ValueError(f"unknown exit_rule {exit_rule!r}")
     bars = frames.load(symbol, timeframe)
     daily = frames.load(symbol, "1d").reset_index(drop=True)
     pivots = levels.pivot_lows(daily, PIVOT_SPAN)
@@ -378,8 +410,11 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
         if len(active) < 2:
             continue
         close = active["close"].to_numpy()
+        use_trail = trailing_stops and exit_rule in ("trail", "trail+ema20")
         make_trail = (trailing.daily_trail(daily, pivots, active["ts"])
-                      if trailing_stops else None)
+                      if use_trail else None)
+        below_ema = (ema_exit_signal(daily, active["ts"])
+                     if exit_rule in ("ema20", "trail+ema20") else None)
 
         for position in range(1, len(active)):
             if not (close[position] > price and close[position - 1] <= price):
@@ -394,7 +429,8 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                 break
             trade = _build_trade(symbol, active, price, "all-time high", position,
                                  entry_pos, entry_price, stop, BREAKOUT_HOLD_BARS,
-                                 make_trail() if make_trail else None, scale_out)
+                                 make_trail() if make_trail else None, scale_out,
+                                 below_ema, "below 20 EMA")
             if trade:
                 trades.append(trade)
             break   # one trade per armed level; the next needs a fresh pullback

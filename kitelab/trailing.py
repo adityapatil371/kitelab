@@ -69,8 +69,15 @@ def daily_trail(daily: pd.DataFrame, pivots: list[int], stamps, span: int = PIVO
 
 
 def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
-            entry_price: float | None = None, scale_out: str | None = None):
+            entry_price: float | None = None, scale_out: str | None = None,
+            exit_signal=None, exit_reason: str = "exit signal"):
     """Walk forward, ratcheting the stop.
+
+    step may be None, meaning the stop never moves -- a plain initial stop. That is
+    only useful alongside exit_signal, which is a per-bar boolean array: the first
+    True at or after entry closes the trade at that bar's close. The stop is checked
+    FIRST, so a bar that both breaks the stop and raises the exit flag is recorded as
+    a stop, the conservative reading used everywhere in this project.
 
     scale_out (needs entry_price):
         "half"    -- sell half the position at entry + 1R, rest runs unchanged
@@ -98,13 +105,17 @@ def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
                       else ("trailing stop" if moved else "initial stop"))
             return (position, (float(open_[position]) if gapped else stop), reason,
                     stop, banked_fraction, banked_price)
+        if exit_signal is not None and exit_signal[position]:
+            return (position, float(close[position]), exit_reason, stop,
+                    banked_fraction, banked_price)
         if trigger is not None and banked_fraction == 0.0 and high[position] >= trigger:
             # A gap ABOVE the trigger sells at the open -- a better fill, and real.
             banked_price = max(trigger, float(open_[position]))
             banked_fraction = 0.5
             if scale_out == "half_be":
                 stop = max(stop, entry_price)
-        stop = step(position, stop, float(low[position]))
+        if step is not None:
+            stop = step(position, stop, float(low[position]))
 
     last = len(bars) - 1
     return (last, float(close[last]), "open (marked to market)", stop,
