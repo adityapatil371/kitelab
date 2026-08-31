@@ -52,7 +52,8 @@ def per_stock(trades: list[dict], symbols: list[str]) -> list[dict]:
             "charges_best": sum(t["charges_best"] for t in mine),
             "net_best": sum(t["net_profit_best"] for t in mine),
             "expectancy": sum(net) / len(mine),
-            "profit_factor": (sum(wins) / abs(sum(losses))) if losses and sum(losses) else 0.0,
+            "profit_factor": ((sum(wins) / abs(sum(losses)))
+                              if losses and sum(losses) else None),
             "avg_r": sum(t["r_multiple"] for t in mine) / len(mine),
             "best_r": max(t["r_multiple"] for t in mine),
         })
@@ -129,7 +130,7 @@ def main() -> None:
             report.write_trade_sheet(book, label, RULES[name], trades)
             print(f"  {name:<9} {label:<14} {len(trades):>6,} trades   "
                   f"net {stats.get('net_profit', 0):>12,.0f}   "
-                  f"PF {stats.get('profit_factor', 0):>5.2f}   "
+                  f"PF {str(report.pf_cell(stats.get('profit_factor'))):>5}   "
                   f"exp {stats.get('expectancy', 0):>7,.0f}   "
                   f"best trade {stats.get('top_share_pct', 0):>4.1f}%")
         note = NOTE + (f"\nNO DATA (run: python -m scripts.backfill --all): "

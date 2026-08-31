@@ -55,7 +55,8 @@ def mode_row(label: str, trades: list[dict]) -> list:
     banked = sum(1 for t in trades if "banked" in t["exit_reason"])
     return [label, s.get("trades", 0), banked, s.get("win_rate_pct", 0),
             s.get("gross_profit", 0), s.get("charges", 0), s.get("net_profit", 0),
-            s.get("expectancy", 0), s.get("profit_factor", 0), s.get("avg_r", 0),
+            s.get("expectancy", 0), report.pf_cell(s.get("profit_factor")),
+            s.get("avg_r", 0),
             s.get("top_share_pct", 0), equity_max_dd(trades)]
 
 

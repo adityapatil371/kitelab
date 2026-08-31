@@ -121,7 +121,12 @@ def stats(exit_rule: str, trades: list[dict]) -> dict:
         "charges_best": sum(t["charges_best"] for t in trades),
         "net_best": sum(t["net_profit_best"] for t in trades),
         "expectancy": sum(net) / len(trades),
-        "profit_factor": (sum(wins) / abs(sum(losses))) if losses and sum(losses) else 0.0,
+        # None, not 0.0: a list with no losing trades has NO profit factor -- the
+        # denominator is zero. Returning 0.0 made an all-winning list render as the
+        # WORST possible score. The project had four different answers to this
+        # (0.0 here, inf in tf_compare, NaN in band_compare, None in four others);
+        # this is the one. Print it with pf_cell().
+        "profit_factor": (sum(wins) / abs(sum(losses))) if losses and sum(losses) else None,
         "avg_r": sum(r_values) / len(r_values), "best_r": max(r_values),
         "avg_win": sum(wins) / len(wins) if wins else 0.0,
         "avg_loss": sum(losses) / len(losses) if losses else 0.0,
@@ -306,6 +311,14 @@ class FormulaValues:
 # "broke even". Spreadsheet cells say so in a word; number_format leaves a string
 # alone, so the column stays readable either way.
 WIPED_LABEL = "wiped"
+# A profit factor with no losing trades in the denominator. Said in words, because a
+# blank cell reads as "not computed" and 0.0 reads as "terrible".
+PF_NO_LOSSES = "no losses"
+
+
+def pf_cell(value):
+    """A profit factor ready for a worksheet cell or a print."""
+    return PF_NO_LOSSES if value is None else value
 
 
 def cagr_cell(result: dict):

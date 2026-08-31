@@ -196,8 +196,22 @@ def window_start(symbol: str) -> pd.Timestamp:
 
 
 def summarise(trades: list[dict]) -> dict:
-    wins = [t["gross_profit"] for t in trades if t["gross_profit"] > 0]
-    losses = [t["gross_profit"] for t in trades if t["gross_profit"] <= 0]
+    """One convention, shared with every other summary in the project (2026-08-31):
+    NET OF CHARGES, and a win is net > 0.
+
+    This used to score on GROSS profit, so this file and band_compare reported a
+    different win rate and profit factor for the same trades than the six other
+    implementations -- 30.03% and 2.11 against 29.41% and 1.94 -- under column
+    headers spelled identically. A trade that made Rs50 and paid Rs80 in charges is
+    a loss, because it is.
+
+    Zero-loss profit factor is None, not inf and not 0.0. There were four different
+    answers to that case across the project; a ratio with no denominator is not a
+    number, so it is not reported as one.
+    """
+    net = [t["gross_profit"] - t["charges"] for t in trades]
+    wins = [v for v in net if v > 0]
+    losses = [v for v in net if v <= 0]
     gross = sum(t["gross_profit"] for t in trades)
     return {
         "trades": len(trades),
@@ -205,9 +219,10 @@ def summarise(trades: list[dict]) -> dict:
         "win_rate": len(wins) / len(trades) if trades else 0.0,
         "avg_win": np.mean(wins) if wins else 0.0,
         "avg_loss": np.mean(losses) if losses else 0.0,
-        "expectancy": gross / len(trades) if trades else 0.0,
+        "expectancy": sum(net) / len(net) if net else 0.0,
         "profit_factor": (sum(wins) / -sum(losses)) if losses and sum(losses) < 0
-                         else float("inf") if wins else 0.0,
+                         else None,
+        "net": sum(net),
         "gross": gross,
         "charges": sum(t["charges"] for t in trades),
         "median_hold_days": float(np.median([t["days_held"] for t in trades])) if trades else 0.0,
@@ -263,7 +278,7 @@ def write_readme(book: Workbook, windows: dict, results: dict | None = None) -> 
             s = summarise([t for sym in ASSIGNED for t in results[key][sym]])
             verdict.append(
                 f"    {label}: {s['trades']} trades, win rate {s['win_rate']:.0%}, "
-                f"profit factor {s['profit_factor']:.2f}, expectancy "
+                f"profit factor {report.pf_cell(s['profit_factor'])}, expectancy "
                 f"{s['expectancy']:,.0f}/trade, total {s['gross']:,.0f}")
         verdict.append(
             "    Moving UP a timeframe made each trade better (highest profit factor and "
@@ -358,7 +373,8 @@ def _summary_row(sheet, row, label, s, bold=False):
         (s["trades"], "0"), (s["wins"], "0"), (s["win_rate"], "0.0%"),
         (round(s["avg_win"], 0), "#,##0"), (round(s["avg_loss"], 0), "#,##0"),
         (round(s["expectancy"], 0), "#,##0"),
-        (round(s["profit_factor"], 2) if s["profit_factor"] != float("inf") else "inf", "0.00"),
+        (round(s["profit_factor"], 2) if s["profit_factor"] is not None
+         else report.PF_NO_LOSSES, "0.00"),
         (round(s["gross"], 0), "#,##0"),
         (s["median_hold_days"], "0"), (round(s["median_stop_pct"], 2), "0.00"),
     ]
@@ -464,7 +480,8 @@ def main() -> None:
         s = summarise([t for sym in ASSIGNED for t in results[key][sym]])
         print(f"  {label:<6} {'ALL':<10} {s['trades']:>4} trades  "
               f"gross {s['gross']:>12,.0f}  win {s['win_rate']:.0%}  "
-              f"PF {s['profit_factor']:.2f}  expectancy {s['expectancy']:,.0f}\n")
+              f"PF {report.pf_cell(s['profit_factor'])}  "
+              f"expectancy {s['expectancy']:,.0f}\n")
 
     book = Workbook()
     book.remove(book.active)

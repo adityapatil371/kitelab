@@ -200,7 +200,7 @@ def main() -> None:
             rows.append([symbol, s.get("trades", 0), s.get("win_rate_pct", 0),
                          s.get("gross_profit", 0), s.get("charges", 0),
                          s.get("net_profit", 0), s.get("expectancy", 0),
-                         s.get("profit_factor", 0), s.get("avg_r", 0),
+                         report.pf_cell(s.get("profit_factor")), s.get("avg_r", 0),
                          s.get("top_share_pct", 0)])
         row = write_table(sheet, row, label, RESULT_HEADERS, RESULT_WIDTHS, rows,
                           RESULT_FORMATS)

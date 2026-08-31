@@ -51,16 +51,20 @@ def collect(variant: str, band: float) -> list[dict]:
 
 
 def summarise(trades: list[dict]) -> dict:
+    """NET OF CHARGES, win = net > 0 -- the one convention (see tf_compare.summarise).
+    This scored on gross until 2026-08-31 and so disagreed with six other files about
+    the same trades, under identical column headers."""
     gross = [t["gross_profit"] for t in trades]
-    wins = [g for g in gross if g > 0]
-    losses = [g for g in gross if g <= 0]
+    net = [t["gross_profit"] - t["charges"] for t in trades]
+    wins = [v for v in net if v > 0]
+    losses = [v for v in net if v <= 0]
     charges = sum(t["charges"] for t in trades)
     return {"trades": len(trades),
-            "win_rate": len(wins) / len(gross) if gross else 0.0,
+            "win_rate": len(wins) / len(net) if net else 0.0,
             "avg_win": float(np.mean(wins)) if wins else 0.0,
             "avg_loss": float(np.mean(losses)) if losses else 0.0,
-            "expectancy": sum(gross) / len(gross) if gross else 0.0,
-            "pf": (sum(wins) / -sum(losses)) if losses and sum(losses) < 0 else float("nan"),
+            "expectancy": sum(net) / len(net) if net else 0.0,
+            "pf": (sum(wins) / -sum(losses)) if losses and sum(losses) < 0 else None,
             "gross": sum(gross), "charges": charges, "net": sum(gross) - charges,
             "charge_share": 100 * charges / sum(gross) if sum(gross) else float("nan"),
             "median_days": float(np.median([t["days_held"] for t in trades])) if trades else 0.0,
@@ -72,7 +76,8 @@ def main() -> None:
     for key, trades in data.items():
         s = summarise(trades)
         print(f"  {key[0]:<4} {key[1]:<8} {s['trades']:>4} trades  win {s['win_rate']:>5.1%}  "
-              f"PF {s['pf']:>5.2f}  gross {s['gross']:>10,.0f}  charges {s['charges']:>9,.0f}  "
+              f"PF {str(report.pf_cell(s['pf'])):>5}  gross {s['gross']:>10,.0f}  "
+              f"charges {s['charges']:>9,.0f}  "
               f"net {s['net']:>10,.0f}  median hold {s['median_days']:>4.0f}d", flush=True)
 
     book = Workbook()
@@ -98,7 +103,8 @@ def main() -> None:
         for b_label, _ in BANDS:
             s = summarise(data[(variant, b_label)])
             vals = [label, b_label, s["trades"], s["win_rate"], round(s["avg_win"]),
-                    round(s["avg_loss"]), round(s["expectancy"]), round(s["pf"], 2),
+                    round(s["avg_loss"]), round(s["expectancy"]),
+                    report.pf_cell(s["pf"] if s["pf"] is None else round(s["pf"], 2)),
                     round(s["gross"]), round(s["charges"]), round(s["net"]),
                     round(s["charge_share"], 1), round(s["median_days"]),
                     round(s["median_stop"], 2)]
