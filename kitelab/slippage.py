@@ -65,6 +65,7 @@ MAX_PARTICIPATION: float | None = None
 
 ADV_WINDOW = 60             # sessions of trailing turnover behind the liquidity read
 VOL_WINDOW = 60             # sessions behind the volatility read
+DEFAULT_VOL = 0.02          # a stock's first sessions, before any return exists
 
 _cache: dict[str, dict] = {}
 
@@ -90,8 +91,15 @@ def profile(symbol: str) -> dict:
     turnover = close * day["volume"].astype(float)
     adv = turnover.rolling(ADV_WINDOW, min_periods=5).median().shift(1)
     adv = adv.fillna(turnover.expanding(min_periods=1).median().shift(1))
-    vol = close.pct_change().rolling(VOL_WINDOW, min_periods=5).std().shift(1)
-    vol = vol.fillna(vol.median() if vol.notna().any() else 0.02)
+    returns = close.pct_change()
+    vol = returns.rolling(VOL_WINDOW, min_periods=5).std().shift(1)
+    # Point-in-time fallback for the first sessions, mirroring the ADV line above:
+    # the standard deviation of what had happened SO FAR, shifted one session.
+    # This used to be vol.median() over the ENTIRE series, so a stock's first weeks
+    # were priced with knowledge of its whole future volatility -- lookahead, in
+    # the one module whose job is honesty about what trading costs.
+    vol = vol.fillna(returns.expanding(min_periods=2).std().shift(1))
+    vol = vol.fillna(DEFAULT_VOL)      # nothing has happened yet at all
     built = {
         "ts": day["ts"].to_numpy().astype("datetime64[ns]"),
         "adv": adv.to_numpy(dtype=float),
