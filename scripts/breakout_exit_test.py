@@ -75,7 +75,7 @@ def main() -> None:
     print("  " + "-" * 88)
     for rule, label in RULES:
         trades = collect(rule, symbols)
-        stats = summarise(trades)
+        stats = summarise(strategies.drop_overlaps(trades))
         account = portfolio.run(trades, CAPITAL, RISK)
         rows.append((rule, label, stats, account, trades))
         print(f"  {label:<34}{stats['trades']:>8}{stats['win_rate']:>7}"

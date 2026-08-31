@@ -72,7 +72,7 @@ def main() -> None:
     print("\n  baselines -- keep the whole position, never bank early:")
     base = {}
     for label, build in BASELINES:
-        stats = summarise(collect(build, symbols))
+        stats = summarise(strategies.drop_overlaps(collect(build, symbols)))
         base[label] = stats
         print(f"    {label:<14} trades {stats['trades']:>5}  win {stats['win_rate']:>5}%"
               f"  expectancy {stats['expectancy']:>7,}  net {stats['net']:>12,}"
@@ -84,7 +84,8 @@ def main() -> None:
     print("  " + "-" * 100)
     for label, variant, build in RUNS:
         for multiple in MULTIPLES:
-            stats = summarise(collect(lambda s, r=multiple: build(s, r), symbols))
+            stats = summarise(strategies.drop_overlaps(
+                collect(lambda s, r=multiple: build(s, r), symbols)))
             keep = base[label]["net"]
             stats.update(strategy=label, variant=variant, multiple=multiple,
                          vs_keep=round(100 * (stats["net"] - keep) / abs(keep), 1))

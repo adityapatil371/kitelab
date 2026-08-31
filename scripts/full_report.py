@@ -116,10 +116,11 @@ def write_table(sheet, anchor_row: int, title: str, headers: list[str],
 
 
 def strategy_row(label: str, trades: list[dict]) -> list:
-    s = report.stats(label, trades)
+    s = report.stats(label, strategies.drop_overlaps(trades))
     return [label, s.get("trades", 0), s.get("win_rate_pct", 0), s.get("gross_profit", 0),
             s.get("charges", 0), s.get("net_profit", 0), s.get("expectancy", 0),
-            s.get("profit_factor", 0), s.get("avg_r", 0), s.get("top_share_pct", 0)]
+            report.pf_cell(s.get("profit_factor")), s.get("avg_r", 0),
+            s.get("top_share_pct", 0)]
 
 
 STRAT_HEADERS = ["Group", "Trades", "Win %", "Gross Profit", "Charges", "Net Profit",
@@ -212,7 +213,8 @@ def main() -> None:
     split = {name: {"in": [t for t in trades if t["symbol"] in in_set],
                     "out": [t for t in trades if t["symbol"] in out_set]}
              for name, trades in signals.items()}
-    pf_out = {n: report.stats("x", split[n]["out"]).get("profit_factor", 0)
+    pf_out = {n: (report.stats("x", strategies.drop_overlaps(split[n]["out"]))
+                  .get("profit_factor") or 0.0)
               for n in signals}
 
     book = Workbook()
@@ -321,7 +323,7 @@ def main() -> None:
             rows.append([f"{band * 100:.1f}%", s["trades"],
                          st.median(t["bars_held"] for t in trades) if trades else 0,
                          s["gross_profit"], s["charges"], s["net_profit"],
-                         s["expectancy"], s["profit_factor"]])
+                         s["expectancy"], report.pf_cell(s["profit_factor"])])
         # The "fee bills fell by N%" sentence below is read out of the rows just built
         # (charges at band 0.0 vs the chosen 2.0%), not typed in. It read "more than
         # 80%" for a long time with nothing to say when it was measured.
@@ -603,8 +605,9 @@ def main() -> None:
                  turnover(symbol), bh]
         for name in ("Breakout", "EMA"):
             mine = by_symbol[name].get(symbol, [])
-            s = report.stats(symbol, mine) if mine else {}
-            entry += [len(mine), s.get("net_profit", 0), s.get("profit_factor", 0)]
+            s = report.stats(symbol, strategies.drop_overlaps(mine)) if mine else {}
+            entry += [len(mine), s.get("net_profit", 0),
+                      report.pf_cell(s.get("profit_factor"))]
         rows.append(entry)
     write_table(sheet, row, f"All {len(everything)} stocks",
                 ["Stock", "Group", "Daily Turnover (median Rs)", "Buy&Hold CAGR %",

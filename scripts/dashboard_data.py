@@ -187,6 +187,25 @@ def capture_ratio(trades: list[dict]):
     return round(value, 4)
 
 
+def positions(trades: list[dict]) -> list[dict]:
+    """One position at a time per symbol -- what a TRADE-LEVEL view should count.
+
+    The ATH breakout fires again while it is already long, so 1,146 of its 2,031
+    signals overlap an open trade in the same stock and the same rally was being
+    counted several times in every win rate, profit factor, expectancy and total.
+    The one-account grid was always honest about this (it holds one position per
+    stock and reports the rest as skipped_busy); only the trade-level views were not.
+
+    A no-op for every other strategy: EMA, Q/M/W, W/D/H and Darvas all walk forward
+    from each exit, so they cannot overlap. Verified 2026-08-31 -- 0 dropped from
+    9,224 / 3,011 / 18,296 / 6,908 / 3,197.
+
+    NOT applied to the grid. The account decides for itself what it can hold, and
+    de-duplicating its input would change which signals it is ever offered.
+    """
+    return strategies.drop_overlaps(trades)
+
+
 def trade_stats(trades: list[dict]) -> dict:
     nets = [t["net_profit"] for t in trades]
     wins = [n for n in nets if n > 0]
@@ -365,7 +384,8 @@ def main() -> None:
             for ukey, (_, members) in universes.items():
                 subset = (signals if members is None
                           else [t for t in signals if t["symbol"] in members])
-                tradestats[f"{skey}|{tag(band)}|{ukey}|{fkey}"] = trade_stats(subset)
+                tradestats[f"{skey}|{tag(band)}|{ukey}|{fkey}"] = \
+                    trade_stats(positions(subset))
     print("  universe trade metrics done", flush=True)
 
     scaleout = {}
@@ -379,7 +399,7 @@ def main() -> None:
                 trades = lists[variant]
                 subset = (trades if members is None
                           else [t for t in trades if t["symbol"] in members])
-                rows.append({"variant": label, **trade_stats(subset)})
+                rows.append({"variant": label, **trade_stats(positions(subset))})
             scaleout[skey][ukey] = rows
         print(f"  scale-out: {skey} done", flush=True)
 
@@ -412,11 +432,12 @@ def main() -> None:
                 return (trades if members is None
                         else [t for t in trades if t["symbol"] in members])
             rows = [{"rule": "Keep the whole position", "variant": None,
-                     "multiple": None, **trade_stats(cut(base[(skey, 0.02)]))}]
+                     "multiple": None,
+                     **trade_stats(positions(cut(base[(skey, 0.02)])))}]
             keep = rows[0]["net"] or 1
             for variant, vlabel in SCALE_RULES:
                 for multiple in SCALE_MULTIPLES:
-                    stats = trade_stats(cut(r_lists[(skey, variant, multiple)]))
+                    stats = trade_stats(positions(cut(r_lists[(skey, variant, multiple)])))
                     stats.update(rule=vlabel, variant=variant, multiple=multiple,
                                  vs_keep=round(100 * (stats["net"] - keep) / abs(keep), 1))
                     rows.append(stats)
@@ -487,6 +508,7 @@ def main() -> None:
         entry = {"closes": close_series(daily), "assigned": symbol in set(ASSIGNED)}
         for skey in STRATEGY_LABELS:
             tr = by_symbol[skey].get(symbol, [])
+            tr = positions(tr)
             entry[skey] = {"stats": trade_stats(tr), "trades": slim_trades(tr)}
         stocks[symbol] = entry
         if index % 50 == 0:
@@ -519,6 +541,7 @@ def main() -> None:
                     entry[skey] = None
                     continue
                 r = portfolio.run(trades, 100_000, 0.01) if trades else None
+                trades = positions(trades)
                 entry[skey] = {"stats": trade_stats(trades), "trades": slim_trades(trades),
                                "account": run_payload(r) if r else None}
             # scale-out variants for the two scale-out-capable strategies
@@ -530,7 +553,7 @@ def main() -> None:
                         trades = builders[skey](variant)
                     except (SystemExit, FileNotFoundError):
                         trades = []
-                    rows.append({"variant": label, **trade_stats(trades)})
+                    rows.append({"variant": label, **trade_stats(positions(trades))})
                 entry["scaleout"][skey] = rows
             assets[symbol] = entry
         finally:
