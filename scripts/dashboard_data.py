@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from kitelab import backtest, config, frames, portfolio, sizing, strategies
+from kitelab import backtest, config, frames, portfolio, sizing, slippage, strategies
 from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
@@ -42,6 +42,18 @@ from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_vari
 CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 OUT = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
 RISKS = [0.25, 0.5, 1.0, 2.0]
+
+# The fills dimension. "0" is every result this project produced before
+# 2026-08-31: you get the chart price, instantly, at any size. "1" is what
+# execution actually looks like -- you cross a spread, you move the price you
+# are trading against, and you cannot buy more of a stock than it trades.
+#
+# The size limit is bundled in deliberately. Without it the model charges the
+# account a fortune for orders it could never have placed (up to 37x a stock's
+# ENTIRE daily turnover), which measures the simulator's sizing bug rather than
+# the cost of dealing. The page says so under the slicer.
+FILL_MODES = [("0", "Perfect fills"), ("1", "Realistic fills")]
+REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnover
 CAPITALS = [50_000, 100_000, 250_000, 500_000]
 ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
           ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
@@ -246,23 +258,45 @@ def main() -> None:
                  "in": ("49 in-sample", set(cfg.in_sample)),
                  "out": ("150 holdout", set(cfg.out_of_sample))}
 
+    # The spread is charged onto the cached trades rather than re-simulated:
+    # nothing in the simulation depends on the fill price, so this is exact and
+    # it keeps the whole toggle affordable (see slippage.apply_spread).
+    slippage.ENABLED = True
+    slippage.reset()
+    slipped = {key: [slippage.apply_spread(t) for t in trades]
+               for key, trades in base.items()}
+    slippage.ENABLED = False
+    print("  spread applied to the cached signal lists", flush=True)
+    sets = {"0": base, "1": slipped}
+
+    def realistic(on: bool):
+        """Impact and the size limit live in portfolio.run, so they are globals."""
+        slippage.ENABLED = on
+        slippage.MAX_PARTICIPATION = REALISTIC_PARTICIPATION if on else None
+        slippage.reset()
+
     grid = {}
-    for (skey, band), signals in base.items():
-        for ukey, (ulabel, members) in universes.items():
-            subset = (signals if members is None
-                      else [t for t in signals if t["symbol"] in members])
-            for risk in RISKS:
-                for capital in CAPITALS:
-                    r = portfolio.run(subset, capital, risk / 100)
-                    grid[f"{skey}|{band:g}|{ukey}|{risk:g}|{capital}"] = run_payload(r)
-        print(f"  grid: {skey} band {band:.0%} done", flush=True)
+    for fkey, _flabel in FILL_MODES:
+        realistic(fkey == "1")
+        for (skey, band), signals in sets[fkey].items():
+            for ukey, (ulabel, members) in universes.items():
+                subset = (signals if members is None
+                          else [t for t in signals if t["symbol"] in members])
+                for risk in RISKS:
+                    for capital in CAPITALS:
+                        r = portfolio.run(subset, capital, risk / 100)
+                        grid[f"{skey}|{band:g}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
+                            run_payload(r)
+            print(f"  grid[{fkey}]: {skey} band {band:.0%} done", flush=True)
+    realistic(False)
 
     tradestats = {}
-    for (skey, band), signals in base.items():
-        for ukey, (_, members) in universes.items():
-            subset = (signals if members is None
-                      else [t for t in signals if t["symbol"] in members])
-            tradestats[f"{skey}|{band:g}|{ukey}"] = trade_stats(subset)
+    for fkey, _flabel in FILL_MODES:
+        for (skey, band), signals in sets[fkey].items():
+            for ukey, (_, members) in universes.items():
+                subset = (signals if members is None
+                          else [t for t in signals if t["symbol"] in members])
+                tradestats[f"{skey}|{band:g}|{ukey}|{fkey}"] = trade_stats(subset)
     print("  universe trade metrics done", flush=True)
 
     scaleout = {}
@@ -368,33 +402,36 @@ def main() -> None:
     # capital (class level); risk follows the slider; baskets identical
     # across strategies/risks so comparisons are apples-to-apples.
     basket10 = {}
-    for (skey, band), signals in base.items():
-        by_sym = {}
-        for t in signals:
-            by_sym.setdefault(t["symbol"], []).append(t)
-        for risk in RISKS:
-            cagrs, dds = [], []
-            for basket in baskets:
-                subset = [t for s in basket for t in by_sym.get(s, [])]
-                if not subset:
-                    continue
-                r = portfolio.run(subset, 100_000, risk / 100)
-                cagrs.append(round(r["cagr_pct"], 1))
-                dds.append(round(r["max_drawdown_pct"], 1))
-            cagrs_sorted = sorted(cagrs)
-            n = len(cagrs_sorted)
-            basket10[f"{skey}|{band:g}|{risk:g}"] = {
-                "cagrs": cagrs,
-                "median": cagrs_sorted[n // 2],
-                "mean": round(sum(cagrs) / n, 1),
-                "p10": cagrs_sorted[n // 10],
-                "p90": cagrs_sorted[9 * n // 10],
-                "best": cagrs_sorted[-1], "worst": cagrs_sorted[0],
-                "beat_fd": round(100 * sum(1 for c in cagrs if c >= 7) / n),
-                "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
-                "median_dd": sorted(dds)[len(dds) // 2],
-            }
-        print(f"  baskets: {skey} band {band:.0%} done", flush=True)
+    for fkey, _flabel in FILL_MODES:
+        realistic(fkey == "1")
+        for (skey, band), signals in sets[fkey].items():
+            by_sym = {}
+            for t in signals:
+                by_sym.setdefault(t["symbol"], []).append(t)
+            for risk in RISKS:
+                cagrs, dds = [], []
+                for basket in baskets:
+                    subset = [t for s in basket for t in by_sym.get(s, [])]
+                    if not subset:
+                        continue
+                    r = portfolio.run(subset, 100_000, risk / 100)
+                    cagrs.append(round(r["cagr_pct"], 1))
+                    dds.append(round(r["max_drawdown_pct"], 1))
+                cagrs_sorted = sorted(cagrs)
+                n = len(cagrs_sorted)
+                basket10[f"{skey}|{band:g}|{risk:g}|{fkey}"] = {
+                    "cagrs": cagrs,
+                    "median": cagrs_sorted[n // 2],
+                    "mean": round(sum(cagrs) / n, 1),
+                    "p10": cagrs_sorted[n // 10],
+                    "p90": cagrs_sorted[9 * n // 10],
+                    "best": cagrs_sorted[-1], "worst": cagrs_sorted[0],
+                    "beat_fd": round(100 * sum(1 for c in cagrs if c >= 7) / n),
+                    "negative": round(100 * sum(1 for c in cagrs if c < 0) / n),
+                    "median_dd": sorted(dds)[len(dds) // 2],
+                }
+            print(f"  baskets[{fkey}]: {skey} band {band:.0%} done", flush=True)
+    realistic(False)
 
     nifty = frames.daily("NIFTY 50")
     payload = {
@@ -402,6 +439,7 @@ def main() -> None:
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
+        "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),
         "grid": grid, "tradestats": tradestats, "scaleout": scaleout, "stocks": stocks, "assets": assets,

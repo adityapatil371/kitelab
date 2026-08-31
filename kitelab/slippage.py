@@ -148,6 +148,45 @@ def fill(symbol: str, stamp, price: float, side: int) -> float:
     return price * (1.0 + side * half_spread(symbol, stamp, price))
 
 
+def apply_spread(trade: dict) -> dict:
+    """Charge the spread on an ALREADY-simulated trade, without re-simulating it.
+
+    This is exact, not an approximation, and the reason is worth stating: nothing
+    in the simulation depends on the fill price. Position size comes from the
+    QUOTED price (you place the order before you know the fill), and every exit
+    decision -- stop, EMA break, target -- is read off the bars. So the spread
+    changes what a trade EARNED but never which trades happen or when. Verified
+    on 2026-08-31 against re-simulation: 1,806 trades over 25 symbols, zero
+    field mismatches.
+
+    That is what makes a slippage toggle affordable in the dashboard: the cached
+    signal lists can be reused instead of rebuilding every strategy from bars.
+
+    Requires ENABLED = True to do anything, like every other entry point here.
+    """
+    from .backtest import charges          # deferred: backtest imports this module
+
+    out = dict(trade)
+    quoted_entry, quoted_exit = trade["entry_price"], trade["exit_price"]
+    shares = trade["shares"]
+    entry = fill(trade["symbol"], trade["entry_ts"], quoted_entry, +1)
+    exit_ = fill(trade["symbol"], trade["exit_ts"], quoted_exit, -1)
+    gross = (exit_ - entry) * shares
+    cost = charges(entry * shares, exit_ * shares)
+    cost_best = charges(entry * shares, exit_ * shares, trade.get("same_session", False))
+    risk_taken = trade.get("risk_taken") or 0.0
+    out.update(
+        quoted_entry=quoted_entry, quoted_exit=quoted_exit,
+        entry_price=entry, exit_price=exit_,
+        cost_of_entry=entry * shares, gross_profit=gross,
+        spread_cost=(quoted_exit - exit_) * shares + (entry - quoted_entry) * shares,
+        charges=cost, charges_best=cost_best,
+        net_profit=gross - cost, net_profit_best=gross - cost_best,
+        r_multiple=(gross / risk_taken) if risk_taken else 0.0,
+    )
+    return out
+
+
 def capped_shares(symbol: str, stamp, price: float, shares: float) -> float:
     """Trim an order down to what the stock can actually absorb in one session."""
     if not ENABLED or MAX_PARTICIPATION is None or price <= 0:

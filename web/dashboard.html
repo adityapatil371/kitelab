@@ -25,6 +25,7 @@
   .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.66rem; color: var(--muted); font-weight: 700; }
   .slicer { margin-bottom: 1.05rem; }
   .slicer .eyebrow { display: block; margin-bottom: 0.35rem; }
+  .fillnote { color: var(--muted); font-size: 0.68rem; line-height: 1.45; margin: 0.4rem 0 0; }
   .slist { display: flex; flex-direction: column; gap: 3px; }
   .slist button, .navlist button {
     display: flex; align-items: center; gap: 8px; width: 100%;
@@ -111,6 +112,8 @@
     <nav class="navlist" id="nav" aria-label="Pages"></nav>
 
     <div id="rail-portfolio">
+      <div class="slicer"><span class="eyebrow">Fills</span><div class="slist" id="sl-fill"></div>
+        <p class="fillnote" id="fillnote"></p></div>
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
       <div class="slicer"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
@@ -277,7 +280,8 @@ const inr = v => (v < 0 ? "−₹" : "₹") + Math.round(Math.abs(v)).toLocaleSt
 const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 
 let DATA = null;
-const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2, log: false,
+const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
+                fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
@@ -297,6 +301,8 @@ function init() {
     $("nav").appendChild(b);
   }
   const stratNames = DATA.strategies;
+  slicer("sl-fill", DATA.fills || [["0", "Perfect fills"]], () => state.fill,
+         k => { state.fill = k; renderPortfolio(); });
   slicer("sl-strat", Object.entries(stratNames), () => state.strat, k => { state.strat = k; renderPortfolio(); });
   slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
   slicer("sl-band", (DATA.bands || [0.02]).map((b, i) => [String(i), (b * 100) + "% band"]),
@@ -375,7 +381,10 @@ function syncStockList() {
 const bandOf = (strat, bandIdx) =>
   strat === "brk" ? 0.02 : (DATA.bands || [0.02])[bandIdx];
 const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
-  `${strat}|${bandOf(strat, bandIdx)}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`;
+  `${strat}|${bandOf(strat, bandIdx)}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}`
+  + `|${state.fill}`;
+const fillLabel = () =>
+  ((DATA.fills || []).find(([k]) => k === state.fill) || [null, "Perfect fills"])[1];
 const runFor = (riskIdx, capIdx) =>
   DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
 
@@ -401,7 +410,15 @@ function renderPortfolio() {
   $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
   $("k-trades").textContent = r.taken.toLocaleString("en-IN");
   $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
-  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${(bandOf(state.strat, state.bandIdx)*100)}% band · ${risk}% risk · start ${inr(cap)}`;
+  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${(bandOf(state.strat, state.bandIdx)*100)}% band · ${risk}% risk · start ${inr(cap)} · ${fillLabel()}`;
+  $("fillnote").textContent = state.fill === "1"
+    ? `You cross a spread on the way in and out, your own order moves the price, and no `
+      + `single order may exceed ${((DATA.participation || 0.01) * 100)}% of what the stock `
+      + `trades in a day. That last limit is part of this setting: without it the account `
+      + `buys more than a stock trades and the cost is meaningless. The spread itself is an `
+      + `estimate — Kite sells candles, not quotes.`
+    : `Every result before 2026-08-31. You get the price on the chart, instantly, at any `
+      + `size. Convenient, and wrong — switch to realistic fills to see the difference.`;
 
   lineChart($("eqchart"), 760, 280, [
     { d: bench.d, v: bench.v, color: "var(--bench)", width: 1.5, opacity: 0.85, name: "NIFTY B&H" },
@@ -434,7 +451,8 @@ function renderPortfolio() {
 function renderBasket() {
   const tile = (v, sub, cls) =>
     `<div class="card kpi" style="border:1px solid var(--grid)"><div class="v ${cls}">${v}</div><div class="s" style="color:var(--muted);font-size:0.7rem">${sub}</div></div>`;
-  const b = DATA.basket10 && DATA.basket10[`${state.strat}|${bandOf(state.strat, state.bandIdx)}|${DATA.risks[state.riskIdx]}`];
+  const b = DATA.basket10 && DATA.basket10[
+    `${state.strat}|${bandOf(state.strat, state.bandIdx)}|${DATA.risks[state.riskIdx]}|${state.fill}`];
   if (!b) { $("bk-sub").textContent = "No basket data — rebuild with scripts.dashboard_data."; return; }
   const full = DATA.grid[keyFor(state.strat, state.bandIdx, "all", state.riskIdx, 1)];
   $("bk-sub").textContent =
@@ -501,7 +519,8 @@ function renderTradeMetrics() {
     `(fixed ₹1,00,000 per trade, net of charges) — not the one-account view above, so the ` +
     `universes are directly comparable.`;
   const rows = Object.entries(DATA.universes).map(([u, label]) =>
-    [label + (u === state.uni ? "  ←" : ""), DATA.tradestats[`${state.strat}|${band}|${u}`]]);
+    [label + (u === state.uni ? "  ←" : ""),
+     DATA.tradestats[`${state.strat}|${band}|${u}|${state.fill}`]]);
   metricsTable($("tm-table"), rows, "Universe");
 }
 
@@ -512,7 +531,8 @@ function renderScaleout() {
     $("so-sub").textContent = "Scale-out was tested on the class stack (M/W/D) and Breakout — pick one of those in the Strategy slicer to see it. The verdict there: banking half caps roughly half the profit; adding a breakeven stop was the worst of the three.";
     return;
   }
-  $("so-sub").textContent = `${DATA.universes[state.uni]} · 2% band · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`;
+  $("so-sub").textContent = `${DATA.universes[state.uni]} · 2% band · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`
+    + (state.fill === "1" ? "  NOTE: this card is PERFECT FILLS only — the Fills slicer does not reach it." : "");
   const rows = block[state.uni];
   const maxNet = Math.max(...rows.map(r => Math.abs(r.net)), 1);
   $("so-table").innerHTML =
