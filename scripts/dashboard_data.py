@@ -225,6 +225,16 @@ SCALE_VARIANTS = [("Keep full position (baseline)", None),
 # Where to bank the half, as a multiple of R (the risk taken: entry minus stop).
 # 1.0 is the rule as taught and reuses the original cache names.
 SCALE_MULTIPLES = [0.5, 1.0, 1.5, 2.0, 3.0]
+
+# "How many stocks does this rule need?" Random baskets at each size, one account
+# each. The answer is a deployment question, not a stock-picking one: a rule whose
+# stop sits far below entry buys small positions and needs many at once before the
+# money is working. DRAWS is smaller for big baskets -- they are slow to simulate
+# and barely vary.
+BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150, 199]
+BREADTH_DRAWS = {5: 30, 10: 30, 15: 30, 20: 30, 30: 20, 50: 20, 75: 10, 100: 10,
+                 150: 10, 199: 1}
+BREADTH_SEED = 20260831
 SCALE_RULES = [("half", "Sell half"), ("half_be", "Sell half, stop to breakeven")]
 
 
@@ -385,6 +395,45 @@ def main() -> None:
             scaleout_r[f"{skey}|{ukey}"] = rows
         print(f"    {skey} done", flush=True)
 
+    # ---- how many stocks each rule needs ---------------------------------
+    print("  breadth sweep:", flush=True)
+    breadth = {}
+    for skey in STRATEGY_LABELS:
+        signals = base.get((skey, PRIMARY[skey]))
+        if not signals:
+            continue
+        by_sym = {}
+        for t in signals:
+            by_sym.setdefault(t["symbol"], []).append(t)
+        pool = sorted(cfg.all_symbols)
+        rows = []
+        for size in BREADTH_SIZES:
+            rng = random.Random(BREADTH_SEED + size)
+            draws = ([pool] if size >= len(pool)
+                     else [rng.sample(pool, size) for _ in range(BREADTH_DRAWS[size])])
+            cagrs, dds, held, starved = [], [], [], []
+            for basket in draws:
+                subset = [t for sym in basket for t in by_sym.get(sym, [])]
+                if not subset:
+                    continue
+                r = portfolio.run(subset, 250_000, 0.01)
+                cagrs.append(r["cagr_pct"])
+                dds.append(r["max_drawdown_pct"])
+                held.append(r["max_concurrent"])
+                starved.append(100 * r["skipped_cash"] / max(r["signals"], 1))
+            if not cagrs:
+                continue
+            ordered = sorted(cagrs)
+            pick = lambda q: round(ordered[min(len(ordered) - 1, int(q * len(ordered)))], 1)
+            rows.append({"size": size, "draws": len(ordered),
+                         "median": pick(0.5), "p10": pick(0.1), "p90": pick(0.9),
+                         "worst": round(ordered[0], 1), "best": round(ordered[-1], 1),
+                         "dd": round(sorted(dds)[len(dds) // 2], 1),
+                         "held": round(sorted(held)[len(held) // 2], 1),
+                         "starved": round(sorted(starved)[len(starved) // 2], 1)})
+        breadth[skey] = rows
+        print(f"    {skey} done", flush=True)
+
     print("  per-stock detail:", flush=True)
     by_symbol = {k: {} for k in STRATEGY_LABELS}
     for (skey, band), signals in base.items():
@@ -514,6 +563,7 @@ def main() -> None:
         "universes": {k: v[0] for k, v in universes.items()},
         "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
+        "breadth": breadth, "tie_break": portfolio.TIE_BREAK,
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),

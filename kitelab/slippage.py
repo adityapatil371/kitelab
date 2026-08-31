@@ -72,6 +72,7 @@ _cache: dict[str, dict] = {}
 def reset() -> None:
     """Drop the per-symbol profiles (call after changing TICK/SPREAD_K/etc)."""
     _cache.clear()
+    _liquidity_memo.clear()
 
 
 def profile(symbol: str) -> dict:
@@ -146,6 +147,28 @@ def fill(symbol: str, stamp, price: float, side: int) -> float:
     if not ENABLED:
         return price
     return price * (1.0 + side * half_spread(symbol, stamp, price))
+
+
+_liquidity_memo: dict = {}
+
+
+def liquidity_at(symbol: str, stamp) -> float:
+    """Trailing traded value for a stock on a given session, memoised.
+
+    Used to break ties between signals that arrive on the same day. It reads the
+    same shifted ADV series as the cost model, so it knows only what was on the
+    tape by the previous close -- ranking today's candidates by today's turnover
+    would be lookahead.
+
+    Returns 0.0 where there is no usable history, which sorts such a name last.
+    """
+    key = (symbol, stamp)
+    hit = _liquidity_memo.get(key)
+    if hit is None:
+        adv, _vol = _row(symbol, stamp)
+        hit = float(adv) if np.isfinite(adv) else 0.0
+        _liquidity_memo[key] = hit
+    return hit
 
 
 def apply_spread(trade: dict) -> dict:

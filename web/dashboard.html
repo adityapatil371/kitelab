@@ -143,6 +143,12 @@
         Buy at &#8377;100 with a &#8377;90 stop and R is &#8377;10, so 1R is &#8377;110.
         Perfect fills — the Fills slicer does not reach this page.</p>
     </div>
+    <div id="rail-breadth" style="display:none">
+      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-br-strat"></div></div>
+      <p class="fillnote">Random baskets of each size, one &#8377;2,50,000 account at 1% risk,
+        perfect fills. The question is not which stocks &mdash; it is how many the rule needs
+        before your money is actually working.</p>
+    </div>
     <div id="rail-assets" style="display:none">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-asset-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Instrument</span><div class="slist" id="sl-asset"></div></div>
@@ -246,6 +252,29 @@
       </div>
     </div>
 
+    <div class="canvas page" id="page-breadth">
+      <div class="card span12">
+        <h2>How many stocks does this rule need?</h2>
+        <div class="sub" id="br-sub"></div>
+        <div class="table-scroll"><table id="br-table"></table></div>
+      </div>
+      <div class="card span6">
+        <h2>What you earn, by watchlist size</h2>
+        <div class="sub">Median of the random baskets at each size.</div>
+        <svg id="br-cagr" class="barchart" viewBox="0 0 360 240" role="img" aria-label="Median CAGR by basket size"></svg>
+      </div>
+      <div class="card span6">
+        <h2>Is the money working?</h2>
+        <div class="sub">Share of signals turned away because the cash was already committed.
+          While this reads 0% the account is idling and more stocks will still help.</div>
+        <svg id="br-starve" class="barchart" viewBox="0 0 360 240" role="img" aria-label="Signals starved of cash by basket size"></svg>
+      </div>
+      <div class="card span12">
+        <h2 id="br-why-title">Where it stops paying</h2>
+        <div class="sub" id="br-why"></div>
+      </div>
+    </div>
+
     <div class="canvas page" id="page-stocks">
       <div class="card kpi span2"><div class="lbl">Trades</div><div class="v" id="s-trades"></div><div class="delta" id="s-win"></div></div>
       <div class="card kpi span2"><div class="lbl">Total net</div><div class="v" id="s-net"></div><div class="delta">fixed ₹1L, 1% risk, net of charges</div></div>
@@ -331,10 +360,11 @@ const state = { page: "portfolio", family: "ema", emaTf: "ema",
                 strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
-                soStrat: "ema", soUni: "all", dvIdx: 1 };
+                soStrat: "ema", soUni: "all", dvIdx: 1, brStrat: "dv" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
-               ["scaleout", "Scale-out"], ["assets", "Futures & assets"]];
+               ["scaleout", "Scale-out"], ["breadth", "How many stocks"],
+               ["assets", "Futures & assets"]];
 
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { DATA = d; init(); })
@@ -375,6 +405,8 @@ function init() {
          () => state.soStrat, k => { state.soStrat = k; renderScaleoutPage(); });
   slicer("sl-so-uni", Object.entries(DATA.universes), () => state.soUni,
          k => { state.soUni = k; renderScaleoutPage(); });
+  slicer("sl-br-strat", Object.entries(stratNames), () => state.brStrat,
+         k => { state.brStrat = k; renderBreadth(); });
   slicer("sl-asset-strat", Object.entries(stratNames), () => state.assetStrat,
          k => { state.assetStrat = k; renderAsset(); });
   slicer("sl-asset", Object.keys(DATA.assets).map(k => [k, k]), () => state.asset,
@@ -401,10 +433,12 @@ function setPage(key) {
   $("rail-portfolio").style.display = key === "portfolio" ? "" : "none";
   $("rail-stocks").style.display = key === "stocks" ? "" : "none";
   $("rail-scaleout").style.display = key === "scaleout" ? "" : "none";
+  $("rail-breadth").style.display = key === "breadth" ? "" : "none";
   $("rail-assets").style.display = key === "assets" ? "" : "none";
   if (key === "portfolio") renderPortfolio();
   if (key === "stocks") renderStock();
   if (key === "scaleout") renderScaleoutPage();
+  if (key === "breadth") renderBreadth();
   if (key === "assets") renderAsset();
   // Pages differ in height; landing halfway down a fresh page looks like a dead button.
   if (changed) window.scrollTo(0, 0);
@@ -612,6 +646,69 @@ function metricsTable(el, rows, firstHeader) {
         `<td class="${st.expectancy >= 0 ? "pos" : "neg"}">${st.expectancy.toLocaleString("en-IN")}</td>` +
         `<td>${cap}</td><td>${st.rr ?? "—"}</td></tr>`;
     }).join("") + "</tbody>";
+}
+
+function renderBreadth() {
+  $("sl-br-strat")._sync();
+  const rows = DATA.breadth && DATA.breadth[state.brStrat];
+  if (!rows || !rows.length) {
+    $("br-table").innerHTML = "";
+    $("br-sub").textContent = "No breadth sweep in this data file — rebuild with python -m scripts.dashboard_data.";
+    $("br-why").textContent = "";
+    return;
+  }
+  const setting = state.brStrat === "dv" ? "20/10 windows"
+                : state.brStrat === "brk" ? "" : "2% band";
+  $("br-sub").textContent = joinParts([DATA.strategies[state.brStrat], setting])
+    + ` · random baskets drawn from all 199, one ₹2,50,000 account each at 1% risk, perfect fills. `
+    + `The 199-stock row is the single full universe, so it has no spread.`;
+
+  $("br-table").innerHTML =
+    `<thead><tr><th>Stocks</th><th>Baskets</th><th>Median CAGR</th><th>p10</th><th>p90</th>` +
+    `<th>Spread p90−p10</th><th>Worst</th><th>Best</th><th>Median max DD</th>` +
+    `<th>Positions held</th><th>Signals starved of cash</th></tr></thead><tbody>` +
+    rows.map(r => {
+      const spread = (r.p90 - r.p10).toFixed(1);
+      const idle = r.starved < 2;
+      return `<tr${idle ? ' style="color:var(--muted)"' : ""}>` +
+        `<td><b>${r.size}</b></td><td>${r.draws}</td>` +
+        `<td class="${r.median >= 7 ? "pos" : ""}"><b>${r.median.toFixed(1)}%</b></td>` +
+        `<td>${r.p10.toFixed(1)}%</td><td>${r.p90.toFixed(1)}%</td><td>${spread}</td>` +
+        `<td class="${r.worst < 0 ? "neg" : ""}">${r.worst.toFixed(1)}%</td>` +
+        `<td>${r.best.toFixed(1)}%</td><td class="neg">${r.dd.toFixed(1)}%</td>` +
+        `<td>${r.held.toFixed(0)}</td>` +
+        `<td class="${idle ? "neg" : ""}">${r.starved.toFixed(0)}%${idle ? " — idling" : ""}</td></tr>`;
+    }).join("") + "</tbody>";
+
+  barChart($("br-cagr"), rows.map(r => ({
+    label: String(r.size), value: r.median, on: r.size === 50
+  })), "var(--equity)", v => v.toFixed(1) + "%", 240);
+  barChart($("br-starve"), rows.map(r => ({
+    label: String(r.size), value: r.starved,
+    on: r.starved >= 10
+  })), r => (r.value < 2 ? "var(--dd)" : "var(--bench)"), v => v.toFixed(0) + "%", 240);
+
+  // Where does the money start working, and where does adding stocks stop paying?
+  const working = rows.find(r => r.starved >= 10);
+  const gain = (a, b) => (b.median - a.median) / (b.size - a.size);
+  let knee = rows[rows.length - 1];
+  for (let i = 1; i < rows.length - 1; i++)
+    if (gain(rows[i], rows[i + 1]) < 0.5 * gain(rows[0], rows[i])) { knee = rows[i]; break; }
+  const idleRows = rows.filter(r => r.starved < 2);
+  $("br-why").innerHTML =
+    (idleRows.length
+      ? `Up to <b>${idleRows[idleRows.length - 1].size} stocks</b> this rule never once runs out of
+         money over the whole history — the greyed rows. That is not a good sign, it means the
+         account is sitting in cash it cannot deploy, and every stock you add is pure gain. `
+      : `This rule is short of cash even on the smallest baskets, so it is putting the money to
+         work from the start. `) +
+    (working ? `The money starts genuinely competing for itself at about
+         <b>${working.size} stocks</b>. ` : "") +
+    `Beyond roughly <b>${knee.size}</b> the curve flattens: each further stock adds about
+     <b>${gain(knee, rows[rows.length - 1]).toFixed(2)} points</b> of CAGR against
+     <b>${gain(rows[0], knee).toFixed(2)}</b> below it. The spread column is the other half of
+     the story — with few stocks your result depends mostly on which ones you happened to pick,
+     and that luck shrinks as the list grows.`;
 }
 
 function renderScaleoutPage() {

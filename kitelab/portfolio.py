@@ -26,6 +26,13 @@ import numpy as np
 import pandas as pd
 
 from . import frames, sizing, slippage
+
+# How same-day signals are ordered when the account cannot afford them all.
+#   "liquidity" -- most liquid first (the rule, see run()); deterministic
+#   None        -- timestamp only, leaving ties to the caller's list order, which
+#                  is what every result before 2026-08-31 did. Kept so those
+#                  numbers can still be reproduced, not because it is defensible.
+TIE_BREAK: str | None = "liquidity"
 from .backtest import charges
 
 
@@ -128,7 +135,24 @@ def daily_curve(taken: list[dict], capital: float) -> dict:
 
 
 def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -> dict:
-    entries = sorted(trades, key=lambda t: t["entry_ts"])
+    # Signals are offered oldest first, and TIES MATTER. Most sessions produce
+    # several at once and a constrained account cannot take them all, so whichever
+    # is offered first wins the cash. Sorting on the timestamp alone left that to
+    # the order symbols happened to sit in a list -- and measured over 25 random
+    # orderings on 2026-08-31 that was worth 17.9%-25.6% CAGR on Darvas and
+    # 8.3%-18.9% on the EMA stack. An implementation detail cannot be allowed to
+    # decide the answer.
+    #
+    # The rule: most liquid first. A trader facing three breakouts on one morning
+    # takes the one they can actually fill, it uses only what the tape showed by
+    # the previous close, and it steers the account away from the thin names where
+    # spread and impact do their damage. Symbol name breaks any remaining tie so
+    # the result is fully deterministic.
+    entries = (sorted(trades, key=lambda t: (t["entry_ts"],
+                                             -slippage.liquidity_at(t["symbol"], t["entry_ts"]),
+                                             t["symbol"]))
+               if TIE_BREAK == "liquidity"
+               else sorted(trades, key=lambda t: t["entry_ts"]))
     cash = capital
     peak = capital
     open_by_symbol: dict[str, dict] = {}
