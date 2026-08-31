@@ -31,8 +31,13 @@ AGG = {
     "volume": "sum",
 }
 
+# `ts` is the bar's FIRST session and `close` is its LAST session's close, so the
+# stamp is up to four sessions older than the price. `end_ts` carries the session
+# the bar actually closed on -- the DECISION date. Anything that asks "what was
+# known when this bar closed" must key off end_ts, not ts.
 NAMED_AGG = dict(
     ts=("ts", "first"),
+    end_ts=("ts", "last"),
     open=("open", "first"),
     high=("high", "max"),
     low=("low", "min"),

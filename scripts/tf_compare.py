@@ -78,7 +78,16 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
     alpha = 2.0 / (length + 1)
     close = base["close"].to_numpy()
     base_ema = indicators.ema(base["close"], length).to_numpy()
-    stamps = base["ts"].to_numpy().astype("datetime64[ns]")
+    # The bar's DECISION session, not its stamp. An aggregated bar is stamped at
+    # its FIRST session but closes on its LAST, so a weekly bar running Mon->Fri
+    # carries a Monday stamp. Looking a higher timeframe up by that stamp puts a
+    # week that straddles a month boundary in the WRONG month, and the code then
+    # recurses from the month before that -- one month stale. On ABB 144 of 1,078
+    # weekly bars straddle (13.4%), median EMA error 1.44%, max 7.89%, against a
+    # 2% band. Base frames that are not aggregated (daily, hourly) have no end_ts
+    # and their stamp already IS the decision session.
+    decided = base["end_ts"] if "end_ts" in base.columns else base["ts"]
+    stamps = decided.to_numpy().astype("datetime64[ns]")
 
     upper, lower = 1 + band, 1 - band
     entry_ok = close > base_ema * upper
@@ -115,7 +124,12 @@ def simulate_variant(symbol: str, variant: str,
     exit_ok = signal["exit_ok"].to_numpy()
     open_, high, low, close = (signal[c].to_numpy()
                                for c in ("open", "high", "low", "close"))
-    stamps = signal["ts"].tolist()
+    # Stamp each trade on the session it was DECIDED on -- the session whose close
+    # is the fill price. Stamping a Mon->Fri weekly bar on the Monday made the
+    # account engine free and commit cash up to four days before the price it uses
+    # existed, and made the daily curve mark a position from Monday at Friday's
+    # price. Non-aggregated bases (daily, hourly) are unaffected: stamp == session.
+    stamps = (signal["end_ts"] if "end_ts" in signal.columns else signal["ts"]).tolist()
     total = len(signal)
 
     trades: list[dict] = []
