@@ -6,6 +6,9 @@ newest first within each stock, cumulative columns running down the sheet.
 """
 from __future__ import annotations
 
+import re
+import shutil
+import zipfile
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -177,3 +180,119 @@ def save(book: Workbook, filename: str) -> Path:
     target = OUTPUT / filename
     book.save(target)
     return target
+
+
+# --------------------------------------------------- cached formula values ----
+#
+# openpyxl writes a formula as <f>...</f><v/> -- the formula with an EMPTY cached
+# result. Excel and LibreOffice recalculate on open and fill it in; the viewer on
+# this machine does not, and renders the cell blank. LibreOffice is not installed
+# here, so a workbook full of formulas ships as a workbook full of blank columns
+# (3,130 in EMA Timeframe Comparison, 520 in EMA Showcase, 20,493 in Drawdown
+# Proof, all measured 2026-08-31).
+#
+# The fix is to write the value we already computed in Python into the <v> slot
+# next to the formula. The formula stays live -- open the file in real Excel and
+# it recalculates exactly as before -- but the cell is readable without Excel.
+#
+# This started life inside scripts/band_sweep.py. It lives here so every writer
+# can use the same one instead of each growing its own copy or, more commonly,
+# not having one at all.
+
+_CELL_RE = re.compile(r'<c r="([A-Z]+\d+)"([^>]*)>(<f[^>]*>)(.*?)(</f>)<v\s*/>(</c>)', re.S)
+# The fallback literal inside an IFERROR. Quotes are NOT escaped in XML element
+# text (only < > & are), so the literal appears as ,"-") -- but accept the escaped
+# form too rather than depend on that.
+_IFERROR_FALLBACK_RE = re.compile(
+    r'^IFERROR\(.*,\s*(?:"|&quot;)(.*?)(?:"|&quot;)\s*\)$', re.S)
+
+
+def _xml_escape(text: str) -> str:
+    return (str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+class FormulaValues:
+    """Records the value of each formula written, then injects them into the file.
+
+        fv = report.FormulaValues()
+        fv.write(sheet, row, 9, f"=(F{row}-D{row})*G{row}", trade["gross_profit"],
+                 "#,##0.00")
+        target = report.save(book, "Whatever.xlsx")
+        fv.inject(target, book)
+
+    `record()` is the lower-level door for code that builds its cell references
+    separately from its values (scripts/band_sweep.py does).
+    """
+
+    def __init__(self) -> None:
+        self._values: dict[tuple[str, str], object] = {}
+
+    def record(self, sheet_title: str, coordinate: str, value) -> None:
+        self._values[(sheet_title, coordinate)] = value
+
+    def write(self, sheet, row: int, column: int, formula: str, value,
+              number_format: str | None = None):
+        cell = sheet.cell(row=row, column=column, value=formula)
+        if number_format is not None:
+            cell.number_format = number_format
+        self.record(sheet.title, cell.coordinate, value)
+        return cell
+
+    def inject(self, target: Path, book: Workbook, quiet: bool = False) -> tuple[int, int]:
+        """Rewrite `target` in place, filling every <v/> we have a value for.
+
+        Returns (filled, still_blank). A non-zero still_blank is the warning that
+        this whole mechanism exists to make impossible to miss, so it prints.
+        """
+        names = {f"xl/worksheets/sheet{i}.xml": n
+                 for i, n in enumerate(book.sheetnames, start=1)}
+        filled = blank = 0
+        tmp = str(target) + ".tmp"
+        with zipfile.ZipFile(target) as zin, \
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.namelist():
+                blob = zin.read(item)
+                if item in names:
+                    sheet_name = names[item]
+                    per_sheet = [0, 0]
+
+                    def fill(m, sheet_name=sheet_name, per_sheet=per_sheet):
+                        ref, attrs, f_open, formula, f_close, c_close = m.groups()
+                        value = self._values.get((sheet_name, ref))
+                        if value is None:
+                            # An IFERROR formula whose guarded branch is what fires
+                            # (a stock with no losing trades divides by zero) has a
+                            # known result: the literal in the formula's own
+                            # fallback. Read it off the formula rather than leave a
+                            # blank -- this is the 12 cells band_sweep used to miss.
+                            fallback = _IFERROR_FALLBACK_RE.match(formula.strip())
+                            if fallback is None:
+                                per_sheet[1] += 1
+                                return m.group(0)
+                            value = fallback.group(1)
+                        per_sheet[0] += 1
+                        if isinstance(value, str):
+                            attrs = re.sub(r'\s+t="[^"]*"', "", attrs) + ' t="str"'
+                            body = f"<v>{_xml_escape(value)}</v>"
+                        else:
+                            body = f"<v>{value}</v>"
+                        return (f'<c r="{ref}"{attrs}>{f_open}{formula}{f_close}'
+                                f"{body}{c_close}")
+
+                    xml, _ = _CELL_RE.subn(fill, blob.decode())
+                    filled += per_sheet[0]
+                    blank += per_sheet[1]
+                    if per_sheet[0] and not quiet:
+                        print(f"    {sheet_name}: {per_sheet[0]:,} formula cells "
+                              f"given cached values")
+                    if per_sheet[1]:
+                        print(f"    WARNING  {sheet_name}: {per_sheet[1]:,} formula "
+                              "cells still have NO cached value and will render "
+                              "blank without Excel")
+                    blob = xml.encode()
+                zout.writestr(item, blob)
+        shutil.move(tmp, target)
+        if blank:
+            print(f"  WARNING  {blank:,} of {filled + blank:,} formula cells in "
+                  f"{target.name} have no cached value")
+        return filled, blank

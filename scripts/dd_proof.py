@@ -106,6 +106,10 @@ def main() -> None:
     print(f"  headline: {r['max_drawdown_pct']:.2f}% ({peak_day.date()} -> {trough_day.date()})")
 
     book = Workbook()
+    # Every formula below also carries the value Python already computed, so the
+    # blue columns read without Excel recalculating them (report.FormulaValues).
+    # This file wrote 20,493 blank formula cells before that existed.
+    values = report.FormulaValues()
     book.remove(book.active)
 
     sheet = book.create_sheet("How To Check")
@@ -167,9 +171,17 @@ def main() -> None:
     sheet["A2"].font = Font(bold=True)
     first_data = 5
     last_data = first_data + len(days) - 1
-    b2 = sheet["B2"]
-    b2.value = f"=MIN(F{first_data}:F{last_data})"
-    b2.number_format = "0.00%"
+    # The same walk the rows below perform, run once up front so the headline cell
+    # can carry its own cached value. It is also a free cross-check: this MIN must
+    # equal the drawdown the engine reports.
+    _peak = None
+    dd_series = []
+    for _day, _cash, _value in days:
+        _equity = round(_cash, 2) + round(_value, 2)
+        _peak = _equity if _peak is None else max(_peak, _equity)
+        dd_series.append(_equity / _peak - 1)
+    b2 = values.write(sheet, 2, 2, f"=MIN(F{first_data}:F{last_data})",
+                      min(dd_series), "0.00%")
     b2.font = Font(bold=True, color="C00000")
     sheet["C2"] = f"reached on {trough_day.date()}, measured from the {peak_day.date()} peak"
     headers = ["Date", "Cash", "Positions Value", "Equity", "Running Peak", "Drawdown %"]
@@ -182,14 +194,22 @@ def main() -> None:
     for offset, (day, cash, value) in enumerate(days):
         row = first_data + offset
         sheet.cell(row=row, column=1, value=day).number_format = "yyyy-mm-dd"
-        sheet.cell(row=row, column=2, value=round(cash, 2)).number_format = "#,##0"
-        sheet.cell(row=row, column=3, value=round(value, 2)).number_format = "#,##0"
-        eq = sheet.cell(row=row, column=4, value=f"=B{row}+C{row}")
-        pk = sheet.cell(row=row, column=5,
-                        value=f"=MAX(E{row-1},D{row})" if offset else f"=D{row}")
-        dd = sheet.cell(row=row, column=6, value=f"=D{row}/E{row}-1")
-        for cell, fmt in ((eq, "#,##0"), (pk, "#,##0"), (dd, "0.00%")):
-            cell.number_format = fmt
+        # Cash and Positions Value are STORED rounded to the paisa, and every formula
+        # on the row reads those stored cells. So the cached values are derived from
+        # the rounded numbers too -- otherwise the sheet disagrees with itself by
+        # ~3e-8 the moment Excel recalculates it.
+        cash_r, value_r = round(cash, 2), round(value, 2)
+        sheet.cell(row=row, column=2, value=cash_r).number_format = "#,##0"
+        sheet.cell(row=row, column=3, value=value_r).number_format = "#,##0"
+        equity = cash_r + value_r
+        running_peak = equity if offset == 0 else max(running_peak, equity)
+        eq = values.write(sheet, row, 4, f"=B{row}+C{row}", equity, "#,##0")
+        pk = values.write(sheet, row, 5,
+                          f"=MAX(E{row-1},D{row})" if offset else f"=D{row}",
+                          running_peak, "#,##0")
+        dd = values.write(sheet, row, 6, f"=D{row}/E{row}-1",
+                          equity / running_peak - 1, "0.00%")
+        for cell in (eq, pk, dd):
             cell.font = FORMULA_FONT
     sheet.freeze_panes = "A5"
 
@@ -212,6 +232,7 @@ def main() -> None:
             c.fill = HEADER_FILL
         row += 1
         first = row
+        block_total = 0.0
         for symbol, entry_ts, entry_price, shares, close in snapshots[day]:
             sheet.cell(row=row, column=1, value=symbol)
             sheet.cell(row=row, column=2,
@@ -219,26 +240,28 @@ def main() -> None:
             sheet.cell(row=row, column=3, value=round(entry_price, 2)).number_format = "0.00"
             sheet.cell(row=row, column=4, value=shares)
             sheet.cell(row=row, column=5, value=round(close, 2)).number_format = "0.00"
-            v = sheet.cell(row=row, column=6, value=f"=D{row}*E{row}")
-            v.number_format = "#,##0"
+            v = values.write(sheet, row, 6, f"=D{row}*E{row}",
+                             round(shares * close, 2), "#,##0")
             v.font = FORMULA_FONT
+            block_total += shares * close
             row += 1
         cash_that_day = next(c for d, c, _ in days if d == day)
         sheet.cell(row=row, column=5, value="Cash").font = Font(bold=True)
         sheet.cell(row=row, column=6, value=round(cash_that_day, 2)).number_format = "#,##0"
         row += 1
         sheet.cell(row=row, column=5, value="EQUITY").font = Font(bold=True)
-        tot = sheet.cell(row=row, column=6, value=f"=SUM(F{first}:F{row-1})")
-        tot.number_format = "#,##0"
+        block_equity = block_total + cash_that_day
+        tot = values.write(sheet, row, 6, f"=SUM(F{first}:F{row-1})",
+                           round(block_equity, 2), "#,##0")
         tot.font = Font(bold=True, color="0000AA")
         if label == "THE PEAK":
             peak_total_row = row
+            peak_equity = block_equity
         else:
             drop = sheet.cell(row=row + 1, column=5, value="FALL FROM PEAK")
             drop.font = Font(bold=True)
-            pc = sheet.cell(row=row + 1, column=6,
-                            value=f"=F{row}/F{peak_total_row}-1")
-            pc.number_format = "0.00%"
+            pc = values.write(sheet, row + 1, 6, f"=F{row}/F{peak_total_row}-1",
+                              round(block_equity / peak_equity - 1, 12), "0.00%")
             pc.font = Font(bold=True, color="C00000")
         row += 3
 
@@ -268,14 +291,17 @@ def main() -> None:
         sheet.cell(row=row, column=7, value=round(t["exit_price"], 2)).number_format = "0.00"
         sheet.cell(row=row, column=8, value=t["shares"])
         sheet.cell(row=row, column=9, value=round(fee, 2)).number_format = "0.00"
-        g = sheet.cell(row=row, column=10, value=f"=(G{row}-D{row})*H{row}")
-        n = sheet.cell(row=row, column=11, value=f"=J{row}-I{row}")
+        gross = (t["exit_price"] - t["entry_price"]) * t["shares"]
+        g = values.write(sheet, row, 10, f"=(G{row}-D{row})*H{row}",
+                         round(gross, 2), "#,##0.00")
+        n = values.write(sheet, row, 11, f"=J{row}-I{row}",
+                         round(gross - fee, 2), "#,##0.00")
         for cell in (g, n):
-            cell.number_format = "#,##0.00"
             cell.font = FORMULA_FONT
     sheet.freeze_panes = "A2"
 
     target = report.save(book, "Drawdown Proof.xlsx")
+    values.inject(target, book)
     print(f"  written: {target}")
 
 

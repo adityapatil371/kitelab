@@ -355,7 +355,7 @@ def _summary_row(sheet, row, label, s, bold=False):
 
 
 def write_variant_sheet(book: Workbook, key: str, label: str, desc: str,
-                        results: dict) -> None:
+                        results: dict, values: report.FormulaValues) -> None:
     sheet = book.create_sheet(label.replace("/", "-"))
     sheet["A1"] = (f"RULE ({label}) : buy at the {desc.split('traded on ')[-1].split(',')[0]} "
                    f"close when price is 2% above the 20-EMA on all three timeframes "
@@ -395,6 +395,7 @@ def write_variant_sheet(book: Workbook, key: str, label: str, desc: str,
             cell.alignment = Alignment(horizontal="center", wrap_text=True)
         row += 1
         first_data_row = row
+        running = 0.0
         for number, trade in enumerate(trades, start=1):
             sheet.cell(row=row, column=1, value=number)
             for col, stamp in ((2, trade["entry_ts"]), (3, trade["exit_ts"])):
@@ -404,24 +405,30 @@ def write_variant_sheet(book: Workbook, key: str, label: str, desc: str,
             for col, k in ((4, "entry_price"), (5, "stop"), (6, "exit_price")):
                 sheet.cell(row=row, column=col,
                            value=round(trade[k], 2)).number_format = "0.00"
-            sheet.cell(row=row, column=7,
-                       value=f"=MIN(ROUNDDOWN($B$2*$D$2/(D{row}-E{row}),0),"
-                             f"ROUNDDOWN($B$2/D{row},0))").number_format = "0"
-            sheet.cell(row=row, column=8, value=f"=D{row}*G{row}").number_format = "#,##0.00"
-            sheet.cell(row=row, column=9,
-                       value=f"=(F{row}-D{row})*G{row}").number_format = "#,##0.00"
+            # Every formula here also carries the value Python already computed, so
+            # the column is readable without Excel recalculating it (see
+            # report.FormulaValues). The formula stays live.
+            shares = trade["shares"]
+            gross = trade["gross_profit"]
+            running += gross
+            values.write(sheet, row, 7,
+                         f"=MIN(ROUNDDOWN($B$2*$D$2/(D{row}-E{row}),0),"
+                         f"ROUNDDOWN($B$2/D{row},0))", shares, "0")
+            values.write(sheet, row, 8, f"=D{row}*G{row}",
+                         round(trade["entry_price"] * shares, 2), "#,##0.00")
+            values.write(sheet, row, 9, f"=(F{row}-D{row})*G{row}",
+                         round(gross, 2), "#,##0.00")
             cum = f"=I{row}" if row == first_data_row else f"=J{row - 1}+I{row}"
-            sheet.cell(row=row, column=10, value=cum).number_format = "#,##0.00"
-            sheet.cell(row=row, column=11,
-                       value=f"=(F{row}-D{row})/(D{row}-E{row})").number_format = '0.00"R"'
+            values.write(sheet, row, 10, cum, round(running, 2), "#,##0.00")
+            values.write(sheet, row, 11, f"=(F{row}-D{row})/(D{row}-E{row})",
+                         round(trade["r_multiple"], 2), '0.00"R"')
             sheet.cell(row=row, column=12, value=trade["days_held"]).number_format = "0"
             sheet.cell(row=row, column=13, value=trade["exit_reason"])
             if trade["exit_price"] < trade["entry_price"]:
                 sheet.cell(row=row, column=9).font = LOSS_FONT
             row += 1
-        total = sheet.cell(row=row, column=9,
-                           value=f"=SUM(I{first_data_row}:I{row - 1})")
-        total.number_format = "#,##0.00"
+        total = values.write(sheet, row, 9, f"=SUM(I{first_data_row}:I{row - 1})",
+                             round(running, 2), "#,##0.00")
         total.font = Font(bold=True)
         sheet.cell(row=row, column=8, value="Total").font = Font(bold=True)
         row += 3
@@ -447,11 +454,13 @@ def main() -> None:
 
     book = Workbook()
     book.remove(book.active)
+    values = report.FormulaValues()
     write_readme(book, windows, results)
     write_summary(book, results)
     for key, label, desc in VARIANTS:
-        write_variant_sheet(book, key, label, desc, results)
+        write_variant_sheet(book, key, label, desc, results, values)
     target = report.save(book, "EMA Timeframe Comparison.xlsx")
+    values.inject(target, book)
     print(f"  written: {target}")
 
 

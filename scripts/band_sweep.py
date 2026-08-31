@@ -21,9 +21,6 @@ since avoiding charges is what a band is for.
 from __future__ import annotations
 
 import math
-import re
-import shutil
-import zipfile
 
 import numpy as np
 import pandas as pd
@@ -286,25 +283,13 @@ def main() -> None:
 
     target = report.save(book, "EMA Band Sweep.xlsx")
 
-    names = {f"xl/worksheets/sheet{i}.xml": n for i, n in enumerate(book.sheetnames, start=1)}
-    tmp = str(target) + ".tmp"
-    with zipfile.ZipFile(target) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.namelist():
-            blob = zin.read(item)
-            if item in names:
-                name = names[item]
-                xml = blob.decode()
-
-                def fill(m, name=name):
-                    v = cached.get((name, m.group(1)))
-                    return m.group(0) if v is None else m.group(0).replace("<v />", f"<v>{v}</v>")
-
-                xml, n = re.subn(r'<c r="([A-Z]+\d+)"[^>]*><f>[^<]*</f><v /></c>', fill, xml)
-                if n:
-                    print(f"    {name}: {n} formula cells given cached values")
-                blob = xml.encode()
-            zout.writestr(item, blob)
-    shutil.move(tmp, target)
+    # The value injector used to live here. It is kitelab.report.FormulaValues now,
+    # so tf_compare, showcase and dd_proof can use the same one -- they were writing
+    # workbooks whose computed columns rendered blank on this machine.
+    values = report.FormulaValues()
+    for (sheet_name, ref), value in cached.items():
+        values.record(sheet_name, ref, value)
+    values.inject(target, book)
     print(f"\n  written: {target}")
 
 
