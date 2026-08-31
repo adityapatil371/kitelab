@@ -112,8 +112,13 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
         sell_value = exit_price * shares
         gross = (exit_price - entry_price) * shares
         same_session = stamps[position].date() == stamps[exit_index].date()
-        cost = charges(buy_value, sell_value)
-        cost_best = charges(buy_value, sell_value, intraday=same_session)
+        # ONE fee convention, everywhere: a trade that opens and closes in the same
+        # session is billed at intraday rates, which is what Zerodha actually
+        # charges and what portfolio.run has always done. It used to be billed
+        # delivery here and intraday only into the *_best fields, so the W/D/H
+        # trade lists (the only ones with same-session trades) disagreed with the
+        # account engine, and with themselves across the fills toggle.
+        cost = cost_best = charges(buy_value, sell_value, intraday=same_session)
 
         trades.append({
             "symbol": symbol,

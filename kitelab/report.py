@@ -39,12 +39,14 @@ COLUMNS = [
     ("Cum Profit", "cum_gross", "#,##0.00", 12),
     ("R Multiple", "r_multiple", "0.00", 10),
     ("Same Session", "same_session", "@", 12),
-    ("Charges (delivery)", "charges", "#,##0.00", 13),
-    ("Net (delivery)", "net_profit", "#,##0.00", 12),
-    ("Cum Net (delivery)", "cum_net", "#,##0.00", 15),
-    ("Charges (intraday)", "charges_best", "#,##0.00", 13),
-    ("Net (intraday)", "net_profit_best", "#,##0.00", 12),
-    ("Cum Net (intraday)", "cum_net_best", "#,##0.00", 15),
+    # One fee convention (see backtest.charges callers): same-session trades are
+    # billed intraday, everything else delivery. There used to be a "(delivery)"
+    # trio and an "(intraday)" trio side by side; under one convention they hold
+    # the same number, and two identically-shaped columns with different labels is
+    # exactly how a reader ends up comparing a sheet against itself.
+    ("Charges", "charges", "#,##0.00", 13),
+    ("Net", "net_profit", "#,##0.00", 12),
+    ("Cum Net", "cum_net", "#,##0.00", 15),
 ]
 
 SUMMARY_FIELDS = [
@@ -53,10 +55,8 @@ SUMMARY_FIELDS = [
     ("Wins", "wins", "0", 8), ("Win Rate %", "win_rate_pct", "0.0", 11),
     ("Gross Profit", "gross_profit", "#,##0.00", 13),
     ("Same-day Trades", "same_day", "0", 13),
-    ("Charges (delivery)", "charges", "#,##0.00", 13),
-    ("Net (delivery)", "net_profit", "#,##0.00", 13),
-    ("Charges (intraday)", "charges_best", "#,##0.00", 13),
-    ("Net (intraday)", "net_best", "#,##0.00", 13),
+    ("Charges", "charges", "#,##0.00", 13),
+    ("Net", "net_profit", "#,##0.00", 13),
     ("Expectancy / Trade", "expectancy", "#,##0.00", 16),
     ("Profit Factor", "profit_factor", "0.00", 12),
     ("Avg R", "avg_r", "0.00", 9), ("Best R", "best_r", "0.00", 9),
@@ -86,6 +86,9 @@ def order(trades: list[dict], symbols: list[str]) -> list[dict]:
     for symbol in symbols:
         mine = [t for t in trades if t["symbol"] == symbol]
         ordered.extend(sorted(mine, key=lambda t: t["entry_ts"], reverse=True))
+    # net_best is no longer a column (one fee convention -- it equals net), but the
+    # key is still produced: scripts/wide_test.py and scripts/trailing_trades.py
+    # read it, and the shape guard above still requires net_profit_best.
     cost = gross = net = net_best = 0.0
     for number, trade in enumerate(ordered, start=1):
         cost += trade["cost_of_entry"]

@@ -137,11 +137,14 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
              + (exit_price - entry_price) * remaining)
     if banked_fraction:
         reason = reason + f" (half banked at {scale_r:g}R)"
-    # Whether a same-day round trip is billed at intraday or delivery rates depends on
-    # how the broker classifies it, so carry both and let the report show the range.
     same_session = entry_ts.date() == exit_ts.date()
-    cost = charges(buy_value, sell_value)
-    cost_best = charges(buy_value, sell_value, intraday=same_session)
+    # ONE fee convention, everywhere: a trade that opens and closes in the same
+    # session is billed at intraday rates, which is what Zerodha actually
+    # charges and what portfolio.run has always done. It used to be billed
+    # delivery here and intraday only into the *_best fields, so the W/D/H
+    # trade lists (the only ones with same-session trades) disagreed with the
+    # account engine, and with themselves across the fills toggle.
+    cost = cost_best = charges(buy_value, sell_value, intraday=same_session)
 
     return {
         "symbol": symbol,

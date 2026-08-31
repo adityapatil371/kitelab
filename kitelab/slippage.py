@@ -219,8 +219,12 @@ def apply_spread(trade: dict) -> dict:
     entry = fill(trade["symbol"], trade["entry_ts"], quoted_entry, +1)
     exit_ = fill(trade["symbol"], trade["exit_ts"], quoted_exit, -1)
     gross = (exit_ - entry) * shares
-    cost = charges(entry * shares, exit_ * shares)
-    cost_best = charges(entry * shares, exit_ * shares, trade.get("same_session", False))
+    # One fee convention (see backtest.simulate): same-session trades are billed
+    # intraday. This used to re-bill an already-intraday W/D/H trade at DELIVERY
+    # rates, so applying the spread quietly added Rs291,639 of pure convention
+    # change to the realistic W/D/H trade list on top of the actual spread cost.
+    cost = cost_best = charges(entry * shares, exit_ * shares,
+                               trade.get("same_session", False))
     risk_taken = trade.get("risk_taken") or 0.0
     out.update(
         quoted_entry=quoted_entry, quoted_exit=quoted_exit,
