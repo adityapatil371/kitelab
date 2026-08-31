@@ -224,10 +224,29 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         # Market impact belongs here and nowhere else: it is a function of the order
         # size, and this is the only place the real order size exists. The spread was
         # already paid at the trade level (kitelab.slippage.fill).
+        #
+        # Shares were sized against cash / entry_price, but the account is DEBITED at
+        # the impacted price, which is higher. So a cash-constrained entry could spend
+        # money the account did not have: measured on Q/M/W realistic, 46 entries left
+        # cash negative, worst -Rs1,642. Impact falls as the order shrinks, so trimming
+        # to what the impacted price can afford converges immediately; the loop is a
+        # backstop, and shares only ever go down inside it.
         entry_fill, exit_fill = trade["entry_price"], trade["exit_price"]
         if slippage.ENABLED:
-            entry_fill *= 1.0 + slippage.impact(trade["symbol"], trade["entry_ts"],
-                                                entry_fill * shares)
+            for _ in range(8):
+                entry_fill = trade["entry_price"] * (
+                    1.0 + slippage.impact(trade["symbol"], trade["entry_ts"],
+                                          trade["entry_price"] * shares))
+                if shares * entry_fill <= cash or entry_fill <= 0:
+                    break
+                affordable = cash / entry_fill
+                shares = (round(affordable, 6) if sizing.FRACTIONAL
+                          else math.floor(affordable))
+                if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
+                    break
+            if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
+                skipped_cash += 1
+                continue
             exit_fill *= 1.0 - slippage.impact(trade["symbol"], trade["exit_ts"],
                                                exit_fill * shares)
 
