@@ -22,7 +22,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from kitelab import backtest, config, portfolio, report
+from kitelab import backtest, config, portfolio, report, slippage
 
 CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 DASH = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
@@ -50,7 +50,13 @@ def with_slippage(trades, per_side):
 
 def main() -> None:
     d = json.loads(DASH.read_text())
-    grid = d["grid"]
+    # The grid and basket keys gained a fills dimension on 2026-08-31. This study
+    # compares LEVERS against one another, so it holds fills at perfect ("0") and
+    # prices execution as one of the levers below. Stripping the suffix here keeps
+    # every lookup underneath in the original shape.
+    grid = {k.rsplit("|", 1)[0]: v for k, v in d["grid"].items() if k.endswith("|0")}
+    d["basket10"] = {k.rsplit("|", 1)[0]: v for k, v in d["basket10"].items()
+                     if k.endswith("|0")}
     ref_key = "ema|0.02|all|1|250000"
     ref = grid[ref_key]["cagr"]
     print(f"\n  reference account: EMA M/W/D, 2% band, all 199, 1% risk, Rs2,50,000 "
@@ -68,7 +74,8 @@ def main() -> None:
           [("EMA W/D/H (hourly)", "wdh|0.02|all|1|250000"),
            ("EMA M/W/D (daily)", "ema|0.02|all|1|250000"),
            ("EMA Q/M/W (weekly)", "qmw|0.02|all|1|250000"),
-           ("ATH Breakout", "brk|0.02|all|1|250000")],
+           ("ATH Breakout", "brk|0.02|all|1|250000"),
+           ("Darvas 20/10", "dv|20-10|all|1|250000")],
           "which rule you trade at all")
     sweep("Band (dead zone) 0-5%",
           [(f"{b*100:g}% band", f"ema|{b:g}|all|1|250000") for b in d["bands"]],
@@ -103,26 +110,28 @@ def main() -> None:
                     "Zerodha delivery costs", [("real fees", ref), ("no fees", free)]))
     print(f"    charges: {ref:.1f}% -> {free:.1f}% without fees", flush=True)
 
-    slip = [("none (our model)", ref)]
-    for s in (0.0005, 0.001, 0.002):
-        slip.append((f"{s*100:.2f}%/side", cagr(with_slippage(ema, s))))
-    slip.sort(key=lambda x: x[1])
-    factors.append(("Slippage (not modelled anywhere else)", slip[0][0], slip[0][1],
+    # Measured now rather than guessed: the per-stock spread ladder plus market
+    # impact, under the participation cap that makes the orders fillable. The old
+    # flat percentage haircut is gone -- see kitelab/slippage.py.
+    slippage.ENABLED, slippage.MAX_PARTICIPATION = True, 0.01
+    slippage.reset()
+    realistic = cagr([slippage.apply_spread(t) for t in ema])
+    slippage.ENABLED, slippage.MAX_PARTICIPATION = False, None
+    slippage.reset()
+    slip = sorted([("realistic fills", realistic), ("perfect fills", ref)],
+                  key=lambda x: x[1])
+    factors.append(("Execution: spread + market impact", slip[0][0], slip[0][1],
                     slip[-1][0], slip[-1][1],
-                    "the gap between the price you see and the price you get", slip))
-    print(f"    slippage 0 -> 0.2%/side: {slip[-1][1]:.1f}% -> {slip[0][1]:.1f}%", flush=True)
+                    "the gap between the price you see and the price you get, "
+                    "measured per stock", slip))
+    print(f"    execution: {ref:.1f}% -> {realistic:.1f}% with real fills", flush=True)
 
-    scale = [("keep full position", ref)]
-    for label, name in (("sell half at +1R", "EMA_half_199"),
-                        ("half + breakeven stop", "EMA_halfbe_199")):
-        try:
-            scale.append((label, cagr(load_cache(name))))
-        except FileNotFoundError:
-            pass
-    scale.sort(key=lambda x: x[1])
-    factors.append(("Scale-out exit rule", scale[0][0], scale[0][1], scale[-1][0], scale[-1][1],
-                    "banking half the position early", scale))
-    print(f"    scale-out variants done", flush=True)
+    # NO scale-out row. portfolio.run prices a trade as shares x ONE exit price and
+    # a scale-out has two; the banked leg never reaches the trade record, so an
+    # account figure for it is not merely noisy, it is wrong -- 1,522 of 1,523
+    # banked trades disagree with the engine's formula. The honest trade-level
+    # sweep is scripts/scaleout_r_test.py and the dashboard's Scale-out page.
+    print("    scale-out: deliberately excluded, see the comment", flush=True)
 
     cfg = config.load()
     intrabar = []
@@ -141,6 +150,14 @@ def main() -> None:
     factors.append(("Data quality (corrupt bars)", "before repair", 5.3, "after repair", 11.9,
                     "zero-price bars in Kite's 2015-18 intraday history; measured on "
                     "Breakout, same settings", [("before", 5.3), ("after", 11.9)]))
+
+    breadth_rows = d.get("breadth", {}).get("ema", [])
+    if breadth_rows:
+        pts = sorted(((f"{r['size']} stocks", r["median"]) for r in breadth_rows),
+                     key=lambda x: x[1])
+        factors.append(("Watchlist size (5 to 199 stocks)", pts[0][0], pts[0][1],
+                        pts[-1][0], pts[-1][1],
+                        "how many stocks you follow at all", pts))
 
     factors.sort(key=lambda f: abs(f[4] - f[2]), reverse=True)
 
