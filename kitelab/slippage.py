@@ -247,8 +247,16 @@ def apply_spread(trade: dict) -> dict:
 
 
 def capped_shares(symbol: str, stamp, price: float, shares: float) -> float:
-    """Trim an order down to what the stock can actually absorb in one session."""
-    if not ENABLED or MAX_PARTICIPATION is None or price <= 0:
+    """Trim an order down to what the stock can actually absorb in one session.
+
+    MAX_PARTICIPATION alone switches this on. It used to also require ENABLED, so
+    the size cap could not be tested without the spread and impact model -- which
+    is why "realistic fills" bundled a beneficial SIZING RULE with the costs and
+    beat perfect fills on Q/M/W. The cap is not a cost; it is a limit on how much
+    of a stock one order may be. Every previous configuration set both together,
+    so ungating changes nothing that was already being computed.
+    """
+    if MAX_PARTICIPATION is None or price <= 0:
         return shares
     adv, _ = _row(symbol, stamp)
     if not np.isfinite(adv) or adv <= 0:

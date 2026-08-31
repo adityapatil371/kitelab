@@ -553,13 +553,26 @@ function renderPortfolio() {
        ? "  —  NOTE: these ten were picked as the median basket for EMA · M/W/D, so they "
          + "flatter that stack and mean nothing for the others. Use the 75-basket card below."
        : "");
-  $("fillnote").textContent = state.fill === "1"
-    ? `You cross a spread on the way in and out, your own order moves the price, and no `
-      + `single order may exceed ${((DATA.participation || 0.01) * 100)}% of what the stock `
-      + `trades in a day. That last limit is part of this setting: without it the account `
-      + `buys more than a stock trades and the cost is meaningless. The spread itself is an `
-      + `estimate — Kite sells candles, not quotes.`
-    : `Every result before 2026-08-31. You get the price on the chart, instantly, at any `
+  // Two independent things used to hide behind one toggle. Say which is which.
+  const CAP_PCT = (DATA.participation || 0.01) * 100;
+  const FILL_NOTES = {
+    "0": null,   // falls through to the "every result before 2026-08-31" text below
+    "2": `TRADING COSTS ONLY. You cross a spread on the way in and out and your own order `
+       + `moves the price against you — but the account may still buy any quantity it can `
+       + `afford. This is the honest cost of dealing, on its own. The spread is an `
+       + `estimate — Kite sells candles, not quotes.`,
+    "3": `SIZE CAP ONLY, no costs at all. No single order may exceed ${CAP_PCT}% of what `
+       + `the stock trades in a day. This is NOT a cost — it is a position-sizing rule, `
+       + `and on its own it BEATS perfect fills, because it keeps the account out of `
+       + `positions many times larger than the stock's entire daily turnover. Compare `
+       + `this against Perfect fills to see how much of "realistic" is really sizing.`,
+    "1": `Both together: you cross a spread, your order moves the price, and no single `
+       + `order may exceed ${CAP_PCT}% of what the stock trades in a day. Because the cap `
+       + `HELPS and the costs HURT, this setting can score above Perfect fills — use the `
+       + `two middle settings to see which is doing what.`,
+  };
+  $("fillnote").textContent = FILL_NOTES[state.fill]
+    || `Every result before 2026-08-31. You get the price on the chart, instantly, at any `
       + `size. Convenient, and wrong — switch to realistic fills to see the difference.`;
 
   lineChart($("eqchart"), 760, 280, [
@@ -836,7 +849,7 @@ function renderScaleout() {
     return;
   }
   $("so-sub").textContent = `${DATA.universes[state.uni]} · 2% band · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`
-    + (state.fill === "1" ? "  NOTE: this card is PERFECT FILLS only — the Fills slicer does not reach it." : "");
+    + (state.fill === "0" ? "" : "  NOTE: this card is PERFECT FILLS only — the Fills slicer does not reach it.");
   const rows = block[state.uni];
   const maxNet = Math.max(...rows.map(r => Math.abs(r.net)), 1);
   $("so-table").innerHTML =

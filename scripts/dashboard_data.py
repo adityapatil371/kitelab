@@ -44,16 +44,29 @@ CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 OUT = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
 RISKS = [0.25, 0.5, 1.0, 2.0]
 
-# The fills dimension. "0" is every result this project produced before
-# 2026-08-31: you get the chart price, instantly, at any size. "1" is what
-# execution actually looks like -- you cross a spread, you move the price you
-# are trading against, and you cannot buy more of a stock than it trades.
+# The execution dimension, and it is TWO independent things, not one.
 #
-# The size limit is bundled in deliberately. Without it the model charges the
-# account a fortune for orders it could never have placed (up to 37x a stock's
-# ENTIRE daily turnover), which measures the simulator's sizing bug rather than
-# the cost of dealing. The page says so under the slicer.
-FILL_MODES = [("0", "Perfect fills"), ("1", "Realistic fills")]
+#   TRADING COSTS -- you cross a spread and you move the price you trade against.
+#                    A cost. It can only ever make the account worse.
+#   THE SIZE CAP  -- one order may not exceed 1% of what the stock trades that
+#                    day. NOT a cost: it is a position-sizing rule, and on its own
+#                    it BEATS perfect fills by about 1.9 CAGR points on Q/M/W,
+#                    because it keeps the account out of positions many times
+#                    larger than the stock's entire daily turnover (up to 37x).
+#
+# These were bundled into a single "Realistic fills" toggle, so realistic scored
+# HIGHER than perfect on Q/M/W (19.0 vs 18.1) and in 110 of 1,536 cell-pairs --
+# and the page read as though adding costs had improved the account. Now all four
+# combinations exist and the slicer can decompose it.
+#
+# "0" and "1" keep their exact former meanings and their exact former numbers, so
+# nothing already published moves; "2" and "3" are new.
+FILL_MODES = [("0", "Perfect fills"),
+              ("2", "Trading costs only"),
+              ("3", "Size cap only"),
+              ("1", "Realistic fills (costs + cap)")]
+FILL_SPEC = {"0": (False, False), "2": (True, False),
+             "3": (False, True), "1": (True, True)}       # key -> (costs, cap)
 REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnover
 CAPITALS = [50_000, 100_000, 250_000, 500_000]
 ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
@@ -316,17 +329,18 @@ def main() -> None:
                for key, trades in base.items()}
     slippage.ENABLED = False
     print("  spread applied to the cached signal lists", flush=True)
-    sets = {"0": base, "1": slipped}
+    # The spread is a COST, so it rides with the costs half of the key.
+    sets = {fkey: (slipped if costs else base) for fkey, (costs, _) in FILL_SPEC.items()}
 
-    def realistic(on: bool):
+    def execution(costs: bool, cap: bool):
         """Impact and the size limit live in portfolio.run, so they are globals."""
-        slippage.ENABLED = on
-        slippage.MAX_PARTICIPATION = REALISTIC_PARTICIPATION if on else None
+        slippage.ENABLED = costs
+        slippage.MAX_PARTICIPATION = REALISTIC_PARTICIPATION if cap else None
         slippage.reset()
 
     grid = {}
     for fkey, _flabel in FILL_MODES:
-        realistic(fkey == "1")
+        execution(*FILL_SPEC[fkey])
         for (skey, band), signals in sets[fkey].items():
             for ukey, (ulabel, members) in universes.items():
                 subset = (signals if members is None
@@ -337,7 +351,7 @@ def main() -> None:
                         grid[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
                             run_payload(r)
             print(f"  grid[{fkey}]: {skey} {tag(band)} done", flush=True)
-    realistic(False)
+    execution(False, False)
 
     tradestats = {}
     for fkey, _flabel in FILL_MODES:
@@ -542,7 +556,7 @@ def main() -> None:
     # across strategies/risks so comparisons are apples-to-apples.
     basket10 = {}
     for fkey, _flabel in FILL_MODES:
-        realistic(fkey == "1")
+        execution(*FILL_SPEC[fkey])
         for (skey, band), signals in sets[fkey].items():
             by_sym = {}
             for t in signals:
@@ -582,7 +596,7 @@ def main() -> None:
                     "median_dd": sorted(dds)[len(dds) // 2],
                 }
             print(f"  baskets[{fkey}]: {skey} {tag(band)} done", flush=True)
-    realistic(False)
+    execution(False, False)
 
     nifty = frames.daily("NIFTY 50")
     payload = {
