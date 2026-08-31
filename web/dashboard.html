@@ -497,7 +497,15 @@ function renderPortfolio() {
   $("k-trades").textContent = r.taken.toLocaleString("en-IN");
   $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
   $("eq-sub").textContent = joinParts([DATA.universes[state.uni], settingLabel(state.strat),
-    `${risk}% risk`, `start ${inr(cap)}`, fillLabel()]);
+    `${risk}% risk`, `start ${inr(cap)}`, fillLabel()])
+    // The 10-stock universe is ONE basket, picked as the median performer for the
+    // EMA M/W/D stack. It is not neutral: every other strategy is being judged on
+    // ten names chosen to suit a different rule. The card below draws 75 fresh
+    // baskets per strategy and is the honest read.
+    + (state.uni === "b10"
+       ? "  —  NOTE: these ten were picked as the median basket for EMA · M/W/D, so they "
+         + "flatter that stack and mean nothing for the others. Use the 75-basket card below."
+       : "");
   $("fillnote").textContent = state.fill === "1"
     ? `You cross a spread on the way in and out, your own order moves the price, and no `
       + `single order may exceed ${((DATA.participation || 0.01) * 100)}% of what the stock `
