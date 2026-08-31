@@ -203,6 +203,11 @@ SCALE_VARIANTS = [("Keep full position (baseline)", None),
                   ("Sell half at +1R", "half"),
                   ("Sell half at +1R, stop to breakeven", "half_be")]
 
+# Where to bank the half, as a multiple of R (the risk taken: entry minus stop).
+# 1.0 is the rule as taught and reuses the original cache names.
+SCALE_MULTIPLES = [0.5, 1.0, 1.5, 2.0, 3.0]
+SCALE_RULES = [("half", "Sell half"), ("half_be", "Sell half, stop to breakeven")]
+
 
 # --------------------------------------------------------------- main ----
 
@@ -313,6 +318,46 @@ def main() -> None:
                 rows.append({"variant": label, **trade_stats(subset)})
             scaleout[skey][ukey] = rows
         print(f"  scale-out: {skey} done", flush=True)
+
+    # ---- the scale-out page: every rule at every multiple of R ----------
+    # Trade level only, and it cannot be otherwise: portfolio.run prices a trade as
+    # shares x ONE exit price, but a scale-out has two, and the banked leg never
+    # reaches the trade record. Verified 2026-08-31 -- 1,522 of 1,523 banked trades
+    # disagree with the account engine's formula. So no CAGR appears on that page.
+    print("  scale-out R sweep:", flush=True)
+    r_lists = {}
+    for skey, builder in (("ema", lambda s, v, r: backtest.simulate(s, scale_out=v,
+                                                                    scale_r=r)),
+                          ("brk", lambda s, v, r: strategies.ath_breakout_trades(
+                              s, trailing_stops=True, scale_out=v, scale_r=r))):
+        for variant, _vlabel in SCALE_RULES:
+            for multiple in SCALE_MULTIPLES:
+                if multiple == 1.0:
+                    r_lists[(skey, variant, multiple)] = scale_lists[(skey, variant)]
+                    continue          # the 1R runs are already cached under old names
+                tag = f"{multiple:g}".replace(".", "p")
+                name = ("EMA" if skey == "ema" else "Breakout")
+                name += ("_half" if variant == "half" else "_halfbe") + f"_r{tag}_199"
+                r_lists[(skey, variant, multiple)] = cached_signals(
+                    name, lambda s, v=variant, r=multiple: builder(s, v, r))
+
+    scaleout_r = {}
+    for skey in ("ema", "brk"):
+        for ukey, (_, members) in universes.items():
+            def cut(trades):
+                return (trades if members is None
+                        else [t for t in trades if t["symbol"] in members])
+            rows = [{"rule": "Keep the whole position", "variant": None,
+                     "multiple": None, **trade_stats(cut(base[(skey, 0.02)]))}]
+            keep = rows[0]["net"] or 1
+            for variant, vlabel in SCALE_RULES:
+                for multiple in SCALE_MULTIPLES:
+                    stats = trade_stats(cut(r_lists[(skey, variant, multiple)]))
+                    stats.update(rule=vlabel, variant=variant, multiple=multiple,
+                                 vs_keep=round(100 * (stats["net"] - keep) / abs(keep), 1))
+                    rows.append(stats)
+            scaleout_r[f"{skey}|{ukey}"] = rows
+        print(f"    {skey} done", flush=True)
 
     print("  per-stock detail:", flush=True)
     by_symbol = {k: {} for k in STRATEGY_LABELS}
@@ -442,7 +487,9 @@ def main() -> None:
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),
-        "grid": grid, "tradestats": tradestats, "scaleout": scaleout, "stocks": stocks, "assets": assets,
+        "grid": grid, "tradestats": tradestats, "scaleout": scaleout,
+        "scaleout_r": scaleout_r, "scale_multiples": SCALE_MULTIPLES,
+        "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
     OUT.write_text(json.dumps(payload))

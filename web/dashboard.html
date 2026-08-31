@@ -126,6 +126,13 @@
         <input id="stock-search" type="search" placeholder="Search 199 stocks…" autocomplete="off">
         <div class="slist" id="sl-stock"></div></div>
     </div>
+    <div id="rail-scaleout" style="display:none">
+      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-so-strat"></div></div>
+      <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-so-uni"></div></div>
+      <p class="fillnote">R is the risk you took on that trade: entry minus the initial stop.
+        Buy at &#8377;100 with a &#8377;90 stop and R is &#8377;10, so 1R is &#8377;110.
+        Perfect fills — the Fills slicer does not reach this page.</p>
+    </div>
     <div id="rail-assets" style="display:none">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-asset-strat"></div></div>
       <div class="slicer"><span class="eyebrow">Instrument</span><div class="slist" id="sl-asset"></div></div>
@@ -190,7 +197,8 @@
         <h2>Scale-out: sell half when risk is covered (+1R)</h2>
         <div class="sub" id="so-sub">All 199 stocks, fixed capital per trade, net of charges, all history — measured per trade
           (a two-part exit cannot be priced by the one-account simulation). Verdict: banking half caps roughly half the profit
-          for a shallower worst losing run; moving the stop to breakeven as well was the worst of the three — it ejects winners into noise.</div>
+          for a shallower worst losing run; moving the stop to breakeven as well was the worst of the three — it ejects winners into noise.
+          The full sweep from 0.5R to 3R, for both rules, is on the <b>Scale-out</b> page.</div>
         <div class="table-scroll"><table id="so-table"></table></div>
       </div>
 
@@ -199,6 +207,24 @@
         <div class="sub" id="bk-sub"></div>
         <div class="tiles" style="margin:0.3rem 0 0.6rem; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));" id="bk-tiles"></div>
         <svg id="bk-hist" viewBox="0 0 1000 150" role="img" aria-label="Basket CAGR distribution"></svg>
+      </div>
+    </div>
+
+    <div class="canvas page" id="page-scaleout">
+      <div class="card span12">
+        <h2>Where you bank the half</h2>
+        <div class="sub" id="sor-sub"></div>
+        <div class="table-scroll"><table id="sor-table"></table></div>
+      </div>
+      <div class="card span12">
+        <h2>What it costs, by trigger</h2>
+        <div class="sub">Total net against keeping the whole position, which is the zero line.
+          Every bar below it means the rule took money off you.</div>
+        <svg id="sor-bars" viewBox="0 0 360 240" role="img" aria-label="Scale-out cost by R multiple"></svg>
+      </div>
+      <div class="card span12">
+        <h2>Why it cannot win</h2>
+        <div class="sub" id="sor-why"></div>
       </div>
     </div>
 
@@ -282,10 +308,11 @@ const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 let DATA = null;
 const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
                 fill: "0", log: false,
-                tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema" };
+                tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
+                soStrat: "ema", soUni: "all" };
 
 const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
-               ["assets", "Futures & assets"]];
+               ["scaleout", "Scale-out"], ["assets", "Futures & assets"]];
 
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { DATA = d; init(); })
@@ -313,6 +340,10 @@ function init() {
          () => String(state.capIdx), k => { state.capIdx = +k; renderPortfolio(); });
   slicer("sl-stock-strat", Object.entries(stratNames), () => state.stockStrat,
          k => { state.stockStrat = k; renderStock(); });
+  slicer("sl-so-strat", [["ema", stratNames.ema], ["brk", stratNames.brk]],
+         () => state.soStrat, k => { state.soStrat = k; renderScaleoutPage(); });
+  slicer("sl-so-uni", Object.entries(DATA.universes), () => state.soUni,
+         k => { state.soUni = k; renderScaleoutPage(); });
   slicer("sl-asset-strat", Object.entries(stratNames), () => state.assetStrat,
          k => { state.assetStrat = k; renderAsset(); });
   slicer("sl-asset", Object.keys(DATA.assets).map(k => [k, k]), () => state.asset,
@@ -337,9 +368,11 @@ function setPage(key) {
   for (const [k] of PAGES) document.getElementById("page-" + k).classList.toggle("on", k === key);
   $("rail-portfolio").style.display = key === "portfolio" ? "" : "none";
   $("rail-stocks").style.display = key === "stocks" ? "" : "none";
+  $("rail-scaleout").style.display = key === "scaleout" ? "" : "none";
   $("rail-assets").style.display = key === "assets" ? "" : "none";
   if (key === "portfolio") renderPortfolio();
   if (key === "stocks") renderStock();
+  if (key === "scaleout") renderScaleoutPage();
   if (key === "assets") renderAsset();
 }
 
@@ -509,6 +542,61 @@ function metricsTable(el, rows, firstHeader) {
         `<td class="${st.expectancy >= 0 ? "pos" : "neg"}">${st.expectancy.toLocaleString("en-IN")}</td>` +
         `<td>${cap}</td><td>${st.rr ?? "—"}</td></tr>`;
     }).join("") + "</tbody>";
+}
+
+function renderScaleoutPage() {
+  const rows = DATA.scaleout_r && DATA.scaleout_r[`${state.soStrat}|${state.soUni}`];
+  if (!rows) {
+    $("sor-table").innerHTML = "";
+    $("sor-sub").textContent = "No scale-out sweep in this data file — rebuild with python -m scripts.dashboard_data.";
+    return;
+  }
+  const keep = rows[0];
+  $("sor-sub").textContent =
+    `${DATA.strategies[state.soStrat]} · ${DATA.universes[state.soUni]} · 2% band · every signal ` +
+    `separately funded at a fixed ₹1,00,000, net of charges, all history. There is no CAGR on this ` +
+    `page on purpose: the one-account simulator prices a trade as shares × one exit price, and a ` +
+    `scale-out has two, so an account figure for these would be wrong.`;
+
+  const label = r => r.multiple === null ? r.rule : `${r.rule} at ${r.multiple}R`;
+  $("sor-table").innerHTML =
+    `<thead><tr><th>Rule</th><th>Trades</th><th>Banked</th><th>Win rate</th>` +
+    `<th>Avg win ₹</th><th>Avg loss ₹</th><th>Avg / trade ₹</th><th>PF</th>` +
+    `<th>Worst losing run</th><th>Total net ₹</th><th>vs keeping all</th></tr></thead><tbody>` +
+    rows.map((r, i) => {
+      const vs = r.vs_keep === undefined ? "—"
+        : `<span class="${r.vs_keep >= 0 ? "pos" : "neg"}">${r.vs_keep > 0 ? "+" : ""}${r.vs_keep}%</span>`;
+      return `<tr${i === 0 ? ' style="font-weight:600"' : ""}>` +
+        `<td>${label(r)}</td><td>${r.trades.toLocaleString("en-IN")}</td>` +
+        `<td>${r.banked.toLocaleString("en-IN")}</td><td>${(r.win_rate * 100).toFixed(1)}%</td>` +
+        `<td class="pos">${r.avg_win.toLocaleString("en-IN")}</td>` +
+        `<td class="neg">${Math.abs(r.avg_loss).toLocaleString("en-IN")}</td>` +
+        `<td>${r.avg.toLocaleString("en-IN")}</td><td>${r.pf ?? "—"}</td>` +
+        `<td class="neg">${inr(r.worst_run)}</td>` +
+        `<td class="${r.net >= 0 ? "pos" : "neg"}">${r.net.toLocaleString("en-IN")}</td>` +
+        `<td>${vs}</td></tr>`;
+    }).join("") + "</tbody>";
+
+  barChart($("sor-bars"), rows.slice(1).map(r => ({
+    label: `${r.variant === "half" ? "half" : "half+BE"} ${r.multiple}R`,
+    value: r.vs_keep, on: r.multiple === 1
+  })), "var(--dd)", v => `${v}%`, 240);
+
+  // The one comparison that explains the whole page.
+  const rs = v => (v < 0 ? "−₹" : "₹") + Math.abs(v).toLocaleString("en-IN");
+  const worst = rows.slice(1).reduce((a, b) => (a.vs_keep < b.vs_keep ? a : b));
+  $("sor-why").innerHTML =
+    `Compare the two loss columns above and then the two win columns. Keeping the whole position ` +
+    `averages <b>${rs(keep.avg_win)}</b> on a win and ` +
+    `<b>${rs(keep.avg_loss)}</b> on a loss. Under the costliest setting here ` +
+    `(<i>${worst.rule.toLowerCase()} at ${worst.multiple}R</i>) the average loss is ` +
+    `<b>${rs(worst.avg_loss)}</b> — essentially unchanged — while the average win falls to ` +
+    `<b>${rs(worst.avg_win)}</b>. That is the whole story: the rule can only fire on a ` +
+    `trade that is already going your way, so it trims winners and never touches losers. What you buy ` +
+    `is a higher win rate — ${(keep.win_rate * 100).toFixed(1)}% becomes ` +
+    `${(worst.win_rate * 100).toFixed(1)}% — which is comfort, not money. Pushing the trigger further out ` +
+    `costs less only because the rule fires less often: at 3R it banks on a small minority of trades, so ` +
+    `it converges on keeping everything by quietly switching itself off.`;
 }
 
 function renderTradeMetrics() {
