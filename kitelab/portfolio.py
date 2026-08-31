@@ -4,7 +4,14 @@ Every result so far added up trades as if each had its own funding. A real accou
 one pot of money: if it is tied up in three positions, the fourth signal is missed, and
 which signals you happen to catch changes everything.
 
-    * risk is 1% of CURRENT equity, so the account compounds
+    * risk is 1% of equity valued at COST: cash plus every open position held at
+      the price it was bought at, never at today's mark. The account still
+      compounds -- realised profit raises the base -- but an open loser does not
+      shrink the next position until it is closed, so a trade opened inside a
+      drawdown risks more than 1% of what the account is really worth that day.
+      Deliberate: it is the size a trader working from a statement rather than a
+      live screen would take, and it keeps sizing independent of the mark. See
+      run(), where `equity` sums p["entry_price"], not the day's close.
     * a position is capped by cash on hand
     * signals arriving with no free cash are skipped, not queued
     * one open position per stock

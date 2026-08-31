@@ -334,7 +334,8 @@ def main() -> None:
         "Everything before this sheet added up trades as if each had its own money. A "
         "real account has ONE pot: when cash is tied up, new signals are skipped. This "
         "simulates that -- one account, signals taken in order, skip what you cannot "
-        "afford, risk 1% of current equity per trade.",
+        "afford, risk 1% of equity per trade -- equity being cash plus open positions "
+        "valued at what they COST, not at today's price.",
         "HOW TO READ IT: 'CAGR %' is the honest yearly return; 'Max DD %' is the worst "
         "fall you would have sat through. 'Skipped (too small)' counts signals where 1% "
         "risk could not buy even one share -- the small-account trap.",
