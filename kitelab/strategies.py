@@ -119,6 +119,15 @@ def _build_trade(symbol, bars, level_price, level_kind, signal_pos,
         exit_pos, exit_price, reason = resolved
         final_stop = stop
 
+    # A position still open when the data ends is not a closed trade. It used to be
+    # given a mark-to-market exit and counted like any other, so 14 of the 2,031
+    # breakout trades were positions, not results -- inflating the trade count and
+    # feeding the win rate, profit factor and expectancy with outcomes that have not
+    # happened. backtest.simulate and darvas.simulate both stop instead; this is the
+    # same rule, applied to the strategies that share this constructor.
+    if reason == trailing.OPEN_MARKER:
+        return None
+
     entry_ts, exit_ts = bars.iloc[entry_pos]["ts"], bars.iloc[exit_pos]["ts"]
     # Sized on the quoted price above, filled at the price the book actually gives.
     # The banked half is priced at the exit timestamp rather than its own bar --

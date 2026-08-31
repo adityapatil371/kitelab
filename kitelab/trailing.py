@@ -25,6 +25,11 @@ from . import levels
 
 PIVOT_SPAN = 5
 
+# What resolve() returns when a position never closes before the data ends. It is
+# NOT a closed trade: strategies._build_trade drops it, matching backtest.simulate
+# and darvas.simulate, which both stop rather than invent an exit.
+OPEN_MARKER = "open (marked to market)"
+
 
 def intraday_trail(bars: pd.DataFrame, pivots: list[int], span: int = PIVOT_SPAN):
     """Trailing rule reading swing lows off the same bars the trade runs on."""
@@ -121,7 +126,7 @@ def resolve(bars: pd.DataFrame, entry_pos: int, initial_stop: float, step,
             stop = step(position, stop, float(low[position]))
 
     last = len(bars) - 1
-    return (last, float(close[last]), "open (marked to market)", stop,
+    return (last, float(close[last]), OPEN_MARKER, stop,
             banked_fraction, banked_price)
 
 
