@@ -119,6 +119,8 @@
       <div class="slicer"><span class="eyebrow">Fills</span><div class="slist" id="sl-fill"></div>
         <p class="fillnote" id="fillnote"></p></div>
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
+      <div class="slicer" id="wrap-tf"><span class="eyebrow">Timeframe stack</span><div class="slist" id="sl-tf"></div>
+        <p class="fillnote">Which three timeframes must agree before the EMA stack lets you in.</p></div>
       <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
       <div class="slicer" id="wrap-band"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
       <div class="slicer" id="wrap-dvwin" style="display:none"><span class="eyebrow">Darvas windows</span><div class="slist" id="sl-dvwin"></div>
@@ -146,10 +148,10 @@
       <div class="slicer"><span class="eyebrow">Instrument</span><div class="slist" id="sl-asset"></div></div>
     </div>
 
-    <div class="note">Band applies to the three EMA stacks; ATH Breakout has none, so it pins to 2%.
-      Darvas has no band either &mdash; it has the two window lengths instead, which swap into
-      the same slot. Individual stocks and assets show each strategy at one setting (2% band,
-      Darvas 20/10); the scale-out table is at the 2% band.
+    <div class="note">Each strategy shows only the controls it has: the EMA stack has a
+      timeframe trio and a band, Darvas has its two window lengths, ATH Breakout has neither
+      and is always read at the 2% band internally. Individual stocks and assets show every
+      variant at one fixed setting; the scale-out table is at the 2% band.
       Every number is a real precomputed backtest — nothing is simulated in the browser.
       Survivorship bias applies. Rebuild: <code>python -m scripts.dashboard_data</code></div>
   </aside>
@@ -322,7 +324,11 @@ const inr = v => (v < 0 ? "−₹" : "₹") + Math.round(Math.abs(v)).toLocaleSt
 const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 
 let DATA = null;
-const state = { page: "portfolio", strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
+// strat is the GRID key and stays that way -- everything downstream reads it. The
+// rail no longer sets it directly: you pick a family (EMA / Breakout / Darvas) and,
+// for the EMA family only, a timeframe stack. Those two resolve into strat.
+const state = { page: "portfolio", family: "ema", emaTf: "ema",
+                strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
                 soStrat: "ema", soUni: "all", dvIdx: 1 };
@@ -346,7 +352,12 @@ function init() {
   const stratNames = DATA.strategies;
   slicer("sl-fill", DATA.fills || [["0", "Perfect fills"]], () => state.fill,
          k => { state.fill = k; renderPortfolio(); });
-  slicer("sl-strat", Object.entries(stratNames), () => state.strat, k => { state.strat = k; renderPortfolio(); });
+  const EMA_STACKS = ["ema", "qmw", "wdh"];
+  const resolve = () => { state.strat = state.family === "ema" ? state.emaTf : state.family; };
+  slicer("sl-strat", [["ema", "EMA stack"], ["brk", stratNames.brk], ["dv", stratNames.dv]],
+         () => state.family, k => { state.family = k; resolve(); renderPortfolio(); });
+  slicer("sl-tf", EMA_STACKS.map(k => [k, stratNames[k].replace("EMA · ", "")]),
+         () => state.emaTf, k => { state.emaTf = k; resolve(); renderPortfolio(); });
   slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
   slicer("sl-band", (DATA.bands || [0.02]).map((b, i) => [String(i), (b * 100) + "% band"]),
          () => String(state.bandIdx), k => { state.bandIdx = +k; renderPortfolio(); });
@@ -442,9 +453,12 @@ const bandOf = (strat, bandIdx) =>
   : (DATA.bands || [0.02])[bandIdx];
 // The band slot means different things per strategy, so describe it in one place
 // rather than assuming it is a number and printing "NaN% band".
+// Empty for the breakout: it has no band and no windows, so naming one is a lie.
 const settingLabel = strat =>
   strat === "dv" ? `in ${dvWindow().split("-")[0]} / out ${dvWindow().split("-")[1]}`
+  : strat === "brk" ? ""
   : `${bandOf(strat, state.bandIdx) * 100}% band`;
+const joinParts = parts => parts.filter(Boolean).join(" · ");
 const keyWith = (strat, bandVal, uni, riskIdx, capIdx) =>
   `${strat}|${bandVal}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}|${state.fill}`;
 const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
@@ -455,9 +469,13 @@ const runFor = (riskIdx, capIdx) =>
   DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
 
 function renderPortfolio() {
-  for (const id of ["sl-fill", "sl-strat", "sl-uni", "sl-band", "sl-dvwin", "sl-risk", "sl-cap"]) $(id)._sync();
-  $("wrap-band").style.display = state.strat === "dv" ? "none" : "";
-  $("wrap-dvwin").style.display = state.strat === "dv" ? "" : "none";
+  for (const id of ["sl-fill", "sl-strat", "sl-tf", "sl-uni", "sl-band", "sl-dvwin",
+                    "sl-risk", "sl-cap"]) $(id)._sync();
+  // Each strategy shows only what it actually has: the EMA stack has a timeframe
+  // trio and a band, Darvas has its two windows, the breakout has neither.
+  $("wrap-tf").style.display = state.family === "ema" ? "" : "none";
+  $("wrap-band").style.display = state.family === "ema" ? "" : "none";
+  $("wrap-dvwin").style.display = state.family === "dv" ? "" : "none";
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
   const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
@@ -478,7 +496,8 @@ function renderPortfolio() {
   $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
   $("k-trades").textContent = r.taken.toLocaleString("en-IN");
   $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
-  $("eq-sub").textContent = `${DATA.universes[state.uni]} · ${settingLabel(state.strat)} · ${risk}% risk · start ${inr(cap)} · ${fillLabel()}`;
+  $("eq-sub").textContent = joinParts([DATA.universes[state.uni], settingLabel(state.strat),
+    `${risk}% risk`, `start ${inr(cap)}`, fillLabel()]);
   $("fillnote").textContent = state.fill === "1"
     ? `You cross a spread on the way in and out, your own order moves the price, and no `
       + `single order may exceed ${((DATA.participation || 0.01) * 100)}% of what the stock `
@@ -506,12 +525,17 @@ function renderPortfolio() {
     on: k === state.strat
   })), "var(--equity)", v => v.toFixed(1) + "%");
   const isDv = state.strat === "dv";
+  // The breakout has no band and no windows, so the chart has nothing to sweep.
+  // Showing it would draw five bars against keys that do not exist.
+  const sweepable = state.family !== "brk";
+  $("bandbars-title").style.display = sweepable ? "" : "none";
+  $("bandbars").style.display = sweepable ? "" : "none";
   const bandOpts = isDv ? (DATA.darvas_windows || ["20-10"]) : (DATA.bands || [0.02]);
   $("bandbars-title").textContent = isDv ? "CAGR by window pair" : "CAGR by band";
-  barChart($("bandbars"), bandOpts.map((b, i) => ({
+  if (sweepable) barChart($("bandbars"), bandOpts.map((b, i) => ({
     label: isDv ? String(b) : (b * 100) + "%",
     value: (DATA.grid[keyWith(state.strat, b, state.uni, state.riskIdx, state.capIdx)] || {}).cagr ?? 0,
-    on: isDv ? i === state.dvIdx : (i === state.bandIdx || state.strat === "brk")
+    on: isDv ? i === state.dvIdx : i === state.bandIdx
   })), "var(--bench)", v => v.toFixed(1) + "%", 160);
   renderEpisodes(r);
   renderTradeMetrics();
@@ -660,10 +684,9 @@ function renderScaleoutPage() {
 function renderTradeMetrics() {
   if (!DATA.tradestats) return;
   const band = bandOf(state.strat, state.bandIdx);
-  $("tm-sub").textContent =
-    `${DATA.strategies[state.strat]} · ${settingLabel(state.strat)} · every trade the rule produced ` +
-    `(fixed ₹1,00,000 per trade, net of charges) — not the one-account view above, so the ` +
-    `universes are directly comparable.`;
+  $("tm-sub").textContent = joinParts([DATA.strategies[state.strat], settingLabel(state.strat)])
+    + ` · every trade the rule produced (fixed ₹1,00,000 per trade, net of charges) — not the `
+    + `one-account view above, so the universes are directly comparable.`;
   const rows = Object.entries(DATA.universes).map(([u, label]) =>
     [label + (u === state.uni ? "  ←" : ""),
      DATA.tradestats[`${state.strat}|${band}|${u}|${state.fill}`]]);
