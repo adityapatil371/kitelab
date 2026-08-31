@@ -158,7 +158,8 @@ GLOSSARY = [
      "up before that.", "Smaller is better. Above 40% is very hard to live through."),
     ("CAGR", "Compound annual growth rate -- the steady yearly % that would produce "
      "the same final result. The honest way to state a multi-year return.",
-     "Compare with ~7% from a fixed deposit and ~12% from buy-and-hold here."),
+     "Compare with ~7% from a fixed deposit and ~{bh_median:.0f}% from buy-and-hold "
+     "here."),
     ("In-sample", "The 49 stocks we TUNED the settings on. Results there are like "
      "scoring your own practice exam -- not proof of anything.", "-"),
     ("Out-of-sample", "150 random stocks the settings had never seen, with nothing "
@@ -294,7 +295,7 @@ def main() -> None:
     ])
     sweeps = [
         ("the 49 tuning stocks", in_sample, [
-            "The band cut fee bills by more than 80% by removing pointless churn. 2% was "
+            "The band cut fee bills by {fee_cut:.0f}% by removing pointless churn. 2% was "
             "picked as the balance between profit-per-trade and total profit. Honesty "
             "note: because 2% was CHOSEN by looking at THIS table, these 49 stocks "
             "stopped being evidence."]),
@@ -321,6 +322,16 @@ def main() -> None:
                          st.median(t["bars_held"] for t in trades) if trades else 0,
                          s["gross_profit"], s["charges"], s["net_profit"],
                          s["expectancy"], s["profit_factor"]])
+        # The "fee bills fell by N%" sentence below is read out of the rows just built
+        # (charges at band 0.0 vs the chosen 2.0%), not typed in. It read "more than
+        # 80%" for a long time with nothing to say when it was measured.
+        charges_by_band = {r[0]: r[4] for r in rows}
+        fee_cut = (100 * (1 - charges_by_band["2.0%"] / charges_by_band["0.0%"])
+                   if charges_by_band.get("0.0%") else 0.0)
+        meaning = [line.format(fee_cut=fee_cut) if "{fee_cut" in line else line
+                   for line in meaning]
+        if "49 tuning" in sweep_label:
+            in_sample_fee_cut = fee_cut
         row = write_table(sheet, row, f"EMA with different band widths (on {sweep_label})",
                           ["Band", "Trades", "Median Days Held", "Gross Profit", "Charges",
                            "Net Profit", "Avg Profit / Trade", "Profit Factor"],
@@ -567,14 +578,21 @@ def main() -> None:
         "minority to be large winners -- that is the design, not a flaw. A strategy row "
         "with very few trades means little either way.",
     ])
+    # Collected here so the Glossary and the findings list can quote the real
+    # benchmark instead of a frozen "~12%". Median, not mean: a handful of 40%+
+    # compounders would drag a mean away from the typical stock.
+    bh_values: list[float] = []
     by_symbol = {name: {} for name in signals}
     for name, trades in signals.items():
         for t in trades:
             by_symbol[name].setdefault(t["symbol"], []).append(t)
     rows = []
     for symbol in everything:
+        bh = buy_hold_cagr(symbol)
+        if bh is not None:
+            bh_values.append(bh)
         entry = [symbol, "tuning (in-sample)" if symbol in in_set else "real exam (out)",
-                 turnover(symbol), buy_hold_cagr(symbol)]
+                 turnover(symbol), bh]
         for name in ("Breakout", "EMA"):
             mine = by_symbol[name].get(symbol, [])
             s = report.stats(symbol, mine) if mine else {}
@@ -588,6 +606,9 @@ def main() -> None:
                 ["@", "@", "#,##0", "0.0", "0", "#,##0", "0.00", "0", "#,##0", "0.00"])
     sheet.freeze_panes = f"A{row + 2}"
 
+    bh_count = len(bh_values)
+    bh_median = st.median(bh_values) if bh_values else 0.0
+
     # ---- Glossary --------------------------------------------------------
     sheet = book.create_sheet("Glossary", 1)
     row = explain(sheet, 1, "EVERY TERM USED IN THIS FILE, IN PLAIN WORDS",
@@ -599,7 +620,11 @@ def main() -> None:
         head.font = Font(bold=True)
         head.fill = HEADER_FILL
         sheet.column_dimensions[get_column_letter(column)].width = width
+    # The glossary's CAGR entry quotes the buy-and-hold benchmark. It used to be a
+    # frozen "~12%" typed into a module constant; it is now filled from the median
+    # of the same buy_hold_cagr() values the Per Stock sheet prints.
     for offset, (term, meaning, good) in enumerate(GLOSSARY):
+        good = good.format(bh_median=bh_median) if "{bh_median" in good else good
         r = row + 1 + offset
         sheet.cell(row=r, column=1, value=term).font = Font(bold=True)
         cell = sheet.cell(row=r, column=2, value=meaning)
@@ -654,9 +679,10 @@ def main() -> None:
         ("3. THE TIGHT-STOP FEE TRAP. Fees are charged on the SIZE of your position, "
          "but you choose risk by your STOP distance. A tight stop forces a huge position "
          "-- so 'safer' tight stops quietly cost 3-4x more in fees for the same risk.", False),
-        ("4. WHIPSAW. The EMA rule was re-buying the same stock within days of selling "
-         "it, over and over, paying fees each time. A 2% dead zone between the buy line "
-         "and sell line cut the total fee bill by more than 80%. (Band Sweep)", False),
+        (f"4. WHIPSAW. The EMA rule was re-buying the same stock within days of selling "
+         f"it, over and over, paying fees each time. A 2% dead zone between the buy line "
+         f"and sell line cut the total fee bill by {in_sample_fee_cut:.0f}%. "
+         "(Band Sweep)", False),
         ("5. THE OVERFITTING TEST. Because we tuned that 2% on 49 stocks, we froze every "
          "setting and re-ran on 150 random stocks the rules had never seen. Both "
          f"strategies held: Breakout {pf_out.get('Breakout', 0):.2f}, EMA "
@@ -669,8 +695,9 @@ def main() -> None:
          "it can only afford the worst trades, and fixed fees eat it alive. Raising "
          "risk % kills it faster. The floor is ~Rs1,00,000; full strength ~Rs2,50,000; "
          "beyond that more money adds nothing. (Portfolio Simulation)", False),
-        ("8. THE BENCHMARK NOBODY BEATS EASILY. Simply buying and holding these same "
-         "stocks returned ~12% a year over the period. The strategies earned less with "
+        (f"8. THE BENCHMARK NOBODY BEATS EASILY. Simply buying and holding these same "
+         f"stocks returned ~{bh_median:.0f}% a year over the period (median of the "
+         f"{bh_count} stocks with enough history). The strategies earned less with "
          "more effort -- their real value shows up only in crashes.", False),
         ("9. CRASH PROTECTION IS REAL BUT SHAPE-DEPENDENT. COVID 2020: buy-and-hold "
          "fell 40%, the strategies were flat to positive -- clear win. 2008: the EMA "

@@ -210,23 +210,50 @@ def main() -> None:
     ])
     row = explain(sheet, row, "PREDICTIONS -- written before the numbers were computed",
                   PREDICTIONS)
+    # Every number in verdict 1 is read out of the table this same run just built.
+    # It used to be typed in: "1%: 12.2% / -59.9%" sat two sheets away from a live
+    # table printing 12.6% / -56.8%, undated, with nothing to say it had gone stale.
+    def cell(label, uni, risk_pct):
+        """(CAGR, max DD) from stock_rows -- the numbers on the Stock Portfolios sheet."""
+        for r in stock_rows[label]:
+            if r[0] == uni and abs(r[1] - risk_pct) < 1e-9:
+                return r[2], r[3]
+        raise KeyError(f"no row for {label} / {uni} / {risk_pct}%")
+
+    ema_lo, ema_hi = cell("EMA, 2006-2026", "all 199", 0.25), cell("EMA, 2006-2026", "all 199", 1.0)
+    hold_lo, hold_hi = cell("EMA, 2006-2026", "150 holdout", 0.25), cell("EMA, 2006-2026", "150 holdout", 1.0)
+    brk_lo, brk_hi = cell("Breakout, 2015-2026", "all 199", 0.25), cell("Breakout, 2015-2026", "all 199", 1.0)
+    # "drawdowns run X to Y at 1% risk" is about the EMA accounts, across universes.
+    # Breakout belongs to the sentence above it and its much shallower dip (~-15%)
+    # would silently widen this range into meaninglessness if it were swept in.
+    ema_1pct = [r for label, rows in stock_rows.items() if label.startswith("EMA")
+                for r in rows if abs(r[1] - 1.0) < 1e-9]
+    dd_shallow, dd_deep = max(r[3] for r in ema_1pct), min(r[3] for r in ema_1pct)
+    uw_min, uw_max = min(r[5] for r in ema_1pct), max(r[5] for r in ema_1pct)
+    ema_holds = ema_lo[0] > ema_hi[0] and ema_lo[1] > ema_hi[1]
+    brk_holds = brk_lo[0] > brk_hi[0]
     row = explain(sheet, row, "VERDICTS", [
-        "1. PARTLY CORRECT. For EMA the direction survives everywhere it matters: "
-        "full history all-199 (0.25% risk: 24.6% CAGR / -31.6% DD vs 1%: 12.2% / "
-        "-59.9%) and on the 150 holdout stocks no parameter ever saw (27.3% / -32.6% "
-        "vs 14.0% / -66.3%). It FAILS for Breakout: with only ~2,000 signals in 11 "
-        "years, 0.25% risk leaves the account under-deployed (2.9% CAGR vs 5.3% at "
-        "1%). The honest general rule: cutting risk per trade ALWAYS shrinks the "
-        "drawdown; it only also raises returns when signals are plentiful enough to "
-        "keep the freed-up cash working (EMA has ~10,000, Breakout ~2,000).",
+        f"1. {'PARTLY CORRECT' if ema_holds and not brk_holds else 'MIXED'}. For EMA "
+        f"the direction {'survives' if ema_holds else 'does NOT survive'} everywhere it "
+        f"matters: full history all-199 (0.25% risk: {ema_lo[0]:.1f}% CAGR / "
+        f"{ema_lo[1]:.1f}% DD vs 1%: {ema_hi[0]:.1f}% / {ema_hi[1]:.1f}%) and on the 150 "
+        f"holdout stocks no parameter ever saw ({hold_lo[0]:.1f}% / {hold_lo[1]:.1f}% vs "
+        f"{hold_hi[0]:.1f}% / {hold_hi[1]:.1f}%). It "
+        f"{'FAILS' if not brk_holds else 'ALSO HOLDS'} for Breakout: with only "
+        f"~{len(brk_all):,} signals in 11 years, 0.25% risk leaves the account "
+        f"under-deployed ({brk_lo[0]:.1f}% CAGR vs {brk_hi[0]:.1f}% at 1%). The honest "
+        "general rule: cutting risk per trade ALWAYS shrinks the drawdown; it only also "
+        "raises returns when signals are plentiful enough to keep the freed-up cash "
+        f"working (EMA has ~{len(ema_all):,}, Breakout ~{len(brk_all):,}).",
         "2. CORRECT: every strategy account's true drawdown is deeper than the old "
         "figure, and every one is far shallower than buy-and-hold on the same asset "
         "(see Assets).",
         "3. CORRECT: crude oil buy-and-hold bottomed at ~-100% in April 2020.",
-        "THE SUSTAINABILITY QUESTION: at 1% risk, drawdowns run -56% to -66% with 5-6 "
-        "YEARS underwater -- the 'unsustainable' verdict stands on the pain, though "
-        "under the class's close-only exit convention the returns at 1% are no longer "
-        "FD-level (EMA ~12% CAGR). The refinement the data adds: risk per trade, not "
+        f"THE SUSTAINABILITY QUESTION: at 1% risk, EMA drawdowns run {dd_shallow:.0f}% "
+        f"to {dd_deep:.0f}% with {uw_min:.0f}-{uw_max:.0f} YEARS underwater -- the "
+        "'unsustainable' verdict stands on the pain, though under the class's close-only "
+        "exit convention the returns at 1% are no longer FD-level "
+        f"(EMA ~{ema_hi[0]:.1f}% CAGR). The refinement the data adds: risk per trade, not "
         "the strategy alone, sets the pain -- at 0.25% risk the same signals produce "
         "index-beating returns with index-like drawdowns.",
     ])

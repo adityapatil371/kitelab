@@ -136,10 +136,18 @@ def main() -> None:
                     "whether a wick can stop you out", [("intrabar", ib), ("close-only", ref)]))
     print(f"    convention: intrabar {ib:.1f}% vs close-only {ref:.1f}%", flush=True)
 
-    # data quality: measured on Breakout, before and after the corrupt-bar repair
-    factors.append(("Data quality (corrupt bars)", "before repair", 5.3, "after repair", 11.9,
+    # The ONE row in this ranking that is not recomputed each run, and cannot be:
+    # it measures the effect of a data repair that has already happened, so the
+    # "before" state no longer exists in data/. Kept because the lever is real and
+    # belongs in the comparison, labelled so it never reads as a live measurement.
+    DQ_BEFORE, DQ_AFTER, DQ_MEASURED = 5.3, 11.9, "2026-08-26"
+    factors.append((f"Data quality (corrupt bars, measured {DQ_MEASURED}, frozen)",
+                    "before repair", DQ_BEFORE, "after repair", DQ_AFTER,
                     "zero-price bars in Kite's 2015-18 intraday history; measured on "
-                    "Breakout, same settings", [("before", 5.3), ("after", 11.9)]))
+                    f"Breakout, same settings. HISTORICAL, {DQ_MEASURED}: the repair has "
+                    "since been applied, so the 'before' number cannot be reproduced from "
+                    "today's data. Every other row in this table is recomputed each run",
+                    [("before", DQ_BEFORE), ("after", DQ_AFTER)]))
 
     breadth_rows = d.get("breadth", {}).get("ema", [])
     if breadth_rows:

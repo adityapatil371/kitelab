@@ -2,10 +2,13 @@
 
     python -m scripts.darvas_breadth
 
-Darvas earns 18.5% across all 199 stocks and 5.7% on a ten-stock basket. That is
-not a stock-picking effect, it is a capital-deployment one: the stop sits about
-13% below entry, so at 1% risk each position is roughly an eighth of the account
-and the rule needs a dozen or so running at once to have its money working.
+Darvas earned 18.5% across all 199 stocks and 5.7% on a ten-stock basket, with a
+stop about 13% below entry (measured 2026-08-31 at 1% risk, Rs2,50,000; these four
+figures are a snapshot of that run, not recomputed on import -- the table this
+script prints is the live version and wins any disagreement). That is not a
+stock-picking effect, it is a capital-deployment one: the stop sits far enough
+below entry that at 1% risk each position is roughly an eighth of the account, and
+the rule needs a dozen or so running at once to have its money working.
 
 So the question "how many stocks" is really "how many does it take before the
 account is fully invested". This draws random baskets at a range of sizes and
@@ -13,8 +16,9 @@ reports both halves: what you earn, and whether the money was working. The
 telling column is signals turned away for lack of cash -- while that is zero the
 account is idling, and more stocks will still help.
 
-The EMA stack runs alongside as a control: its stop is 3.9% below entry, so each
-position is a quarter of the account and it should saturate far sooner.
+The EMA stack runs alongside as a control: its stop is much closer to entry (3.9%
+in that same 2026-08-31 run), so each position is a quarter of the account and it
+should saturate far sooner.
 """
 from __future__ import annotations
 

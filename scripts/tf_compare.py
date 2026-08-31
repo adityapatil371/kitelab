@@ -219,7 +219,27 @@ SUMMARY_COLS = ["Trades", "Wins", "Win %", "Avg Win", "Avg Loss",
                 "Median Hold (days)", "Median Stop %"]
 
 
+def stub_bar_note(results: dict | None) -> str:
+    """How many W/D/H entries land on the 15-minute stub bar, and what they earned.
+
+    Counted from the run that is being written, not typed in: the frozen version
+    of this sentence ("23 of the 428 hourly entries") had drifted to 20 of 379.
+    """
+    if not results or "WDH" not in results:
+        return "The count is only available when the hourly variant is in the run."
+    hourly = [t for sym in ASSIGNED for t in results["WDH"][sym]]
+    stub = [t for t in hourly if pd.Timestamp(t["entry_ts"]).strftime("%H:%M") == "15:15"]
+    if not stub:
+        return f"None of the {len(hourly)} hourly entries happen on stub bars."
+    earned = sum(t["gross_profit"] for t in stub)
+    return (f"{len(stub)} of the {len(hourly)} hourly entries happen on stub bars; "
+            f"together they {'LOSE' if earned < 0 else 'MAKE'} money "
+            f"(Rs{earned:,.0f} gross), so they "
+            f"{'drag the hourly variant down rather than flattering it' if earned < 0 else 'flatter the hourly variant'}.")
+
+
 def write_readme(book: Workbook, windows: dict, results: dict | None = None) -> None:
+    stub_note = stub_bar_note(results)
     sheet = book.create_sheet("Read Me")
     sheet.column_dimensions["A"].width = 110
     verdict: list[str] = []
@@ -268,9 +288,8 @@ def write_readme(book: Workbook, windows: dict, results: dict | None = None) -> 
         "its Q/M/W numbers are close to meaningless and are surfaced, not hidden.",
         "- Conservative conventions everywhere: same-bar ambiguity goes to the stop, gaps "
         "fill at the open.",
-        "- Pre-2026 sessions end with a 15-minute stub 'hour' bar (15:15-15:30). 23 of the "
-        "428 hourly entries happen on stub bars; together they LOSE money, so they drag "
-        "the hourly variant down rather than flattering it.",
+        f"- Pre-2026 sessions end with a 15-minute stub 'hour' bar (15:15-15:30). "
+        f"{stub_note} It used to read '23 of the 428', typed in and never recomputed.",
     ] + verdict
     for row, text in enumerate(lines, start=1):
         cell = sheet.cell(row=row, column=1, value=text)
