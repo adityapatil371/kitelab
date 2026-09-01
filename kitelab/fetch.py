@@ -146,8 +146,16 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
     return combined
 
 
-def backfill(kite, cfg: Config) -> None:
-    intervals = ["15minute"] + (["day"] if cfg.use_daily_source else [])
+def backfill(kite, cfg: Config, intervals: list[str] | None = None) -> None:
+    """Fetch every configured interval for every symbol in cfg.symbols.
+
+    `intervals` overrides the default pair. Passing ["day"] is the cheap screening
+    pass: daily costs ~4 requests per symbol against ~22 for 15-minute, so a wide
+    candidate sweep is a fifth of the price. Fetch the intraday data afterwards, for
+    the symbols that survive screening.
+    """
+    if intervals is None:
+        intervals = ["15minute"] + (["day"] if cfg.use_daily_source else [])
     print(f"\nResolving instruments on {cfg.exchange} ...")
     tokens = instrument_tokens(kite, cfg.symbols, cfg.exchange)
     if not tokens:
