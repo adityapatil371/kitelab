@@ -150,6 +150,26 @@ def clean_frame(symbol: str, interval: str, raw: pd.DataFrame) -> tuple[pd.DataF
 ASSETS = ["BITCOIN", "NIFTY 50", "NIFTY BANK", "GOLD", "SILVER", "CRUDEOIL"]
 
 
+def write_if_changed(frame: pd.DataFrame, target) -> bool:
+    """Write only when the result differs from what is already there.
+
+    Rewriting an identical file is not free. kitelab.signals fingerprints every
+    price file by name, SIZE AND MODIFICATION TIME, so a no-op re-clean moved all
+    214 timestamps and every stamped cache -- and the dashboard itself -- reported
+    "the PRICE DATA has changed since they were built". Nothing had changed but
+    the clocks. Comparing the frame rather than the bytes because parquet output
+    is not guaranteed byte-identical between writes.
+    """
+    if target.exists():
+        try:
+            if pd.read_parquet(target).equals(frame.reset_index(drop=True)):
+                return False
+        except Exception:
+            pass                       # unreadable or a different shape: rewrite it
+    frame.to_parquet(target, index=False)
+    return True
+
+
 def working_set() -> set[str]:
     """Every symbol the project needs a price file for.
 
@@ -208,7 +228,11 @@ def main() -> None:
     for path in files:
         if path.name.startswith(PASSTHROUGH_PREFIX):
             if not args.dry_run:
-                shutil.copy2(path, CLEAN / path.name)
+                target = CLEAN / path.name
+                # Same reasoning as write_if_changed: an identical copy would
+                # still move the mtime and invalidate every stamp.
+                if not (target.exists() and target.stat().st_size == path.stat().st_size):
+                    shutil.copy2(path, target)
             totals["passthrough-instruments"] += 1
             n = len(pd.read_parquet(path))
             print(f"{path.name:44} {n:>7,} -> {n:>7,}   copied unchanged (not candles)")
@@ -239,7 +263,7 @@ def main() -> None:
         print(f"{path.name:44} {before:>7,} -> {after:>7,}   {touched}")
 
         if not args.dry_run:
-            clean.to_parquet(CLEAN / path.name, index=False)
+            write_if_changed(clean, CLEAN / path.name)
 
         rows.append(dict(file=path.name, symbol=symbol, interval=interval,
                          rows_before=before, rows_after=after, **counts))
