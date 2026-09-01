@@ -9,7 +9,7 @@ from kitelab import auth, config
 
 
 def main() -> None:
-    cfg = config.load()
+    cfg = config.require_secrets(config.load())
     auth.interactive_login(cfg)
 
 

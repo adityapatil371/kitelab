@@ -39,7 +39,8 @@ def main() -> None:
                         help="stop after this many symbols (for a trial run)")
     args = parser.parse_args()
 
-    cfg = config.load()
+    # The one job that needs an account: this is what pulls new data from Kite.
+    cfg = config.require_secrets(config.load())
     if args.symbols_file:
         names = [ln.strip() for ln in args.symbols_file.read_text().splitlines()]
         names = [n for n in names if n and not n.startswith("#")]

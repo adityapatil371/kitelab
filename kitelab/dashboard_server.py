@@ -57,10 +57,7 @@ def status() -> dict:
     if not DATA_PATH.exists():
         return {"ok": False, "stale": False, "message": "No dashboard data yet."}
     try:
-        # No secrets needed: the universe comes from config.local.toml, not from
-        # the Kite API. Requiring a key here once made this report "not stale"
-        # on a machine that simply had not sourced its secrets.
-        now = sorted(config.load(require_secrets=False).all_symbols)
+        now = sorted(config.load().all_symbols)
     except SystemExit as exc:
         return {"ok": False, "stale": True,
                 "message": f"Cannot check whether these numbers are current: {exc}"}

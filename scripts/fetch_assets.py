@@ -158,7 +158,7 @@ def main() -> None:
         fetch_btc("30m", "30minute")
     if do_kite:
         print("\nIndices and commodities (Kite):")
-        cfg = config.load()
+        cfg = config.require_secrets(config.load())
         kite = auth.client(cfg)
         throttle = fetch.Throttle()
         fetch_indices(kite, throttle)

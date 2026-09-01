@@ -251,15 +251,40 @@ class Config:
         return self._dedupe(self.symbols, self.extended)
 
 
-def load(require_secrets: bool = True) -> Config:
-    """The configuration. Pass require_secrets=False when you only need the
-    universe and not the Kite API.
+def require_secrets(cfg: Config) -> Config:
+    """Stop unless real Kite credentials are present.
 
-    Reading which stocks are configured has nothing to do with holding trading
-    credentials, and tying the two together is not harmless: the dashboard's
-    freshness check called this, hit the missing-key exit on a machine where the
-    secrets had not been sourced, and reported "not stale" -- announcing that it
-    had checked when it had not looked at all.
+    Called by the programs that actually reach the network -- login, backfill and
+    fetch_assets -- and by nothing else. Fetching new data is the only thing in
+    this project that needs an account.
+    """
+    for field, env_var in (("api_key", "KITE_API_KEY"),
+                           ("api_secret", "KITE_API_SECRET")):
+        value = getattr(cfg, field)
+        if not value or value.startswith("your_"):
+            raise SystemExit(
+                f"\n  {field} is not set, and fetching data needs it.\n"
+                f"  Either export {env_var}, or fill in [kite] {field} in "
+                f"config.local.toml.\n"
+                f"  Nothing else in this project needs it -- the dashboard, the\n"
+                f"  reports and the cache checker all run without credentials.\n")
+    return cfg
+
+
+def load() -> Config:
+    """The configuration.
+
+    This does NOT require Kite credentials. Thirty-one scripts call it and only
+    one file, kitelab/auth.py, ever reads api_key or api_secret -- everything
+    else wants the universe, the exchange and the date range, none of which is
+    a secret. Demanding a key here meant the dashboard, the reports and the
+    cache checker all refused to run on a machine that simply had not sourced
+    its secrets, and it caused a real failure: the dashboard's freshness check
+    hit the missing-key exit and reported "not stale", announcing that it had
+    checked when it had not looked at all.
+
+    The programs that genuinely talk to Kite call require_secrets() below, so
+    the demand sits where the need is.
     """
     if not CONFIG_PATH.exists():
         raise SystemExit(
@@ -276,16 +301,6 @@ def load(require_secrets: bool = True) -> Config:
     api_key = os.environ.get("KITE_API_KEY") or kite.get("api_key", "")
     api_secret = os.environ.get("KITE_API_SECRET") or kite.get("api_secret", "")
 
-    if require_secrets:
-        for field, env_var, value in (
-            ("api_key", "KITE_API_KEY", api_key),
-            ("api_secret", "KITE_API_SECRET", api_secret),
-        ):
-            if not value or value.startswith("your_"):
-                raise SystemExit(
-                    f"{field} is not set. Either export {env_var}, "
-                    f"or fill in [kite] {field} in config.local.toml."
-                )
 
     # DATA is read-only when it points at the shared raw directory, so only create
     # it when it is the repo's own ./data fallback and does not exist yet.
