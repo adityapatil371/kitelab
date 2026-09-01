@@ -130,6 +130,46 @@ def drop_untraded_outliers(frame: pd.DataFrame, symbol: str,
     return frame.loc[~doomed].reset_index(drop=True)
 
 
+def enforce_containment(frame: pd.DataFrame, symbol: str,
+                        interval: str) -> pd.DataFrame:
+    """A bar's high and low must contain its own open and close.
+
+    Kite delivers bars that violate this -- SURANAT&P 2013-04-08 closes at 3.20 with
+    a low of 3.56; VHL 2013-04-08 closes at 524.50 with a high of 472.20. 94 bars
+    across 32 files, clustered on 2013-04-08/09, which looks like one bad day at the
+    vendor.
+
+    It matters because intrabar rules read the high and the low: the ATH breakout
+    checks `low <= stop` on every bar, Darvas has an intrabar option, and the Donchian
+    channels are built from highs and lows. A low above the close can hide a stop that
+    was really hit, or invent one that was not.
+
+    This repair already existed -- as the last two lines of the non-positive branch of
+    sanitise() -- but it was unreachable for any file WITHOUT a non-positive price, so
+    the 94 bars sailed through. It is its own step now, and always runs.
+
+    The close is authoritative: it is the price every close-based rule trades on, and
+    the one Kite is least likely to have wrong. So the high and low are widened to
+    admit the open and close, never the other way round.
+    """
+    cols = ["high", "open", "close"]
+    if frame.empty or not set(cols).issubset(frame.columns):
+        return frame
+    high = frame[["high", "open", "close"]].max(axis=1)
+    low = frame[["low", "open", "close"]].min(axis=1)
+    changed = int(((high != frame["high"]) | (low != frame["low"])).sum())
+    if not changed:
+        return frame
+    frame = frame.copy()
+    frame["high"], frame["low"] = high, low
+    tag = f"{symbol}:{interval}:containment"
+    if tag not in _CLEAN_WARNED:
+        print(f"[kitelab] {symbol}: widened {changed:,} {interval} bars whose high/low "
+              "did not contain their own open/close")
+        _CLEAN_WARNED.add(tag)
+    return frame
+
+
 def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
     """Repair non-positive OHLC values in the stored candles, and drop bars that
     record a price nothing traded at.
@@ -144,11 +184,15 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
     A second family survives that repair because its prices are positive: bars
     with ZERO VOLUME carrying a price nowhere near the tape. See
     drop_untraded_outliers.
+
+    A third: bars whose HIGH/LOW do not contain their own open and close. See
+    enforce_containment.
     """
     cols = ["open", "high", "low", "close"]
     broken = (frame[cols] <= 0).any(axis=1)
     if not broken.any():
-        return drop_untraded_outliers(frame, symbol, interval)
+        return drop_untraded_outliers(
+            enforce_containment(frame, symbol, interval), symbol, interval)
     count = int(broken.sum())
     dead = frame["close"] <= 0
     frame = frame.loc[~dead].copy()
@@ -160,15 +204,14 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
             frame[name] = column.where(column > 0, frame[["open", "close"]].max(axis=1))
         else:
             frame[name] = column.where(column > 0, frame[["open", "close"]].min(axis=1))
-    # a repaired bar must still contain its own open and close
-    frame["high"] = frame[["high", "open", "close"]].max(axis=1)
-    frame["low"] = frame[["low", "open", "close"]].min(axis=1)
     tag = f"{symbol}:{interval}"
     if tag not in _CLEAN_WARNED:
         print(f"[kitelab] {symbol}: repaired {count:,} {interval} bars with "
               f"non-positive prices (Kite data gaps), dropped {int(dead.sum())}")
         _CLEAN_WARNED.add(tag)
-    return drop_untraded_outliers(frame.reset_index(drop=True), symbol, interval)
+    return drop_untraded_outliers(
+        enforce_containment(frame.reset_index(drop=True), symbol, interval),
+        symbol, interval)
 
 
 
