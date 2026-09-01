@@ -34,7 +34,7 @@ CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000
 RISKS = [0.0025, 0.005, 0.01, 0.02]
 
-ASSETS = [  # symbol, breakout timeframe, flat per-side fee (assets_report conventions)
+ASSETS = [  # symbol, breakout timeframe, flat per-side fee
     ("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
     ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
     ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005),
