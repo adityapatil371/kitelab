@@ -18,10 +18,18 @@
             where the losses came from. The weekly is the trend filter; the
             daily is the timing.
     entry   the close finishes ABOVE the highest high of the previous 20 candles
-    stop    the lowest low of the previous 10 candles, as it stands at entry
-    exit    the close finishes AT OR BELOW the lowest low of the previous 10 candles,
-            recomputed every day -- so the exit line ratchets up behind a rising
-            stock and never moves down. It is a trailing stop made of price alone.
+    stop    THE ENTRY CANDLE'S OWN LOW. One rule across every strategy in this
+            project: backtest.simulate and the timeframe stacks set the stop the
+            same way. This used to be the 10-candle channel low, which sat a
+            median 14.2% below entry against 2.9% for the entry candle -- about
+            5x wider, so positions were ~5x smaller for the same rupee risk.
+    exit    the close finishes AT OR BELOW the lowest low of the previous 10
+            candles, recomputed every day -- so the exit line ratchets up behind
+            a rising stock and never moves down.
+
+    TWO EXITS, like the EMA stack: a fixed stop under the entry candle, and a
+    signal exit that trails. Whichever comes first ends the trade, and same-bar
+    ambiguity goes to the STOP -- the worse outcome, which is the honest one.
 
 The two windows never include today's candle. Both are shifted one bar, so the
 line a trade is judged against was fully formed before the session it acts on.
@@ -132,14 +140,28 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
         # A gap straight through the line fills at the open, not at the line.
         entry_price = (max(float(upper[position]), float(open_[position])) if intrabar
                        else float(close[position]))
-        stop = float(lower[position])
+        stop = float(low[position])
         risk = entry_price - stop
         if risk <= 0:
+            # The entry closed at or below its own low -- nothing to defend.
             position += 1
             continue
 
         exit_at = None
         for step in range(position + 1, total):
+            # 1. the stop, checked FIRST so a bar that breaks both is charged the
+            #    worse of the two. Same order as backtest.simulate.
+            if intrabar:
+                if low[step] <= stop:
+                    gapped = open_[step] < stop
+                    exit_at = (step, float(open_[step]) if gapped else stop,
+                               "gap through stop" if gapped else "stop")
+                    break
+            elif close[step] <= stop:
+                exit_at = (step, float(close[step]), "stop (close)")
+                break
+
+            # 2. the channel exit, which trails upward behind a rising stock
             line = lower[step]
             if not np.isfinite(line):
                 continue
@@ -190,7 +212,7 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             "capital_capped": capped,
             "range": risk,
             "target": None,
-            "final_stop": float(lower[exit_index]),
+            "final_stop": stop,
             "bars_held": exit_index - position,
             "charges_best": cost_best,
             "net_profit_best": gross - cost_best,
