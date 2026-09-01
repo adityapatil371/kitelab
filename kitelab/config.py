@@ -1,13 +1,37 @@
 """Configuration. Secrets live in config.local.toml, which is gitignored."""
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+
+# Where the RAW parquet files live. READ-ONLY: nothing in this project may write
+# into it. KITELAB_DATA_DIR wins if it is set; otherwise use the shared
+# /data/raw/kitelab when that directory exists, and fall back to the repo's own
+# ./data when it does not.
+_SHARED_DATA = Path("/data/raw/kitelab")
+DATA = Path(
+    os.environ.get("KITELAB_DATA_DIR")
+    or (_SHARED_DATA if _SHARED_DATA.is_dir() else ROOT / "data")
+)
+
+# Where CLEANED and derived data is written. This one IS writable, and is the only
+# place a cleaning step may write. Overridable with KITELAB_CLEAN_DIR.
+CLEAN = Path(os.environ.get("KITELAB_CLEAN_DIR") or "/data/clean/kitelab")
+
 CONFIG_PATH = ROOT / "config.local.toml"
+
+# The cached Kite access token, overridable with KITELAB_TOKEN_PATH. The
+# default stays at the original ./data location and deliberately does NOT
+# follow DATA: DATA now often points at a shared, read-only directory, and this
+# file has to be written on every login.
+TOKEN_PATH = Path(
+    os.environ.get("KITELAB_TOKEN_PATH")
+    or (ROOT / "data" / ".access_token.json")
+)
 
 # Stocks removed from EVERY universe on 2026-08-31 because their daily price
 # history cannot be trusted. The raw lists live in config.local.toml, which is
@@ -218,15 +242,28 @@ def load() -> Config:
     universe = raw.get("universe", {})
     backfill = raw.get("backfill", {})
 
-    for field in ("api_key", "api_secret"):
-        value = kite.get(field, "")
-        if not value or value.startswith("your_"):
-            raise SystemExit(f"config.local.toml: [kite] {field} is not filled in.")
+    # The environment wins; config.local.toml is only the fallback.
+    api_key = os.environ.get("KITE_API_KEY") or kite.get("api_key", "")
+    api_secret = os.environ.get("KITE_API_SECRET") or kite.get("api_secret", "")
 
-    DATA.mkdir(exist_ok=True)
+    for field, env_var, value in (
+        ("api_key", "KITE_API_KEY", api_key),
+        ("api_secret", "KITE_API_SECRET", api_secret),
+    ):
+        if not value or value.startswith("your_"):
+            raise SystemExit(
+                f"{field} is not set. Either export {env_var}, "
+                f"or fill in [kite] {field} in config.local.toml."
+            )
+
+    # DATA is read-only when it points at the shared raw directory, so only create
+    # it when it is the repo's own ./data fallback and does not exist yet.
+    if not DATA.is_dir():
+        DATA.mkdir(parents=True, exist_ok=True)
+    CLEAN.mkdir(parents=True, exist_ok=True)
     return Config(
-        api_key=kite["api_key"],
-        api_secret=kite["api_secret"],
+        api_key=api_key,
+        api_secret=api_secret,
         symbols=universe.get("symbols", []),
         extended=universe.get("extended", []),
         holdout=universe.get("holdout", []),
