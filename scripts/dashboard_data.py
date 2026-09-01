@@ -29,6 +29,7 @@ Breakout keeps intrabar stops (its buy-stop entry is inherently intrabar).
 """
 from __future__ import annotations
 
+import bisect
 import json
 import pickle
 
@@ -45,6 +46,17 @@ ASSIGNED = config.CLASS_ASSIGNED
 
 OUT = config.CLEAN / "dashboard.json"
 RISKS = [0.25, 0.5, 1.0, 2.0]
+
+# "What if I had started in <year>?" Every account used to begin at the first
+# trade in the data -- 2006 for every strategy -- so a headline like Rs2.98 crore
+# was twenty years of compounding, not a description of the rule. Starting later
+# is a different account: fresh capital, different position sizes, different
+# signals affordable.
+#
+# 2024 is the last year offered; a 2025 or 2026 start has under two years of
+# trades and the number would be noise wearing a percent sign.
+START_YEARS = list(range(2006, 2025))
+START_DEFAULT = 2020
 
 # The execution dimension, and it is TWO independent things, not one.
 #
@@ -118,8 +130,15 @@ def tag(band) -> str:
 
 # ------------------------------------------------------------ helpers ----
 
-def curve_payload(curve):
-    days, eq, dd = [], [], []
+def curve_payload(curve, cash_curve=None):
+    """Equity, drawdown and CASH IN HAND, sampled at the same points.
+
+    cash answers "if a signal fired that day, could the account afford it?" --
+    which the equity line alone cannot, because most of that equity is already
+    committed to open positions.
+    """
+    cash_at = dict(cash_curve or ())
+    days, eq, dd, cash = [], [], [], []
     peak = float("-inf")
     for i, (day, equity) in enumerate(curve):
         peak = max(peak, equity)
@@ -128,7 +147,12 @@ def curve_payload(curve):
         days.append(day.strftime("%Y-%m-%d"))
         eq.append(round(equity))
         dd.append(round(100 * (equity - peak) / peak, 1))
-    return {"d": days, "eq": eq, "dd": dd}
+        if cash_at:
+            cash.append(round(max(cash_at.get(day, 0.0), 0.0)))
+    out = {"d": days, "eq": eq, "dd": dd}
+    if cash:
+        out["cash"] = cash
+    return out
 
 
 def run_payload(r):
@@ -145,7 +169,12 @@ def run_payload(r):
             "ret": round(r["return_pct"]), "maxdd": round(r["max_drawdown_pct"], 1),
             "uw_long": round(longest / 365.25, 1), "uw_now": round(current / 365.25, 1),
             "taken": len(r["taken"]), "signals": r["signals"],
-            "episodes": eps, "curve": curve_payload(r["curve"])}
+            # how much of the account is waiting rather than working
+            "skipped_cash": r["skipped_cash"],
+            "median_cash": r.get("median_cash_pct"),
+            "full_pct": r.get("fully_invested_pct"),
+            "episodes": eps,
+            "curve": curve_payload(r["curve"], r.get("cash_curve"))}
 
 
 def cached_signals(name: str, build) -> list[dict]:
@@ -392,7 +421,7 @@ def main() -> None:
 
     grid = {}
     total = (len(FILL_MODES) * len(sets[FILL_MODES[0][0]]) * len(universes)
-             * len(RISKS) * len(CAPITALS))
+             * len(RISKS) * len(CAPITALS) * len(START_YEARS))
     bar = Bar(total, "grid")
     for fkey, _flabel in FILL_MODES:
         execution(*FILL_SPEC[fkey])
@@ -400,12 +429,24 @@ def main() -> None:
             for ukey, (ulabel, members) in universes.items():
                 subset = (signals if members is None
                           else [t for t in signals if t["symbol"] in members])
-                for risk in RISKS:
-                    for capital in CAPITALS:
-                        r = portfolio.run(subset, capital, risk / 100)
-                        grid[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
-                            run_payload(r)
-                        bar.step()
+                # Sorted once; each start year is a suffix of the one before, so
+                # the slice is a bisect rather than a fresh filter per year.
+                subset = sorted(subset, key=lambda t: t["entry_ts"])
+                stamps = [pd.Timestamp(t["entry_ts"]) for t in subset]
+                for year in START_YEARS:
+                    cut = bisect.bisect_left(stamps, pd.Timestamp(f"{year}-01-01"))
+                    window = subset[cut:]
+                    for risk in RISKS:
+                        for capital in CAPITALS:
+                            key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
+                                   f"|{capital}|{fkey}|{year}")
+                            if not window:
+                                grid[key] = None
+                                bar.step()
+                                continue
+                            r = portfolio.run(window, capital, risk / 100)
+                            grid[key] = run_payload(r)
+                            bar.step()
     bar.close()
     execution(False, False)
 
@@ -675,7 +716,8 @@ def main() -> None:
         "universes": {k: v[0] for k, v in universes.items()},
         "universe_size": len(cfg.all_symbols),
         "excluded": cfg.excluded,
-        "risks": RISKS, "capitals": CAPITALS, "bands": BANDS,
+        "risks": RISKS, "capitals": CAPITALS,
+        "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
         "breadth": breadth, "tie_break": portfolio.TIE_BREAK,
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,

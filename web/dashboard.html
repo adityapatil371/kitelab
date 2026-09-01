@@ -134,12 +134,17 @@
         <p class="fillnote">Which three timeframes must agree before the EMA stack lets you in.</p></div>
       <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
       <div class="slicer" id="wrap-band"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
-      <div class="slicer" id="wrap-dvwin" style="display:none"><span class="eyebrow">Darvas windows</span><div class="slist" id="sl-dvwin"></div>
+      <div class="slicer" id="wrap-dvwin" style="display:none"><span class="eyebrow">Turtle windows</span><div class="slist" id="sl-dvwin"></div>
         <p class="fillnote">In on a close above the highest high of the first number of
-          candles, out on a close at or below the lowest low of the second. 20/10 is what
-          the class specified; it is the weakest of the five.</p></div>
+          candles, out on a close at or below the lowest low of the second — the two
+          systems the Turtles traded. "1TF" drops the weekly gate, so it is the daily
+          rule alone. The stop is always the entry candle's low.</p></div>
       <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
       <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
+      <div class="slicer"><span class="eyebrow">Started trading in</span><div class="slist" id="sl-year"></div>
+        <p class="fillnote">A fresh account opened in January of that year. Every
+          earlier trade is ignored, so this is not a slice of one long run — it is a
+          different account, sizing its positions from its own equity.</p></div>
     </div>
     <div id="rail-stocks" style="display:none">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-stock-strat"></div></div>
@@ -175,6 +180,7 @@
 
   <main>
     <div id="stale"></div>
+    <div id="empty-note" style="display:none;padding:2rem;color:var(--muted)"></div>
     <div id="loading">Loading the backtest grid&hellip;</div>
 
     <div class="canvas page" id="page-portfolio">
@@ -184,6 +190,7 @@
       <div class="card kpi span2"><div class="lbl">Longest underwater</div><div class="v" id="k-uw"></div><div class="delta">below a previous peak</div></div>
       <div class="card kpi span2"><div class="lbl">Underwater now</div><div class="v" id="k-uwnow"></div><div class="delta">as the data ends</div></div>
       <div class="card kpi span2"><div class="lbl">Trades taken</div><div class="v" id="k-trades"></div><div class="delta" id="k-trades-d"></div></div>
+      <div class="card kpi span2"><div class="lbl">Money already committed</div><div class="v" id="k-cash"></div><div class="delta" id="k-cash-d"></div></div>
 
       <div class="card span8">
         <div class="card-head">
@@ -384,7 +391,7 @@ let DATA = null;
 // rail no longer sets it directly: you pick a family (EMA stack / Darvas) and,
 // for the EMA family only, a timeframe stack. Those two resolve into strat.
 const state = { page: "portfolio", family: "ema", emaTf: "ema",
-                strat: "ema", uni: "all", riskIdx: 2, capIdx: 2, bandIdx: 2,
+                strat: "ema", uni: "all", riskIdx: 2, capIdx: 1, bandIdx: 2, year: null,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
                 soStrat: "ema", soUni: "all", dvIdx: 1, brStrat: "dv" };
@@ -457,6 +464,10 @@ function init() {
          () => String(state.riskIdx), k => { state.riskIdx = +k; renderPortfolio(); });
   slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
          () => String(state.capIdx), k => { state.capIdx = +k; renderPortfolio(); });
+  const YEARS = DATA.start_years || [];
+  if (state.year === null) state.year = DATA.start_default || YEARS[YEARS.length - 1];
+  slicer("sl-year", YEARS.map(y => [String(y), String(y)]),
+         () => String(state.year), k => { state.year = +k; renderPortfolio(); });
   slicer("sl-stock-strat", Object.entries(stratNames), () => state.stockStrat,
          k => { state.stockStrat = k; renderStock(); });
   const SO_STRATS = Object.keys(DATA.scaleout || {}).map(k => [k, stratNames[k] || k]);
@@ -560,7 +571,7 @@ const settingLabel = strat =>
   : `${bandOf(strat, state.bandIdx) * 100}% band`;
 const joinParts = parts => parts.filter(Boolean).join(" · ");
 const keyWith = (strat, bandVal, uni, riskIdx, capIdx) =>
-  `${strat}|${bandVal}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}|${state.fill}`;
+  `${strat}|${bandVal}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}|${state.fill}|${state.year}`;
 const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
   keyWith(strat, bandOf(strat, bandIdx), uni, riskIdx, capIdx);
 const fillLabel = () =>
@@ -570,7 +581,7 @@ const runFor = (riskIdx, capIdx) =>
 
 function renderPortfolio() {
   for (const id of ["sl-fill", "sl-strat", "sl-tf", "sl-uni", "sl-band", "sl-dvwin",
-                    "sl-risk", "sl-cap"]) $(id)._sync();
+                    "sl-risk", "sl-cap", "sl-year"]) $(id)._sync();
   // Each strategy shows only what it actually has: the EMA stack has a timeframe
   // trio and a band, Darvas has its two windows and its gate.
   $("wrap-tf").style.display = state.family === "ema" ? "" : "none";
@@ -578,6 +589,15 @@ function renderPortfolio() {
   $("wrap-dvwin").style.display = state.family === "dv" ? "" : "none";
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
+  // A start year late enough to leave no trades is stored as null, not as a
+  // zero-trade run. Say so rather than throwing on r.curve.
+  if (!r) {
+    $("empty-note").textContent =
+      `No trades for this combination starting in ${state.year}. Pick an earlier year.`;
+    $("empty-note").style.display = "";
+    return;
+  }
+  $("empty-note").style.display = "none";
   const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
   const bench = benchFromCloses(DATA.nifty, r.curve.d[0], r.curve.d.at(-1), cap);
   const benchFinal = bench ? bench.v.at(-1) : null;
@@ -586,6 +606,11 @@ function renderPortfolio() {
   $("k-final").className = "v" + (r.final < cap ? " bad" : "");
   $("k-final-d").innerHTML = benchFinal
     ? `NIFTY B&amp;H: <b class="${r.final >= benchFinal ? "up" : "down"}">${inr(benchFinal)}</b>` : "";
+  // How much of the account is working rather than waiting, and what that costs
+  // in signals you could not afford.
+  $("k-cash").textContent = (r.full_pct == null) ? "—" : r.full_pct + "%";
+  $("k-cash-d").textContent = (r.skipped_cash == null) ? "of days under 5% cash"
+    : `of days under 5% cash · ${r.skipped_cash.toLocaleString("en-IN")} signals unaffordable`;
   $("k-cagr").textContent = cagrText(r.cagr);
   $("k-cagr").className = "v" + cagrClass(r.cagr);
   $("k-cagr-d").textContent = isWiped(r.cagr)
