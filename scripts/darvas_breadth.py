@@ -162,13 +162,13 @@ def main() -> None:
         show(f"{label} at 1% risk", rows)
         dump(label, 1.0, rows)
 
-    darvas = load("Darvas_20_10_all", symbols)
+    turtle = load("Turtle_w20_20_10_all", symbols)
     for risk in RISKS:
         if risk == 1.0:
             continue
-        rows = sweep(darvas, symbols, risk)
-        show(f"Darvas 20/10 at {risk}% risk", rows)
-        dump("Darvas 20/10", risk, rows)
+        rows = sweep(turtle, symbols, risk)
+        show(f"Turtle 20/10 +weekly at {risk}% risk", rows)
+        dump("Turtle 20/10 +weekly", risk, rows)
 
     print(f"\n  written: {report.save(book, 'Darvas Breadth.xlsx')}")
 
