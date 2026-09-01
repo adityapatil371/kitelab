@@ -17,6 +17,8 @@ show. Every intraday resample below is anchored to that day's 09:15 instead.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 import pandas as pd
 
 from .config import DATA
@@ -38,6 +40,15 @@ AGG = {
 NAMED_AGG = dict(
     ts=("ts", "first"),
     end_ts=("ts", "last"),
+    open=("open", "first"),
+    high=("high", "max"),
+    low=("low", "min"),
+    close=("close", "last"),
+    volume=("volume", "sum"),
+)
+
+# Like NAMED_AGG but without the ts column, for groupbys whose KEY is the stamp.
+NAMED_AGG_NOTS = dict(
     open=("open", "first"),
     high=("high", "max"),
     low=("low", "min"),
@@ -215,6 +226,29 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
 
 
 
+# Reading and resampling a symbol's bars is pure -- same file in, same frame out --
+# but nothing cached it, so a six-band sweep re-read and re-resampled every symbol six
+# times, and the eleven Breakout variants eleven times. That redundancy was most of
+# the two hours a full rebuild took.
+#
+# THE CONTRACT: the frames handed back are SHARED. Do not write into one; copy it
+# first, as strategies.breakout_trades already does. Nothing else in the repo mutates
+# a frame it did not build (checked by AST over every .py).
+#
+# Sizes are set so a whole universe fits: the 15-minute frames are the memory, at
+# roughly 3.5 MB each.
+_CACHE_SYMBOLS = 600
+
+
+def clear_caches() -> None:
+    """Drop every cached frame. Call after changing anything on disk."""
+    for fn in (base_15m, daily, load, _resample_cached):
+        fn.cache_clear()
+    _CLEAN_WARNED.clear()
+    _TRIM_WARNED.clear()
+
+
+@lru_cache(maxsize=_CACHE_SYMBOLS)
 def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
     """15-minute bars.
 
@@ -245,18 +279,30 @@ def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
 
 
 def _resample_intraday(base: pd.DataFrame, minutes: int) -> pd.DataFrame:
-    """Resample intraday bars, anchoring each session to its own 09:15 open."""
-    parts = []
-    for day, group in base.groupby(base["ts"].dt.normalize(), sort=True):
-        origin = day + SESSION_OPEN
-        indexed = group.set_index("ts").sort_index()
-        bars = indexed.resample(
-            f"{minutes}min", origin=origin, label="left", closed="left"
-        ).agg(AGG)
-        parts.append(bars.dropna(subset=["open"]))
-    if not parts:
+    """Resample intraday bars, anchoring each session to its own 09:15 open.
+
+    ONE groupby over the whole frame, not one pandas resample per trading day. The
+    per-day loop built ~2,500 tiny DataFrames per symbol and spent its time in pandas
+    bookkeeping rather than arithmetic -- profiled at 1.89s per symbol against 0.05s
+    to read the file, with 3.1 million isinstance calls and ~14,400 Index
+    constructions. Same output, and verify.py proves it: 137,298 of 137,298 derived
+    bars reconstruct exactly from their source.
+
+    The bucket key is computed directly: floor the minutes elapsed since that
+    session's 09:15 into `minutes`-wide slots and add them back to the open. Floor
+    division handles a pre-open bar the same way resample's `origin` does, by
+    extending the grid backwards.
+    """
+    if base.empty:
         return pd.DataFrame(columns=["ts", *AGG])
-    out = pd.concat(parts)
+    ts = base["ts"]
+    day = ts.dt.normalize()
+    step = pd.Timedelta(minutes=minutes)
+    offset = ((ts - day - SESSION_OPEN) // step) * step
+    bucket = day + SESSION_OPEN + offset
+    out = (base.assign(_bucket=bucket)
+               .groupby("_bucket", sort=True)
+               .agg(**NAMED_AGG_NOTS))
     out.index.name = "ts"
     out = out.reset_index()
     out["volume"] = out["volume"].astype("int64")
@@ -268,6 +314,12 @@ def resample_intraday(base: pd.DataFrame, minutes: int) -> pd.DataFrame:
     return _resample_intraday(base, minutes)
 
 
+@lru_cache(maxsize=_CACHE_SYMBOLS * 2)
+def _resample_cached(symbol: str, minutes: int) -> pd.DataFrame:
+    """Resampled intraday bars for a symbol, computed once per session."""
+    return _resample_intraday(base_15m(symbol), minutes)
+
+
 def _daily_from_intraday(base: pd.DataFrame) -> pd.DataFrame:
     indexed = base.set_index("ts").sort_index()
     out = indexed.groupby(indexed.index.normalize()).agg(AGG)
@@ -277,6 +329,7 @@ def _daily_from_intraday(base: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("ts").reset_index(drop=True)
 
 
+@lru_cache(maxsize=_CACHE_SYMBOLS * 2)
 def daily(symbol: str, prefer_native: bool = True) -> pd.DataFrame:
     """Daily candles, from Kite's `day` interval if available, else from 15-min bars."""
     native = _path(symbol, "day")
@@ -309,6 +362,7 @@ def quarterly(day_frame: pd.DataFrame) -> pd.DataFrame:
     return _group_daily(day_frame, day_frame["ts"].dt.to_period("Q"))
 
 
+@lru_cache(maxsize=_CACHE_SYMBOLS * 3)
 def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -> pd.DataFrame:
     """Return OHLCV for a symbol at one of TIMEFRAMES."""
     if timeframe not in TIMEFRAMES:
@@ -322,7 +376,7 @@ def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -
         native = _path(symbol, "30minute")
         if native.exists():
             return pd.read_parquet(native).sort_values("ts").reset_index(drop=True)
-        return _resample_intraday(base_15m(symbol), 30)
+        return _resample_cached(symbol, 30)
     if timeframe == "1h":
         # Assets fetched with native 30-minute bars and no 15m file (Bitcoin) are
         # paired into hours on a midnight anchor -- correct for a 24/7 UTC market,
@@ -335,7 +389,7 @@ def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -
             out = out.reset_index()
             out["volume"] = out["volume"].astype("int64")
             return out
-        return _resample_intraday(base_15m(symbol), 60)
+        return _resample_cached(symbol, 60)
 
     day_frame = daily(symbol, prefer_native=prefer_native_daily)
     if timeframe == "1d":
