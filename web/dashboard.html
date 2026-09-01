@@ -104,6 +104,17 @@
   .tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 0.25rem 0.7rem; font: inherit; font-size: 0.74rem; cursor: pointer; }
   .tabs button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
   #loading { padding: 3rem; color: var(--muted); }
+  /* Shown when the served numbers were built over a different universe than the
+     one configured now. Loud on purpose: the failure it guards against is a
+     stale dashboard that looks current. */
+  #stale { display: none; margin: 0 0 1.25rem; padding: 0.85rem 1rem;
+           border: 1px solid var(--dd); border-left-width: 4px;
+           border-radius: 4px; background: rgba(208,59,59,0.06);
+           color: var(--ink); font-size: 0.82rem; line-height: 1.5; }
+  #stale.on { display: block; }
+  #stale b { color: var(--dd); }
+  #stale code { background: var(--plane); padding: 0.1rem 0.35rem; border-radius: 3px; }
+  #stale .who { color: var(--ink-2); margin-top: 0.4rem; font-size: 0.76rem; }
   .page { display: none; }
   .page.on { display: grid; }
 </style>
@@ -163,6 +174,7 @@
   </aside>
 
   <main>
+    <div id="stale"></div>
     <div id="loading">Loading the backtest grid&hellip;</div>
 
     <div class="canvas page" id="page-portfolio">
@@ -384,6 +396,30 @@ const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(d => { DATA = d; init(); })
   .catch(() => { $("loading").textContent = "No data yet — run: python -m scripts.dashboard_data, then reload."; });
+
+// Is what we are showing still the universe being traded? Asked separately from
+// the data itself: the answer depends on the CURRENT config, not on the snapshot,
+// and the snapshot is far too big to re-read for two fields.
+fetch("/api/status").then(r => r.json()).then(s => {
+  if (!s || !s.stale) return;
+  const el = $("stale");
+  let html = "<b>These results are out of date.</b> " + (s.message || "");
+  html = html.replace(/(python -m [\w.]+)/g, "<code>$1</code>");
+  if (s.dropped && s.dropped.length) {
+    html += '<div class="who">No longer in the universe: ' +
+            s.dropped.slice(0, 12).join(", ") +
+            (s.dropped.length > 12 ? ", and " + (s.dropped.length - 12) + " more" : "") +
+            "</div>";
+  }
+  if (s.added && s.added.length) {
+    html += '<div class="who">Missing from these results: ' +
+            s.added.slice(0, 12).join(", ") +
+            (s.added.length > 12 ? ", and " + (s.added.length - 12) + " more" : "") +
+            "</div>";
+  }
+  el.innerHTML = html;
+  el.classList.add("on");
+}).catch(() => {});
 
 function init() {
   $("loading").style.display = "none";

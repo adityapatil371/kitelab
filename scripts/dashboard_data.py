@@ -34,8 +34,8 @@ import pickle
 
 import pandas as pd
 
-from kitelab import (backtest, config, darvas, frames, portfolio, signals, sizing,
-                     slippage, strategies)
+from kitelab import (backtest, config, darvas, dashboard_server, frames, portfolio,
+                     signals, sizing, slippage, strategies)
 from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
@@ -653,6 +653,14 @@ def main() -> None:
     }
     OUT.write_text(json.dumps(payload))
     print(f"\n  written: {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
+
+    # Record WHICH UNIVERSE these numbers describe, in a small file beside the big
+    # one. Without it the page can only say "built <date>", which is how a
+    # dashboard built over 192 stocks went on being served after 91 of them were
+    # excluded. dashboard_server.status() reads this and warns on the page.
+    dashboard_server.write_stamp(cfg.all_symbols, payload["built"])
+    print(f"  stamped: {dashboard_server.STAMP_PATH.name} "
+          f"({len(cfg.all_symbols)} symbols)")
 
 
 if __name__ == "__main__":
