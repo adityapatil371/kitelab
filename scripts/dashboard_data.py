@@ -79,8 +79,11 @@ BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
 # computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
 # variant still work and still have scripts -- they are simply not on the board.
+# "Turtle", not "Darvas": the 20/10 and 55/20 channels are what the Turtles
+# traded, which is what the class is studying. The old label was wrong and the
+# module docstring has always said so.
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "dv": "Darvas channel"}
+                   "dv": "Turtle channel"}
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as
 # much, so they ride in the same slot of the key that the band uses for the EMA
@@ -490,7 +493,11 @@ def main() -> None:
                 subset = [t for sym in basket for t in by_sym.get(sym, [])]
                 if not subset:
                     continue
-                r = portfolio.run(subset, 250_000, 0.01)
+                # 2,00,000: the middle of CAPITALS. It used to be 2,50,000,
+                # which stopped being one of the offered account sizes when the
+                # small accounts were dropped -- so this page was reporting a
+                # reference account you could not select anywhere else.
+                r = portfolio.run(subset, 200_000, 0.01)
                 cagrs.append(r["cagr_pct"])
                 dds.append(r["max_drawdown_pct"])
                 held.append(r["max_concurrent"])

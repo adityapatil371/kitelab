@@ -41,9 +41,11 @@ DRAWS = 30
 SEED = 20260831
 BUCKETS = [("Micro", 0.0, 0.5), ("Small", 0.5, 5.0), ("Mid", 5.0, 50.0),
            ("Large", 50.0, float("inf"))]
+# W/D/H and ATH Breakout were ruled out in class on 2026-09-01 and are no
+# longer built by the dashboard, so their caches go stale from here on.
 STRATEGIES = [("EMA · M/W/D", "EMA_all"), ("EMA · Q/M/W", "QMW_all"),
-              ("EMA · W/D/H", "WDH_all"), ("ATH Breakout", "Breakout_all"),
-              ("Darvas 20/10", "Darvas_20_10_all")]
+              ("Turtle 20/10 +weekly", "Turtle_w20_20_10_all"),
+              ("Turtle 55/20 +weekly", "Turtle_w20_55_20_all")]
 
 
 def turnover_buckets(symbols) -> dict[str, list[str]]:

@@ -37,7 +37,11 @@ SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150]
 SEED = 20260831
 # Big baskets are slow to simulate and barely vary; small ones are fast and wild.
 DRAWS = {5: 60, 10: 60, 15: 60, 20: 60, 30: 40, 50: 40, 75: 25, 100: 25, 150: 15}
-STRATEGIES = [("Darvas 20/10", "Darvas_20_10_all"), ("EMA M/W/D", "EMA_all")]
+# Turtle_w20_* is the two-timeframe rule the dashboard now builds. The old
+# "Darvas_20_10_all" is pre-gate data -- same label, different strategy.
+STRATEGIES = [("Turtle 20/10 +weekly", "Turtle_w20_20_10_all"),
+              ("Turtle 20/10 daily-only", "Turtle_1tf_20_10_all"),
+              ("EMA M/W/D", "EMA_all")]
 RISKS = [0.5, 1.0, 2.0]
 
 

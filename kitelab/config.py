@@ -248,6 +248,23 @@ class Config:
         """Where the parameters were chosen. Results here are not evidence."""
         return self._dedupe(self.symbols, self.extended)
 
+    # THE PLAN, decided 2026-09-01. The raw store grows to ~500 companies once
+    # the dashboard work is finished. When it does, THESE 101 BECOME THE HOLDOUT:
+    # every parameter in this project was chosen by looking at them, so they can
+    # never again serve as out-of-sample evidence. The ~400 new names are the
+    # only stocks that will not have been seen.
+    #
+    # Two things that must happen at that point, or the split is worthless:
+    #   - the new names go through scripts.screen_universe unchanged, so they
+    #     face the same quality gate and are not filtered by hindsight;
+    #   - nothing gets tuned on them. Once a parameter is chosen by looking at
+    #     the holdout, it stops being a holdout, and there is no second one.
+    #
+    # The dashboard's in-sample / holdout universes were removed on 2026-09-01
+    # because a 44/57 split of stocks that had all been looked at was not
+    # measuring anything. in_sample and out_of_sample below still work and are
+    # what the split should be rebuilt from.
+
     @property
     def out_of_sample(self) -> list[str]:
         """Stocks no parameter has ever seen."""
