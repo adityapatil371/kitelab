@@ -36,6 +36,7 @@ import pandas as pd
 
 from kitelab import (backtest, config, darvas, dashboard_server, frames, portfolio,
                      signals, sizing, slippage, strategies)
+from kitelab.progress import Bar
 from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
@@ -155,13 +156,14 @@ def cached_signals(name: str, build) -> list[dict]:
     if hit is not None:
         return hit
     out = []
-    for index, symbol in enumerate(cfg.all_symbols, 1):
+    bar = Bar(len(cfg.all_symbols), name[:14])
+    for symbol in cfg.all_symbols:
         try:
             out.extend(build(symbol))
         except SystemExit:
             pass
-        if index % 25 == 0:
-            print(f"    {name}: {index}/{len(cfg.all_symbols)}", flush=True)
+        bar.step()
+    bar.close()
     signals.save(name, out, cfg.all_symbols)
     return out
 
@@ -384,6 +386,9 @@ def main() -> None:
         slippage.reset()
 
     grid = {}
+    total = (len(FILL_MODES) * len(sets[FILL_MODES[0][0]]) * len(universes)
+             * len(RISKS) * len(CAPITALS))
+    bar = Bar(total, "grid")
     for fkey, _flabel in FILL_MODES:
         execution(*FILL_SPEC[fkey])
         for (skey, band), signals in sets[fkey].items():
@@ -395,7 +400,8 @@ def main() -> None:
                         r = portfolio.run(subset, capital, risk / 100)
                         grid[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}|{fkey}"] = \
                             run_payload(r)
-            print(f"  grid[{fkey}]: {skey} {tag(band)} done", flush=True)
+                        bar.step()
+    bar.close()
     execution(False, False)
 
     tradestats = {}
@@ -518,7 +524,9 @@ def main() -> None:
         for t in signals:
             by_symbol[skey].setdefault(t["symbol"], []).append(t)
     stocks = {}
+    stock_bar = Bar(len(cfg.all_symbols), "per-stock")
     for index, symbol in enumerate(sorted(cfg.all_symbols), 1):
+        stock_bar.step()
         try:
             daily = frames.daily(symbol)
         except SystemExit:
@@ -529,8 +537,7 @@ def main() -> None:
             tr = positions(tr)
             entry[skey] = {"stats": trade_stats(tr), "trades": slim_trades(tr)}
         stocks[symbol] = entry
-        if index % 50 == 0:
-            print(f"    stocks: {index}/{len(cfg.all_symbols)}", flush=True)
+    stock_bar.close()
 
     print("  assets detail:", flush=True)
     assets = {}
@@ -606,6 +613,8 @@ def main() -> None:
     # capital (class level); risk follows the slider; baskets identical
     # across strategies/risks so comparisons are apples-to-apples.
     basket10 = {}
+    basket_bar = Bar(len(FILL_MODES) * len(sets[FILL_MODES[0][0]]) * len(RISKS)
+                     * len(baskets), "baskets")
     for fkey, _flabel in FILL_MODES:
         execution(*FILL_SPEC[fkey])
         for (skey, band), signals in sets[fkey].items():
@@ -616,6 +625,7 @@ def main() -> None:
                 cagrs, dds = [], []
                 for basket in baskets:
                     subset = [t for s in basket for t in by_sym.get(s, [])]
+                    basket_bar.step()
                     if not subset:
                         continue
                     r = portfolio.run(subset, 100_000, risk / 100)
@@ -646,7 +656,7 @@ def main() -> None:
                                              + sum(1 for c in alive if c < 0)) / n),
                     "median_dd": sorted(dds)[len(dds) // 2],
                 }
-            print(f"  baskets[{fkey}]: {skey} {tag(band)} done", flush=True)
+    basket_bar.close()
     execution(False, False)
 
     nifty = frames.daily("NIFTY 50")
