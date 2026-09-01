@@ -25,6 +25,26 @@ from kitelab import config
 from kitelab.config import DATA
 
 OHLC = ["open", "high", "low", "close"]
+
+# Instruments that legitimately break the equity assumptions, so their findings are
+# not defects:
+#   INDICES     have no volume at all -- every bar reads zero
+#   ALWAYS_ON   trades weekends (crypto) or Saturdays (MCX commodity sessions)
+INDICES = {"NIFTY 50", "NIFTY BANK"}
+ALWAYS_ON = {"BITCOIN", "GOLD", "SILVER", "CRUDEOIL"}
+
+# Checks whose hits are explained rather than wrong. Kept in the report -- a count
+# that suddenly moves is still worth seeing -- but listed separately so a big number
+# is not mistaken for a big problem.
+BENIGN = {
+    "zero-volume bar",
+    "frozen bar, traded (o=h=l=c, volume>0)",
+    "weekend bar",
+    "bar outside 09:15-15:35",
+    "non-positive price (sanitise repairs)",
+    "zero-volume bar, price far off the tape (dropped)",
+    "high/low did not contain open/close (repaired)",
+}
 SESSION_OPEN = pd.Timedelta(hours=9, minutes=15)
 SESSION_CLOSE = pd.Timedelta(hours=15, minutes=35)   # post-CAS close
 
@@ -71,16 +91,16 @@ def check_frame(f: Findings, symbol: str, interval: str, d: pd.DataFrame) -> Non
     f.add("non-positive price (sanitise repairs)", symbol, interval,
           int((np.c_[o, h, l, c] <= 0).any(axis=1).sum()))
     pos = ~np.isnan(h) & ~np.isnan(l)
-    f.add("high < low", symbol, interval, int((pos & (h < l)).sum()))
-    f.add("high below open or close", symbol, interval,
-          int((pos & (h < np.maximum(o, c) - 1e-9)).sum()))
-    f.add("low above open or close", symbol, interval,
-          int((pos & (l > np.minimum(o, c) + 1e-9)).sum()))
+    f.add("high/low did not contain open/close (repaired)", symbol, interval,
+          int((pos & ((h < l) | (h < np.maximum(o, c) - 1e-9)
+                      | (l > np.minimum(o, c) + 1e-9))).sum()))
     f.add("negative volume", symbol, interval, int((v < 0).sum()))
 
     # ---- suspicious values ----
     frozen = (o == h) & (h == l) & (l == c) & (v > 0)
     f.add("frozen bar, traded (o=h=l=c, volume>0)", symbol, interval, int(frozen.sum()))
+    if symbol in INDICES:
+        return          # an index has no volume; every volume check below is moot
     zero_vol = v == 0
     f.add("zero-volume bar", symbol, interval, int(zero_vol.sum()))
 
@@ -90,7 +110,10 @@ def check_frame(f: Findings, symbol: str, interval: str, d: pd.DataFrame) -> Non
                .rolling(41, center=True, min_periods=5).median().ffill().bfill().to_numpy())
         ok = ~np.isnan(ref) & (ref > 0)
         off = zero_vol & ok & ((c < 0.2 * ref) | (c > ref / 0.2))
-        f.add("zero-volume bar, price far off the tape", symbol, interval, int(off.sum()))
+        f.add("zero-volume bar, price far off the tape (dropped)", symbol,
+              interval, int(off.sum()))
+
+    traded = v > 0
 
     # leading / trailing padding: no trade ever happened on these bars
     if (v > 0).any():
@@ -101,8 +124,24 @@ def check_frame(f: Findings, symbol: str, interval: str, d: pd.DataFrame) -> Non
     else:
         f.add("no traded bar in the whole file", symbol, interval, 1)
 
+    # A single-day move whose RATIO lands on a common split or bonus ratio. Kite
+    # serves prices UNADJUSTED for corporate actions, so a 2:1 split arrives as a
+    # 50% crash and any open position is stopped out at a loss that never happened.
+    # These bars have real volume and plausible prices, so no other check sees them.
+    # A market-wide crash moves many symbols at once; a split moves one, by a ratio
+    # close to a simple fraction -- that is what separates them.
+    if interval == "day" and traded.sum() > 30:
+        tcl = c[traded]
+        ratio = tcl[1:] / np.where(tcl[:-1] == 0, np.nan, tcl[:-1])
+        common = [1/2, 1/3, 1/4, 1/5, 1/10, 2/5, 3/5, 2/3, 3/2, 2.0, 5/2, 3.0, 5.0, 10.0]
+        near = np.zeros(len(ratio), dtype=bool)
+        for k in common:
+            near |= np.abs(ratio - k) < 0.03 * k
+        big = np.abs(ratio - 1) > 0.45
+        f.add("SUSPECTED UNADJUSTED SPLIT / BONUS", symbol, interval,
+              int(np.nansum(near & big)))
+
     # extreme single-bar move between TRADED bars
-    traded = v > 0
     tc = c[traded]
     if len(tc) > 2:
         r = np.abs(np.diff(tc) / np.where(tc[:-1] == 0, np.nan, tc[:-1]))
@@ -111,9 +150,10 @@ def check_frame(f: Findings, symbol: str, interval: str, d: pd.DataFrame) -> Non
               int(np.nansum(r > limit)), f"max {np.nanmax(r):.0%}" if len(r) else "")
 
     # ---- calendar ----
-    f.add("weekend bar", symbol, interval, int((ts.dt.dayofweek >= 5).sum()))
+    if symbol not in ALWAYS_ON:
+        f.add("weekend bar", symbol, interval, int((ts.dt.dayofweek >= 5).sum()))
     f.add("future-dated bar", symbol, interval, int((ts > pd.Timestamp.now()).sum()))
-    if interval != "day":
+    if interval != "day" and symbol not in ALWAYS_ON:
         tod = ts - ts.dt.normalize()
         f.add("bar outside 09:15-15:35", symbol, interval,
               int(((tod < SESSION_OPEN) | (tod > SESSION_CLOSE)).sum()))
@@ -190,15 +230,24 @@ def main() -> None:
     print(f"  {'check':<46s}{'symbols':>9s}{'bars':>11s}")
     print("=" * 78)
     grouped = f.by_check()
-    order = sorted(grouped, key=lambda k: -sum(r[3] for r in grouped[k]))
-    for check in order:
-        rows = grouped[check]
-        syms = len({r[1] for r in rows})
-        total = sum(r[3] for r in rows)
-        print(f"  {check:<46s}{syms:>9,}{total:>11,}")
-        if args.detail:
-            for _, sym, iv, cnt, note in sorted(rows, key=lambda r: -r[3])[:25]:
-                print(f"      {sym:<14s}{iv:<10s}{cnt:>8,}  {note}")
+
+    def block(title, checks):
+        if not checks:
+            return
+        print(f"\n  {title}")
+        print("  " + "-" * 74)
+        for check in sorted(checks, key=lambda k: -sum(r[3] for r in grouped[k])):
+            rows = grouped[check]
+            print(f"  {check:<46s}{len({r[1] for r in rows}):>9,}"
+                  f"{sum(r[3] for r in rows):>11,}")
+            if args.detail:
+                for _, sym, iv, cnt, note in sorted(rows, key=lambda r: -r[3])[:25]:
+                    print(f"      {sym:<14s}{iv:<10s}{cnt:>8,}  {note}")
+
+    block("NEEDS A DECISION -- not repaired anywhere",
+          [k for k in grouped if k not in BENIGN])
+    block("HANDLED -- repaired or dropped automatically on load",
+          [k for k in grouped if k in BENIGN])
     print("=" * 78)
     if not grouped:
         print("  no findings")
