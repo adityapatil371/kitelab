@@ -1,5 +1,19 @@
-"""Darvas: in on a 20-candle high, out on a 10-candle low.
+"""Darvas: a WEEKLY breakout gates a daily 20-candle-high entry.
 
+    gate    THE SAME RULE, one timeframe up, checked FIRST. While it is shut the
+            daily rule is not consulted at all.
+              opens   a weekly close above the previous 20 weekly candles' high
+              shuts   a weekly close at or below the previous 10 weekly candles' low
+            It is a state with memory, not a per-bar test. That matters: a
+            20-candle high is a record, and a record stops being one the moment
+            it is set, so testing "is this week above the 20-week high" on its
+            own would shut the gate a week after it opened. What keeps you in is
+            the 10-week low not being broken.
+
+            WHY (2026-09-01): on one timeframe the Turtle rule takes every
+            breakout, including the ones against the larger trend, and those are
+            where the losses came from. The weekly is the trend filter; the
+            daily is the timing.
     entry   the close finishes ABOVE the highest high of the previous 20 candles
     stop    the lowest low of the previous 10 candles, as it stands at entry
     exit    the close finishes AT OR BELOW the lowest low of the previous 10 candles,
@@ -9,6 +23,15 @@
 The two windows never include today's candle. Both are shifted one bar, so the
 line a trade is judged against was fully formed before the session it acts on.
 Without that shift a bar could break a high it had itself just set.
+
+The weekly gate is shifted the same way, and then some. Two separate guards
+against reading the future:
+  - its own channel is shift(1), so the week is not compared to itself;
+  - the week CONSULTED is the last one that has actually finished. On a Wednesday
+    the current week's bar is still forming and its close is not known, so using
+    it would let Thursday's decision depend on Friday's price.
+The gate is tested at ENTRY only. Once in, the exit is the daily channel alone --
+the position is not closed just because the weekly condition later lapses.
 
 Convention. Everything is read at closes, matching the class rule for the EMA
 stacks (2026-08-28): a close above the line buys at that close, a close below the
@@ -34,6 +57,8 @@ from .backtest import charges
 
 ENTRY_LEN = 20
 EXIT_LEN = 10
+WEEKLY_ENTRY_LEN = 20    # the weekly gate opens above this many weeks' high
+WEEKLY_EXIT_LEN = 10     # and shuts below this many weeks' low
 
 
 def channels(symbol: str, entry_len: int = ENTRY_LEN,
@@ -47,10 +72,58 @@ def channels(symbol: str, entry_len: int = ENTRY_LEN,
     return out
 
 
+def weekly_state(day: pd.DataFrame, entry_len: int = WEEKLY_ENTRY_LEN,
+                 exit_len: int = WEEKLY_EXIT_LEN) -> np.ndarray:
+    """Per WEEKLY bar: is the gate open at that week's close?
+
+    A state machine, not a formula. The gate has memory, so whether it is open
+    this week depends on a breakout that may have happened months ago and has
+    not been given back since.
+    """
+    week = frames.weekly(day)
+    close = week["close"].to_numpy(dtype=float)
+    upper = week["high"].rolling(entry_len).max().shift(1).to_numpy(dtype=float)
+    floor = week["low"].rolling(exit_len).min().shift(1).to_numpy(dtype=float)
+
+    on = np.zeros(len(week), dtype=bool)
+    state = False
+    for i in range(len(week)):
+        if state and np.isfinite(floor[i]) and close[i] <= floor[i]:
+            state = False
+        elif not state and np.isfinite(upper[i]) and close[i] > upper[i]:
+            state = True
+        on[i] = state
+    return on
+
+
+def weekly_gate(day: pd.DataFrame, entry_len: int = WEEKLY_ENTRY_LEN,
+                exit_len: int = WEEKLY_EXIT_LEN) -> np.ndarray:
+    """Per DAILY bar: was the gate open at the last COMPLETED week's close?
+
+    Two guards against reading the future. The weekly channel is shift(1), so a
+    week is never compared with itself; and the week CONSULTED is the previous
+    one, because on a Wednesday the current week has not closed and using it
+    would let Thursday's decision depend on Friday's price.
+    """
+    week = frames.weekly(day)
+    on = weekly_state(day, entry_len, exit_len)
+    pos = np.searchsorted(week["ts"].to_numpy(), day["ts"].to_numpy(), side="right") - 1
+    prev = pos - 1
+    out = np.zeros(len(day), dtype=bool)
+    usable = prev >= 0
+    out[usable] = on[prev[usable]]
+    return out
+
+
 def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
-             intrabar: bool = False) -> list[dict]:
-    """Walk the channels and produce closed trades, oldest first."""
+             intrabar: bool = False, weekly: bool = True) -> list[dict]:
+    """Walk the channels and produce closed trades, oldest first.
+
+    weekly=False drops the gate, giving the single-timeframe Turtle rule. That
+    is the control this whole change is measured against, not a fallback.
+    """
     frame = channels(symbol, entry_len, exit_len)
+    gate = (weekly_gate(frame) if weekly else np.ones(len(frame), dtype=bool))
     open_ = frame["open"].to_numpy(dtype=float)
     high = frame["high"].to_numpy(dtype=float)
     low = frame["low"].to_numpy(dtype=float)
@@ -64,6 +137,11 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
     position = 0
     while position < total:
         if not np.isfinite(upper[position]) or not np.isfinite(lower[position]):
+            position += 1
+            continue
+        # The weekly condition is checked FIRST. While it is false the daily
+        # channel is not consulted at all.
+        if not gate[position]:
             position += 1
             continue
         broke = (high[position] > upper[position] if intrabar

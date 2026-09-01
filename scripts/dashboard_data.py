@@ -8,7 +8,7 @@ among these precomputed results, nothing is simulated in the browser.
 
 Everything is combinable with everything:
     grid        one-account simulations for FOUR strategy stacks (EMA on
-                M/W/D, Q/M/W and W/D/H timeframes, plus ATH Breakout)
+                M/W/D and Q/M/W timeframes, plus the Darvas channel)
                 x universe (all / in-sample / holdout -- sizes are counted from
                 config, never hardcoded)
                 x risk (0.25-2%) x capital (50k-5L)
@@ -67,14 +67,18 @@ FILL_MODES = [("0", "Perfect fills"),
 FILL_SPEC = {"0": (False, False), "2": (True, False),
              "3": (False, True), "1": (True, True)}       # key -> (costs, cap)
 REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnover
-CAPITALS = [50_000, 100_000, 250_000, 500_000]
+# Small accounts dropped 2026-09-01: below ~Rs1 lakh the size cap decides the
+# result more than the rule does, which made those columns a study of the cap.
+CAPITALS = [100_000, 200_000, 300_000]
 ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
           ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
           ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005)]
 STEP = 10
 BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
+# W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
+# computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
+# variant still work and still have scripts -- they are simply not on the board.
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "wdh": "EMA · W/D/H", "brk": "ATH Breakout",
                    "dv": "Darvas channel"}
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as
@@ -82,11 +86,19 @@ STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
 # stacks: "dv|20-10|all|1|250000|0". 20/10 is what the class specified and is the
 # page default; it is not the best of them.
 DARVAS_WINDOWS = [(10, 5), (20, 10), (20, 20), (40, 20), (55, 20)]
-DARVAS_TAGS = [f"{a}-{b}" for a, b in DARVAS_WINDOWS]
+
+# Every window is computed BOTH ways, because that is the question being asked.
+# The class found that one timeframe took every breakout, including the ones
+# against the larger trend, and that those were where the losses were. The weekly
+# gate is the proposed fix; "1TF" is the control it has to beat. Testing the gate
+# at only one window would answer half the question.
+DARVAS_GATED = [True, False]
+DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
+               for g in DARVAS_GATED for a, b in DARVAS_WINDOWS]
 DARVAS_DEFAULT = "20-10"
 
 # The one setting each strategy shows on the per-stock page.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "wdh": 0.02, "brk": 0.02, "dv": DARVAS_DEFAULT}
+PRIMARY = {"ema": 0.02, "qmw": 0.02, "dv": DARVAS_DEFAULT}
 
 
 def tag(band) -> str:
@@ -297,27 +309,26 @@ def main() -> None:
             f"EMA{cache_tag}_all", lambda s, b=band: backtest.simulate(s, band=b))
         base[("qmw", band)] = cached_signals(
             f"QMW{cache_tag}_all", variant_builder("QMW", band))
-        base[("wdh", band)] = cached_signals(
-            f"WDH{cache_tag}_all", variant_builder("WDH", band))
         print(f"    band {band:.0%} ready", flush=True)
-    base[("brk", 0.02)] = cached_signals(
-        "Breakout_all", lambda s: strategies.ath_breakout_trades(s, trailing_stops=True))
-    for (entry_len, exit_len), window_tag in zip(DARVAS_WINDOWS, DARVAS_TAGS):
-        base[("dv", window_tag)] = cached_signals(
-            f"Darvas_{entry_len}_{exit_len}_all",
-            lambda s, a=entry_len, b=exit_len: darvas.simulate(s, a, b))
+    # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a trade
+    # list built before that date is a different strategy under the same label.
+    # The old caches are UNSTAMPED, which means load() would hand them back
+    # without complaint -- renaming is what forces the rebuild.
+    for gated in DARVAS_GATED:
+        for entry_len, exit_len in DARVAS_WINDOWS:
+            window_tag = f"{entry_len}-{exit_len}" + ("" if gated else " 1TF")
+            stem = (f"Darvas_w{darvas.WEEKLY_ENTRY_LEN}_{darvas.WEEKLY_EXIT_LEN}"
+                    if gated else "Darvas_1tf")
+            base[("dv", window_tag)] = cached_signals(
+                f"{stem}_{entry_len}_{exit_len}_all",
+                lambda s, a=entry_len, b=exit_len, g=gated:
+                    darvas.simulate(s, a, b, weekly=g))
     print("    darvas windows ready", flush=True)
     scale_lists = {
         ("ema", "half"): cached_signals("EMA_half_all",
                                         lambda s: backtest.simulate(s, scale_out="half")),
         ("ema", "half_be"): cached_signals("EMA_halfbe_all",
                                            lambda s: backtest.simulate(s, scale_out="half_be")),
-        ("brk", "half"): cached_signals("Breakout_half_all",
-                                        lambda s: strategies.ath_breakout_trades(
-                                            s, trailing_stops=True, scale_out="half")),
-        ("brk", "half_be"): cached_signals("Breakout_halfbe_all",
-                                           lambda s: strategies.ath_breakout_trades(
-                                               s, trailing_stops=True, scale_out="half_be")),
     }
 
     # Nobody at class level follows the whole universe; ~10 is realistic. Draw 75 random
@@ -345,10 +356,12 @@ def main() -> None:
     # Counted, not typed. Seven stocks were removed from the universe on
     # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
     # otherwise have quietly gone on saying it.
+    # In-sample and holdout splits dropped 2026-09-01. What is left is the two
+    # questions actually being asked: the whole universe, and the 10 stocks you
+    # would really hold. cfg.in_sample / cfg.out_of_sample still exist for
+    # scripts that want them.
     universes = {"all": (f"All {len(cfg.all_symbols)} stocks", None),
-                 "b10": ("10 random stocks", set(median_basket)),
-                 "in": (f"{len(cfg.in_sample)} in-sample", set(cfg.in_sample)),
-                 "out": (f"{len(cfg.out_of_sample)} holdout", set(cfg.out_of_sample))}
+                 "b10": ("10 random stocks", set(median_basket))}
 
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and
@@ -394,7 +407,7 @@ def main() -> None:
     print("  universe trade metrics done", flush=True)
 
     scaleout = {}
-    for skey in ("ema", "brk"):
+    for skey in ("ema",):
         lists = {None: base[(skey, 0.02)], "half": scale_lists[(skey, "half")],
                  "half_be": scale_lists[(skey, "half_be")]}
         scaleout[skey] = {}
@@ -416,9 +429,7 @@ def main() -> None:
     print("  scale-out R sweep:", flush=True)
     r_lists = {}
     for skey, builder in (("ema", lambda s, v, r: backtest.simulate(s, scale_out=v,
-                                                                    scale_r=r)),
-                          ("brk", lambda s, v, r: strategies.ath_breakout_trades(
-                              s, trailing_stops=True, scale_out=v, scale_r=r))):
+                                                                    scale_r=r)),):
         for variant, _vlabel in SCALE_RULES:
             for multiple in SCALE_MULTIPLES:
                 if multiple == 1.0:
@@ -431,7 +442,7 @@ def main() -> None:
                     name, lambda s, v=variant, r=multiple: builder(s, v, r))
 
     scaleout_r = {}
-    for skey in ("ema", "brk"):
+    for skey in ("ema",):
         for ukey, (_, members) in universes.items():
             def cut(trades):
                 return (trades if members is None
@@ -521,7 +532,10 @@ def main() -> None:
 
     print("  assets detail:", flush=True)
     assets = {}
-    for symbol, brk_tf, fee in ASSETS:
+    # The middle field was the breakout entry timeframe; ATH Breakout is no
+    # longer computed, so it is unused. ASSETS keeps its shape because
+    # scripts/scaleout_test.py still reads it.
+    for symbol, _entry_tf, fee in ASSETS:
         backtest.FLAT_FEE_RATE = fee
         sizing.FRACTIONAL = True
         try:
@@ -532,13 +546,12 @@ def main() -> None:
                             "uw": round(bh["longest_uw"] / 365.25, 1),
                             "years": round(bh["years"], 1)}}
             builders = {"ema": lambda so=None: backtest.simulate(symbol, scale_out=so),
-                        "brk": lambda so=None: strategies.ath_breakout_trades(
-                            symbol, True, timeframe=brk_tf, scale_out=so),
                         "qmw": lambda so=None: variant_builder("QMW")(symbol),
-                        "wdh": lambda so=None: variant_builder("WDH")(symbol),
                         # Darvas needs only daily bars, so it runs on every
                         # instrument here, at the windows the class specified.
                         "dv": lambda so=None: darvas.simulate(symbol, 20, 10)}
+            # (per-stock pages show the gated 20/10; the 1TF control lives in the
+            #  grid, where it can be compared across every setting at once)
             for skey, build in builders.items():
                 try:
                     trades = build()
@@ -549,9 +562,9 @@ def main() -> None:
                 trades = positions(trades)
                 entry[skey] = {"stats": trade_stats(trades), "trades": slim_trades(trades),
                                "account": run_payload(r) if r else None}
-            # scale-out variants for the two scale-out-capable strategies
+            # scale-out variants for the scale-out-capable strategy
             entry["scaleout"] = {}
-            for skey in ("ema", "brk"):
+            for skey in ("ema",):
                 rows = []
                 for label, variant in SCALE_VARIANTS:
                     try:
@@ -567,7 +580,8 @@ def main() -> None:
         print(f"    {symbol} done", flush=True)
 
     tf = {}
-    for key, label, desc in TF_VARIANTS:
+    # W/D/H dropped 2026-09-01; tf_compare still defines it for its own script.
+    for key, label, desc in [v for v in TF_VARIANTS if v[0] != "WDH"]:
         rows, allt = [], []
         for symbol in ASSIGNED:
             w = window_start(symbol)

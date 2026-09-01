@@ -30,9 +30,9 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from kitelab import backtest, frames, indicators, report, sizing
+from kitelab import backtest, config, frames, indicators, report, sizing
 
-ASSIGNED = ["HAL", "HINDZINC", "HYUNDAI", "IRFC", "INDHOTEL"]
+ASSIGNED = config.CLASS_ASSIGNED
 LENGTH = 20
 BAND = 0.02
 

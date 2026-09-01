@@ -151,8 +151,15 @@ ASSETS = ["BITCOIN", "NIFTY 50", "NIFTY BANK", "GOLD", "SILVER", "CRUDEOIL"]
 
 
 def working_set() -> set[str]:
-    """The symbols the project actually uses: the universe plus the class assets."""
-    return set(config.load().all_symbols) | set(ASSETS)
+    """Every symbol the project needs a price file for.
+
+    Three groups, and the third is easy to forget: the tradeable universe, the
+    six class assets, and the five assigned stocks -- one of which (HYUNDAI) is
+    NOT in the universe, because it failed the quality gate but is still charted.
+    Leaving it out deleted its cleaned files and broke the dashboard rebuild.
+    """
+    return (set(config.load().all_symbols) | set(ASSETS)
+            | set(config.CLASS_ASSIGNED))
 
 
 def in_scope(path, keep: set[str]) -> bool:
