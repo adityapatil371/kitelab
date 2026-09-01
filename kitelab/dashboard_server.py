@@ -57,9 +57,13 @@ def status() -> dict:
     if not DATA_PATH.exists():
         return {"ok": False, "stale": False, "message": "No dashboard data yet."}
     try:
-        now = sorted(config.load().all_symbols)
-    except SystemExit as exc:                    # no API key configured
-        return {"ok": True, "stale": False, "message": str(exc)}
+        # No secrets needed: the universe comes from config.local.toml, not from
+        # the Kite API. Requiring a key here once made this report "not stale"
+        # on a machine that simply had not sourced its secrets.
+        now = sorted(config.load(require_secrets=False).all_symbols)
+    except SystemExit as exc:
+        return {"ok": False, "stale": True,
+                "message": f"Cannot check whether these numbers are current: {exc}"}
 
     if not STAMP_PATH.exists():
         return {"ok": True, "stale": True, "built": None,
@@ -128,7 +132,18 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port: int = 8765) -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        # Almost always "address already in use": the dashboard is running in
+        # another window. A stack trace here tells the reader nothing useful.
+        if exc.errno in (48, 98):            # EADDRINUSE on macOS / Linux
+            raise SystemExit(
+                f"\n  Port {port} is already in use.\n"
+                f"  The dashboard may already be running: http://localhost:{port}\n"
+                f"  Or start this one elsewhere:  python -m scripts.dashboard "
+                f"--port {port + 1}\n")
+        raise
     print(f"\n  dashboard running at http://127.0.0.1:{port}")
     print("  press Ctrl-C to stop\n")
     try:

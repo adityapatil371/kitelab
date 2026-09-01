@@ -251,7 +251,16 @@ class Config:
         return self._dedupe(self.symbols, self.extended)
 
 
-def load() -> Config:
+def load(require_secrets: bool = True) -> Config:
+    """The configuration. Pass require_secrets=False when you only need the
+    universe and not the Kite API.
+
+    Reading which stocks are configured has nothing to do with holding trading
+    credentials, and tying the two together is not harmless: the dashboard's
+    freshness check called this, hit the missing-key exit on a machine where the
+    secrets had not been sourced, and reported "not stale" -- announcing that it
+    had checked when it had not looked at all.
+    """
     if not CONFIG_PATH.exists():
         raise SystemExit(
             "Missing config.local.toml.\n"
@@ -267,15 +276,16 @@ def load() -> Config:
     api_key = os.environ.get("KITE_API_KEY") or kite.get("api_key", "")
     api_secret = os.environ.get("KITE_API_SECRET") or kite.get("api_secret", "")
 
-    for field, env_var, value in (
-        ("api_key", "KITE_API_KEY", api_key),
-        ("api_secret", "KITE_API_SECRET", api_secret),
-    ):
-        if not value or value.startswith("your_"):
-            raise SystemExit(
-                f"{field} is not set. Either export {env_var}, "
-                f"or fill in [kite] {field} in config.local.toml."
-            )
+    if require_secrets:
+        for field, env_var, value in (
+            ("api_key", "KITE_API_KEY", api_key),
+            ("api_secret", "KITE_API_SECRET", api_secret),
+        ):
+            if not value or value.startswith("your_"):
+                raise SystemExit(
+                    f"{field} is not set. Either export {env_var}, "
+                    f"or fill in [kite] {field} in config.local.toml."
+                )
 
     # DATA is read-only when it points at the shared raw directory, so only create
     # it when it is the repo's own ./data fallback and does not exist yet.
