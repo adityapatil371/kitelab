@@ -12,7 +12,7 @@
 # config.local.toml. Keep your secrets out of this.
 #
 # It also does not compute anything. It serves the numbers already on disk. To
-# rebuild those (the long job), run:  ./.venv/bin/python -m scripts.dashboard_data
+# rebuild those (the long job), run:  python3 -m scripts.dashboard_data
 
 set -euo pipefail
 
@@ -45,44 +45,57 @@ fi
 find_dir() {           # find_dir <marker-glob> <candidate>...
     local marker="$1"; shift
     for d in "$@"; do
-        # shellcheck disable=SC2086
-        if [ -d "$d" ] && compgen -G "$d/$marker" > /dev/null; then
+        if [ -d "$d" ] && compgen -G "$d/$marker" > /dev/null 2>&1; then
             echo "$d"; return 0
         fi
     done
     return 1
 }
 
+# Note the order of the path parts: it is data/clean/kitelab, NOT
+# data/kitelab/clean. Both spellings are tried, along with the /data mount used
+# on the shared machine.
+CLEAN_CANDIDATES=(
+    "$HOME/data/clean/kitelab"
+    "$HOME/data/kitelab/clean"
+    "/data/clean/kitelab"
+    "$HOME/data/kitelab"
+    "./data"
+)
+RAW_CANDIDATES=(
+    "$HOME/data/raw/kitelab"
+    "$HOME/data/kitelab/raw"
+    "/data/raw/kitelab"
+    "$HOME/data/kitelab"
+    "./data"
+)
+
 if [ -z "${KITELAB_CLEAN_DIR:-}" ]; then
-    KITELAB_CLEAN_DIR="$(find_dir '*_day.parquet' \
-        "$HOME/data/kitelab/clean" \
-        "$HOME/data/kitelab" \
-        "/data/clean/kitelab" \
-        "./data" || true)"
+    # Price files are the better marker, but a directory holding only a built
+    # dashboard.json is still the right one to serve from.
+    KITELAB_CLEAN_DIR="$(find_dir '*_day.parquet' "${CLEAN_CANDIDATES[@]}" \
+                      || find_dir 'dashboard.json' "${CLEAN_CANDIDATES[@]}" \
+                      || true)"
 fi
 
 if [ -z "${KITELAB_DATA_DIR:-}" ]; then
-    KITELAB_DATA_DIR="$(find_dir '*_day.parquet' \
-        "$HOME/data/kitelab/raw" \
-        "$HOME/data/kitelab" \
-        "/data/raw/kitelab" \
-        "./data" || true)"
+    KITELAB_DATA_DIR="$(find_dir '*_day.parquet' "${RAW_CANDIDATES[@]}" || true)"
 fi
 
 if [ -z "$KITELAB_CLEAN_DIR" ]; then
-    cat >&2 <<'EOF'
+    cat >&2 <<EOF
 
   Could not find your cleaned data.
 
   The dashboard reads price files and dashboard.json from the CLEAN directory.
   Tell it where that is, then run this again:
 
-      export KITELAB_CLEAN_DIR="$HOME/data/kitelab/clean"
-      export KITELAB_DATA_DIR="$HOME/data/kitelab/raw"
+      export KITELAB_CLEAN_DIR="\$HOME/data/clean/kitelab"
+      export KITELAB_DATA_DIR="\$HOME/data/raw/kitelab"
 
   If you have raw downloads but have never cleaned them:
 
-      ./.venv/bin/python -m scripts.clean_data
+      $PY -m scripts.clean_data
 
 EOF
     exit 1
