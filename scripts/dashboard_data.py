@@ -35,8 +35,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kitelab import (backtest, config, darvas, frames, portfolio, sizing, slippage,
-                     strategies)
+from kitelab import (backtest, config, darvas, frames, portfolio, signals, sizing,
+                     slippage, strategies)
 from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
@@ -130,10 +130,17 @@ def run_payload(r):
 
 
 def cached_signals(name: str, build) -> list[dict]:
-    path = CACHE / f"{name}.pkl"
-    if path.exists():
-        return pickle.loads(path.read_bytes())
+    """Trades for one signal list, rebuilt whenever the cache cannot be trusted.
+
+    A cache used to be accepted because its FILE EXISTED, which meant a universe
+    change, a refetch or a strategy fix left it silently wrong. kitelab.signals
+    stamps each cache with the universe, the price files and the strategy code it was
+    built from, and load() returns None when any of those has moved.
+    """
     cfg = config.load()
+    hit = signals.load(name, cfg.all_symbols)
+    if hit is not None:
+        return hit
     out = []
     for index, symbol in enumerate(cfg.all_symbols, 1):
         try:
@@ -142,7 +149,7 @@ def cached_signals(name: str, build) -> list[dict]:
             pass
         if index % 25 == 0:
             print(f"    {name}: {index}/{len(cfg.all_symbols)}", flush=True)
-    path.write_bytes(pickle.dumps(out))
+    signals.save(name, out, cfg.all_symbols)
     return out
 
 

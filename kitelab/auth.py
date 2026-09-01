@@ -17,9 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from kiteconnect import KiteConnect
 
-from .config import DATA, Config
-
-TOKEN_PATH = DATA / ".access_token.json"
+from .config import TOKEN_PATH, Config
 
 
 def _load_cached(api_key: str) -> str | None:
