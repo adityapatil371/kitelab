@@ -22,14 +22,53 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 
 ## Daily use
 
+Three jobs, deliberately separate, because they need different things.
+
+### 1. Get new data — the only job that needs a Zerodha account
+
 ```
 ./.venv/bin/python -m scripts.login       # once a day; tokens die at ~06:00 IST
 ./.venv/bin/python -m scripts.backfill    # first run pulls history, later runs top up
-./.venv/bin/python -m scripts.show        # coverage + health check
 ```
+
+This writes raw candles and stops there. It does not clean, and it does not touch
+the dashboard.
 
 The login prints a URL. You open it, log in to Zerodha yourself, and paste back the
 redirect URL. Nothing in this project asks for or stores your password, PIN, or TOTP.
+
+### 2. Refresh the dashboard — needs the venv, needs no account
+
+```
+./.venv/bin/python -m scripts.refresh           # do whatever is stale
+./.venv/bin/python -m scripts.refresh --check   # say what is stale, change nothing
+```
+
+It decides for itself what work is needed: cleans raw files that arrived since the
+last clean, and rebuilds `dashboard.json` if the universe, the price data or the
+strategy code has moved. When nothing has changed it prints "already current" in a
+second, which matters because a full rebuild is ~30 minutes.
+
+### 3. Look at it — needs neither
+
+```
+./run_dashboard.sh
+```
+
+Standard library only. No venv, no API keys, no computation: it serves what is on
+disk and opens your browser. If the numbers are out of date the page says so, in a
+red banner naming what changed.
+
+### What needs what
+
+| | Zerodha account | venv (pandas etc.) |
+|---------------------------|:---:|:---:|
+| `scripts.backfill` (get data) | yes | yes |
+| `scripts.refresh` (rebuild)   | no  | yes |
+| `./run_dashboard.sh` (view)   | no  | no  |
+
+`config.load()` never asks for credentials. Only `kitelab/auth.py` reads them, and
+only the three fetching programs call `config.require_secrets()`.
 
 ## Timeframes
 

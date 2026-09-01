@@ -11,8 +11,10 @@
 # so the server reads the configured stock list straight from
 # config.local.toml. Keep your secrets out of this.
 #
-# It also does not compute anything. It serves the numbers already on disk. To
-# rebuild those (the long job), run:  python3 -m scripts.dashboard_data
+# It also does not compute anything, and needs no venv -- it is standard library
+# only. To bring the numbers up to date (the long job, needs the venv):
+#
+#     ./.venv/bin/python -m scripts.refresh
 
 set -euo pipefail
 
@@ -22,17 +24,14 @@ PORT="${1:-8765}"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # ---------------------------------------------------------------- python ----
-# Prefer the project's own virtual environment; fall back to system python3.
-if [ -x ".venv/bin/python" ]; then
-    PY="./.venv/bin/python"
-else
-    PY="$(command -v python3 || true)"
-    if [ -z "$PY" ]; then
-        echo "No python3 found. Install it, or rebuild the venv:" >&2
-        echo "    python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt" >&2
-        exit 1
-    fi
-    echo "note: .venv not found, using $PY"
+# Viewing needs NOTHING but the standard library -- no pandas, no pyarrow, no
+# venv. So plain python3 is the right choice here, and the absence of a .venv is
+# not a problem worth mentioning. The venv belongs to the programs that compute:
+# scripts.refresh and scripts.backfill.
+PY="$(command -v python3 || true)"
+if [ -z "$PY" ]; then
+    echo "No python3 found. The dashboard needs Python 3.11 or newer." >&2
+    exit 1
 fi
 
 # ------------------------------------------------------------------ data ----
@@ -95,7 +94,7 @@ if [ -z "$KITELAB_CLEAN_DIR" ]; then
 
   If you have raw downloads but have never cleaned them:
 
-      $PY -m scripts.clean_data
+      ./.venv/bin/python -m scripts.refresh
 
 EOF
     exit 1
@@ -113,7 +112,7 @@ if [ ! -f "$KITELAB_CLEAN_DIR/dashboard.json" ]; then
     echo
     echo "  WARNING: no dashboard.json in that directory."
     echo "  The page will load but show 'No data yet'. Build it with:"
-    echo "      $PY -m scripts.dashboard_data"
+    echo "      ./.venv/bin/python -m scripts.refresh"
 fi
 
 # ------------------------------------------------------------------ port ----

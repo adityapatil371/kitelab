@@ -6,7 +6,7 @@
 
 Run it with `python -m scripts.dashboard`, then open
 http://localhost:8765. Rebuild the numbers it serves with
-`python -m scripts.dashboard_data`.
+`python -m scripts.refresh`.
 
 The page is a pure viewer: every control selects among precomputed
 backtests, so the server only ever reads one JSON file from disk.
@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import config
+from . import config, signals
 from .config import CLEAN
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
@@ -40,10 +40,20 @@ STAMP_PATH = CLEAN / "dashboard.stamp.json"
 
 
 def write_stamp(symbols, built: str) -> None:
-    """Record which universe a dashboard.json was built over. Called by
-    scripts.dashboard_data straight after it writes the big file."""
-    STAMP_PATH.write_text(json.dumps(
-        {"built": built, "symbols": sorted(symbols)}, indent=2))
+    """Record what a dashboard.json was built from. Called by
+    scripts.dashboard_data straight after it writes the big file.
+
+    Three things can make the numbers wrong, and all three are recorded: the
+    UNIVERSE (which stocks), the PRICE FILES (their size and mtime) and the
+    STRATEGY CODE. signals.stamp() already computes exactly that trio for the
+    trade caches, so the dashboard uses the same definition rather than a
+    second, slightly different one.
+    """
+    STAMP_PATH.write_text(json.dumps({
+        "built": built,
+        "symbols": sorted(symbols),
+        "inputs": signals.stamp(symbols),
+    }, indent=2))
 
 
 def status() -> dict:
@@ -66,11 +76,33 @@ def status() -> dict:
         return {"ok": True, "stale": True, "built": None,
                 "message": ("This dashboard carries no record of the universe it "
                             "was built from, so it cannot be checked. Rebuild it "
-                            "with: python -m scripts.dashboard_data")}
+                            "with: python -m scripts.refresh")}
 
     stamp = json.loads(STAMP_PATH.read_text())
     was = sorted(stamp.get("symbols", []))
     if was == now:
+        # Same stocks. The price files or the strategy code can still have moved
+        # underneath the snapshot, which changes every number without changing
+        # the universe -- so check those too rather than declaring it current.
+        want, got = signals.stamp(now), stamp.get("inputs")
+        if got is None:
+            return {"ok": True, "stale": True, "built": stamp.get("built"),
+                    "n_built": len(was), "n_now": len(now), "reason": "unrecorded",
+                    "message": ("The universe still matches, but this dashboard "
+                                "predates input tracking, so whether the price "
+                                "data or strategy code has changed underneath it "
+                                "cannot be checked. Rebuild with: "
+                                "python -m scripts.refresh")}
+        if got != want:
+            why = ("the PRICE DATA has changed" if got.get("data") != want["data"]
+                   else "the STRATEGY CODE has changed" if got.get("code") != want["code"]
+                   else "its inputs have changed")
+            return {"ok": True, "stale": True, "built": stamp.get("built"),
+                    "n_built": len(was), "n_now": len(now),
+                    "reason": "inputs",
+                    "message": (f"These numbers cover the right {len(now)} stocks, "
+                                f"but {why} since they were built. Rebuild with: "
+                                "python -m scripts.refresh")}
         return {"ok": True, "stale": False, "built": stamp.get("built"),
                 "n_built": len(was), "n_now": len(now)}
 
@@ -90,7 +122,7 @@ def status() -> dict:
             "dropped": dropped[:200], "added": added[:200],
             "message": ("These numbers were built over " f"{len(was)} stocks; you "
                         f"now trade {len(now)}. " + "; ".join(bits).capitalize() +
-                        ". Rebuild with: python -m scripts.dashboard_data")}
+                        ". Rebuild with: python -m scripts.refresh")}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -118,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(data_file.read_bytes(), "application/json")
                 else:
                     self._send(json.dumps({
-                        "error": "no data yet -- run: python -m scripts.dashboard_data"
+                        "error": "no data yet -- run: python -m scripts.refresh"
                     }).encode(), "application/json", 404)
             else:
                 self._send(json.dumps({"error": "not found"}).encode(),
