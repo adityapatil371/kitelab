@@ -13,9 +13,13 @@ from datetime import datetime
 
 import pandas as pd
 
-from .config import DATA
+from .config import CLEAN
 
-LEVELS_PATH = DATA / "levels.json"
+# Hand-drawn and NOT reproducible from the raw downloads, but it is edited at
+# runtime, so it cannot live in the read-only raw directory. It sits in CLEAN
+# with the derived data and must be backed up separately -- deleting CLEAN
+# throws away work that no rebuild can recreate.
+LEVELS_PATH = CLEAN / "levels.json"
 
 # Two different questions need two different bands.
 #
@@ -61,7 +65,7 @@ def load_all() -> dict[str, list[dict]]:
 
 
 def save_all(levels: dict[str, list[dict]]) -> None:
-    DATA.mkdir(exist_ok=True)
+    CLEAN.mkdir(parents=True, exist_ok=True)
     LEVELS_PATH.write_text(json.dumps(levels, indent=2, sort_keys=True))
 
 

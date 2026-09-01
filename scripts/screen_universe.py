@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 
 from kitelab import config
-from kitelab.config import DATA
+from kitelab.config import CLEAN, DATA
 
 MIN_YEARS = 5.0            # 20 quarterly bars for the Q/M/W stack
 MIN_BARS = 1_100          # ~4.4 trading years; belt and braces with MIN_YEARS
@@ -81,7 +81,7 @@ def ordinary_equities() -> pd.DataFrame:
 
 def assess(symbol: str) -> dict | None:
     """Every quality check, on the daily file. None if there is no file yet."""
-    p = DATA / f"{symbol}_day.parquet"
+    p = CLEAN / f"{symbol}_day.parquet"
     if not p.exists():
         return None
     try:
@@ -177,7 +177,7 @@ def main() -> None:
 
     if args.candidates:
         wanted = sorted(set(eq.tradingsymbol) - held)
-        target = DATA / "candidates.txt"
+        target = CLEAN / "candidates.txt"
         target.write_text(
             "# Ordinary NSE equities not yet in the universe.\n"
             f"# Written by scripts.screen_universe from {dump.name}.\n"
@@ -241,7 +241,7 @@ def main() -> None:
         if not progressed:
             break
 
-    target = DATA / "accepted.txt"
+    target = CLEAN / "accepted.txt"
     target.write_text(
         f"# {len(chosen)} stocks that passed every quality check, sampled evenly\n"
         f"# across liquidity buckets, longest history first within each.\n"

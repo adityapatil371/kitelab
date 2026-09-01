@@ -25,18 +25,15 @@ been if you stopped early.
 """
 from __future__ import annotations
 
-import pickle
 import random
-from pathlib import Path
 
 import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from kitelab import config, frames, portfolio, report, slippage
+from kitelab import config, frames, portfolio, report, signals, slippage
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000.0
 RISK = 0.01
 BASKET = 25          # stocks per draw, so every bucket is judged at equal breadth
@@ -66,9 +63,11 @@ def turnover_buckets(symbols) -> dict[str, list[str]]:
     return out
 
 
-def load(cache: str) -> dict[str, list]:
+def load(cache: str, symbols) -> dict[str, list]:
+    """Cached trades grouped by symbol. signals.require refuses a cache built
+    from a different universe, different price files or different code."""
     by: dict[str, list] = {}
-    for t in pickle.loads((CACHE / f"{cache}.pkl").read_bytes()):
+    for t in signals.require(cache, symbols):
         by.setdefault(t["symbol"], []).append(t)
     return by
 
@@ -149,7 +148,7 @@ def main() -> None:
             f"> Rs{low:g}cr" if high == float("inf") else f"Rs{low:g}-{high:g}cr")
         print(f"    {name:<7} {span:<14} {len(buckets[name]):>3} stocks")
 
-    loaded = {label: load(cache) for label, cache in STRATEGIES}
+    loaded = {label: load(cache, cfg.all_symbols) for label, cache in STRATEGIES}
     sections = []
 
     rows = [(label, {n: whole_bucket(loaded[label], buckets[n], False)

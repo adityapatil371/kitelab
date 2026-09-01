@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .config import DATA
+from .config import CLEAN
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 
@@ -40,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send((WEB_ROOT / "dashboard.html").read_bytes(),
                            "text/html; charset=utf-8")
             elif route == "/api/dashboard":
-                data_file = DATA / "dashboard.json"
+                data_file = CLEAN / "dashboard.json"
                 if data_file.exists():
                     self._send(data_file.read_bytes(), "application/json")
                 else:

@@ -17,16 +17,13 @@ Repeat many times to get a distribution rather than one anecdote.
 """
 from __future__ import annotations
 
-import pickle
 import random
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from kitelab import portfolio
+from kitelab import config, portfolio, signals
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000.0
 RISK = 0.01
 RATES = [0.002, 0.007]      # per stock per year: measured, and pessimistic bound
@@ -56,7 +53,7 @@ def apply_deaths(trades: list[dict], deaths: dict[str, pd.Timestamp]) -> list[di
 
 
 def main() -> None:
-    trades = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
+    trades = signals.require("EMA_all", config.load().all_symbols)
     symbols = sorted({t["symbol"] for t in trades})
     start = min(pd.Timestamp(t["entry_ts"]) for t in trades)
     end = max(pd.Timestamp(t["exit_ts"]) for t in trades)

@@ -14,24 +14,23 @@ Writes output/Factor Analysis.xlsx and prints the ranking.
 from __future__ import annotations
 
 import json
-import pickle
-from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from kitelab import backtest, config, portfolio, report, slippage
+from kitelab import backtest, config, portfolio, report, signals, slippage
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
-DASH = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
+DASH = config.CLEAN / "dashboard.json"
 CAPITAL = 250_000.0
 RISK = 0.01
 
 
-def load_cache(name):
-    return pickle.loads((CACHE / f"{name}.pkl").read_bytes())
+def load_cache(name, symbols):
+    """Cached trades, or a clear stop. kitelab.signals checks that the cache was
+    built from THIS universe, THESE price files and THIS strategy code."""
+    return signals.require(name, symbols)
 
 
 def cagr(trades, capital=CAPITAL, risk=RISK):
@@ -103,7 +102,7 @@ def main() -> None:
                      ("p90", b["p90"]), ("best", b["best"])]))
 
     # ---- levers that need their own runs ----------------------------------
-    ema = load_cache("EMA_all")
+    ema = load_cache("EMA_all", cfg.all_symbols)
     print("  running the extra scenarios:", flush=True)
 
     real_charges = portfolio.charges

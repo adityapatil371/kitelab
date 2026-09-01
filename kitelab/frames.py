@@ -21,7 +21,7 @@ from functools import lru_cache
 
 import pandas as pd
 
-from .config import DATA
+from .config import CLEAN
 
 SESSION_OPEN = pd.Timedelta(hours=9, minutes=15)
 
@@ -74,7 +74,7 @@ def expected_bars(session_day) -> int:
 
 
 def _path(symbol: str, interval: str):
-    return DATA / f"{symbol}_{interval}.parquet"
+    return CLEAN / f"{symbol}_{interval}.parquet"
 
 
 _TRIM_WARNED: set[str] = set()

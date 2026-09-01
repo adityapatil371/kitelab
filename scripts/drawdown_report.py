@@ -15,22 +15,22 @@ Writes output/Drawdown Analysis.xlsx:
 
 Everything uses the corrected drawdown: equity re-priced daily at market closes,
 each dip measured against the peak standing at that moment. Stock signal lists come
-from data/signal_cache (rebuilt 2026-08-27 on full 2006+ history).
+from the stamped signal cache; this report will not run on a cache built from a
+different universe, different price files or different strategy code -- rebuild it
+with `python -m scripts.dashboard_data` and check it with `python -m
+scripts.cache_status`.
 """
 from __future__ import annotations
-
-import pickle
-from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from openpyxl.utils import get_column_letter
 
-from kitelab import backtest, config, frames, portfolio, report, sizing, strategies
+from kitelab import (backtest, config, frames, portfolio, report, signals,
+                     sizing, strategies)
 from scripts.full_report import explain, write_table
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000
 RISKS = [0.0025, 0.005, 0.01, 0.02]
 
@@ -126,8 +126,10 @@ def main() -> None:
                  (f"{len(cfg.in_sample)} in-sample", set(cfg.in_sample)),
                  (uni_hold, set(cfg.out_of_sample))]
 
-    ema_all = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
-    brk_all = pickle.loads((CACHE / "Breakout_all.pkl").read_bytes())
+    # signals.require refuses a cache built from a different universe, different
+    # price files or different strategy code, instead of silently reporting it.
+    ema_all = signals.require("EMA_all", cfg.all_symbols)
+    brk_all = signals.require("Breakout_all", cfg.all_symbols)
     since_2015 = pd.Timestamp("2015-02-02")
     strat_windows = [
         ("EMA, 2006-2026", ema_all),
@@ -139,11 +141,11 @@ def main() -> None:
     print("\n  stock portfolios (capital 250,000):")
     stock_rows: dict[str, list[list]] = {}
     headline_curves: dict[str, list] = {}
-    for label, signals in strat_windows:
+    for label, strat_trades in strat_windows:
         rows = []
         for uni_label, members in universes:
-            subset = (signals if members is None
-                      else [t for t in signals if t["symbol"] in members])
+            subset = (strat_trades if members is None
+                      else [t for t in strat_trades if t["symbol"] in members])
             for risk in RISKS:
                 r = portfolio.run(subset, CAPITAL, risk)
                 longest, current = underwater_stats(r["curve"])

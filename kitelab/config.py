@@ -18,8 +18,29 @@ DATA = Path(
     or (_SHARED_DATA if _SHARED_DATA.is_dir() else ROOT / "data")
 )
 
-# Where CLEANED and derived data is written. This one IS writable, and is the only
-# place a cleaning step may write. Overridable with KITELAB_CLEAN_DIR.
+# Where CLEANED and derived data lives. This one IS writable, and it is the only
+# directory the analysis side of this project ever touches. Overridable with
+# KITELAB_CLEAN_DIR.
+#
+# THE RULE, decided 2026-09-01:
+#
+#   Everything that READS PRICES FOR ANALYSIS reads CLEAN, and nothing else.
+#   frames.py, signals.py and screen_universe.py all resolve into it, so every
+#   backtest, report and dashboard number comes from the cleaned copies.
+#
+#   Only four places still touch DATA, each on purpose:
+#     fetch.py, fetch_assets.py   ACQUISITION -- they create the raw files
+#     clean_data.py               reads raw, writes clean. That is its whole job.
+#     data_audit.py               audits the raw downloads; auditing the cleaned
+#                                 copies would be marking its own homework.
+#     screen_universe.py          reads the instrument DUMP (metadata, not prices)
+#
+# Switching the readers over changed no results: frames.sanitise() already ran on
+# every read, so CLEAN holds exactly what the backtests were trading on. Checked
+# on 2026-09-01 across 107 symbols x 6 timeframes -- 632 frames, 0 differences.
+#
+# CLEAN is rebuildable from DATA with `python -m scripts.clean_data`, with ONE
+# exception: levels.json is hand-drawn and cannot be regenerated. Back it up.
 CLEAN = Path(os.environ.get("KITELAB_CLEAN_DIR") or "/data/clean/kitelab")
 
 CONFIG_PATH = ROOT / "config.local.toml"

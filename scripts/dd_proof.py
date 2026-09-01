@@ -21,19 +21,15 @@ match the engine's to the paisa.
 """
 from __future__ import annotations
 
-import pickle
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from kitelab import portfolio, report
+from kitelab import config, portfolio, report, signals
 from kitelab.backtest import charges
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000.0
 RISK = 0.01
 
@@ -93,9 +89,11 @@ def account_walk(taken: list[dict], capital: float):
 
 
 def main() -> None:
-    signals = pickle.loads((CACHE / "EMA_all.pkl").read_bytes())
-    n_stocks = len({t["symbol"] for t in signals})
-    r = portfolio.run(signals, CAPITAL, RISK)
+    # `trades`, not `signals`: a local of that name would shadow the
+    # kitelab.signals module for the whole of main().
+    trades = signals.require("EMA_all", config.load().all_symbols)
+    n_stocks = len({t["symbol"] for t in trades})
+    r = portfolio.run(trades, CAPITAL, RISK)
     days, snapshots = account_walk(r["taken"], CAPITAL)
 
     # refuse to publish unless the independent walk matches the engine exactly

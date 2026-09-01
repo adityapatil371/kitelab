@@ -24,13 +24,18 @@ break every report until a full rebuild. They warn, loudly, every time.
 from __future__ import annotations
 
 import hashlib
-import json
 import pickle
 from pathlib import Path
 
-from .config import DATA
+from .config import CLEAN
 
-CACHE = DATA / "signal_cache"
+# Caches are DERIVED data, so they belong in CLEAN. They used to be written to
+# DATA, which was fine while DATA was the repo's own ./data, and became a hard
+# crash the moment DATA started pointing at the shared read-only /data/raw:
+#   OSError [Errno 30] Read-only file system: .../signal_cache/EMA_all.pkl
+# The price files a stamp fingerprints are read from CLEAN too, because that is
+# where frames.py reads them from.
+CACHE = CLEAN / "signal_cache"
 _WARNED: set[str] = set()
 
 # Modules whose contents decide what a trade IS. A change here invalidates every
@@ -53,7 +58,7 @@ def stamp(symbols) -> dict:
     data = []
     for s in symbols:
         for suffix in ("day", "15minute", "30minute"):
-            p = DATA / f"{s}_{suffix}.parquet"
+            p = CLEAN / f"{s}_{suffix}.parquet"
             if p.exists():
                 st = p.stat()
                 data.append((p.name, st.st_size, st.st_mtime_ns))

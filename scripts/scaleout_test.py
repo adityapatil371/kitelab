@@ -90,8 +90,9 @@ def main() -> None:
             print(f"    {symbol} done", flush=True)
     else:
         # The six whole-universe signal lists are the same ones the dashboard
-        # builds, so reuse its cache (delete data/signal_cache to force a fresh
-        # sweep).
+        # builds, so reuse its cache. No need to delete anything by hand: the
+        # cache is stamped with the universe, price files and strategy code it
+        # was built from, and rebuilds itself once any of those has moved.
         from scripts.dashboard_data import cached_signals
         from kitelab import config
         tag = f"{len(config.load().all_symbols)} Stocks"

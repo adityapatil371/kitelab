@@ -22,18 +22,15 @@ should saturate far sooner.
 """
 from __future__ import annotations
 
-import pickle
 import random
-from pathlib import Path
 
 import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from kitelab import config, portfolio, report
+from kitelab import config, portfolio, report, signals
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
 CAPITAL = 250_000.0
 # The whole universe is appended at run time, whatever size it currently is.
 SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150]
@@ -44,8 +41,10 @@ STRATEGIES = [("Darvas 20/10", "Darvas_20_10_all"), ("EMA M/W/D", "EMA_all")]
 RISKS = [0.5, 1.0, 2.0]
 
 
-def load(name: str) -> dict:
-    trades = pickle.loads((CACHE / f"{name}.pkl").read_bytes())
+def load(name: str, symbols) -> dict:
+    """Cached trades grouped by symbol. signals.require refuses a cache built
+    from a different universe, different price files or different code."""
+    trades = signals.require(name, symbols)
     by_symbol: dict[str, list] = {}
     for t in trades:
         by_symbol.setdefault(t["symbol"], []).append(t)
@@ -154,12 +153,12 @@ def main() -> None:
             line += 1
 
     for label, cache in STRATEGIES:
-        by_symbol = load(cache)
+        by_symbol = load(cache, symbols)
         rows = sweep(by_symbol, symbols, 1.0)
         show(f"{label} at 1% risk", rows)
         dump(label, 1.0, rows)
 
-    darvas = load("Darvas_20_10_all")
+    darvas = load("Darvas_20_10_all", symbols)
     for risk in RISKS:
         if risk == 1.0:
             continue

@@ -29,7 +29,7 @@ from contextlib import redirect_stdout
 
 import pandas as pd
 
-from kitelab import frames
+from kitelab import config, frames
 from kitelab.config import CLEAN, DATA, ROOT
 
 # Small outputs (tables, reports) belong with the code, not with the data.
@@ -142,15 +142,47 @@ def clean_frame(symbol: str, interval: str, raw: pd.DataFrame) -> tuple[pd.DataF
     return d, counts
 
 
+# The raw directory is the long-term store and will grow to ~500 companies. The
+# clean directory is the WORKING set: the universe actually being traded, plus the
+# six class assets the reports chart. Cleaning everything in raw would put ~300
+# unused symbols back into the working set every time this ran, which is exactly
+# what the 2026-09-01 tidy-up removed. Pass --all to override.
+ASSETS = ["BITCOIN", "NIFTY 50", "NIFTY BANK", "GOLD", "SILVER", "CRUDEOIL"]
+
+
+def working_set() -> set[str]:
+    """The symbols the project actually uses: the universe plus the class assets."""
+    return set(config.load().all_symbols) | set(ASSETS)
+
+
+def in_scope(path, keep: set[str]) -> bool:
+    """Is this raw file part of the working set? Instrument dumps always are."""
+    if path.name.startswith(PASSTHROUGH_PREFIX):
+        return True
+    stem = path.stem
+    for suffix in ("_day", "_15minute", "_30minute"):
+        if stem.endswith(suffix):
+            return stem[:-len(suffix)] in keep
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=0,
                     help="clean only the first N files (smoke test)")
     ap.add_argument("--dry-run", action="store_true",
                     help="measure and report, but write nothing")
+    ap.add_argument("--all", action="store_true",
+                    help="clean every raw file, not just the symbols in use")
     args = ap.parse_args()
 
     files = sorted(DATA.glob("*.parquet"))
+    if not args.all:
+        keep = working_set()
+        files = [p for p in files if in_scope(p, keep)]
+        print(f"working set: {len(keep)} symbols "
+              f"({len(keep) - len(ASSETS)} universe + {len(ASSETS)} assets). "
+              "Use --all to clean every raw file.")
     if args.limit:
         files = files[:args.limit]
     if not files:

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import pickle
-from pathlib import Path
 
 import pandas as pd
 
@@ -41,8 +40,7 @@ from scripts.drawdown_report import bh_stats, episodes, underwater_stats
 from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
 
-CACHE = Path(__file__).resolve().parent.parent / "data" / "signal_cache"
-OUT = Path(__file__).resolve().parent.parent / "data" / "dashboard.json"
+OUT = config.CLEAN / "dashboard.json"
 RISKS = [0.25, 0.5, 1.0, 2.0]
 
 # The execution dimension, and it is TWO independent things, not one.
