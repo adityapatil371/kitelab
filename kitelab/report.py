@@ -66,7 +66,7 @@ SUMMARY_FIELDS = [
 
 
 # The trade fields order() accumulates. Not every producer emits them: the
-# tf_compare timeframe variants (Q/M/W, W/D/H) build 19-key dicts and carry none
+# kitelab.timeframes variants (Q/M/W, W/D/H) build 19-key dicts and carry none
 # of these, so an unguarded run raised a bare KeyError several frames deep. Fail
 # with a sentence that names the producer instead.
 _ORDER_REQUIRES = ("cost_of_entry", "gross_profit", "net_profit", "net_profit_best",
@@ -79,7 +79,7 @@ def order(trades: list[dict], symbols: list[str]) -> list[dict]:
         if missing:
             raise KeyError(
                 f"report.order() needs {missing} and this trade list has none of them "
-                f"({len(trades[0])} keys). Trade lists from scripts.tf_compare "
+                f"({len(trades[0])} keys). Trade lists from kitelab.timeframes "
                 "(the Q/M/W and W/D/H variants) are a reduced shape and cannot be "
                 "written with the full trade-sheet writer.")
     ordered: list[dict] = []
@@ -87,8 +87,9 @@ def order(trades: list[dict], symbols: list[str]) -> list[dict]:
         mine = [t for t in trades if t["symbol"] == symbol]
         ordered.extend(sorted(mine, key=lambda t: t["entry_ts"], reverse=True))
     # net_best is no longer a column (one fee convention -- it equals net), but the
-    # key is still produced: scripts/wide_test.py and scripts/trailing_trades.py
-    # read it, and the shape guard above still requires net_profit_best.
+    # key is still produced: the shape guard above requires net_profit_best, and
+    # every trade builder emits it. The two report scripts that read it directly
+    # were retired on 2026-09-01.
     cost = gross = net = net_best = 0.0
     for number, trade in enumerate(ordered, start=1):
         cost += trade["cost_of_entry"]

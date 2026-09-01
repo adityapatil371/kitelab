@@ -37,9 +37,11 @@ import pandas as pd
 from kitelab import (backtest, config, darvas, dashboard_server, frames, portfolio,
                      signals, sizing, slippage, strategies)
 from kitelab.progress import Bar
-from scripts.drawdown_report import bh_stats, episodes, underwater_stats
-from scripts.tf_compare import (ASSIGNED, VARIANTS as TF_VARIANTS, simulate_variant,
+from kitelab.curves import bh_stats, episodes, underwater_stats
+from kitelab.timeframes import (VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
+
+ASSIGNED = config.CLASS_ASSIGNED
 
 OUT = config.CLEAN / "dashboard.json"
 RISKS = [0.25, 0.5, 1.0, 2.0]

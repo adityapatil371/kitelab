@@ -3,22 +3,22 @@
     python -m scripts.rebuild_orphans
     python -m scripts.rebuild_orphans --check   # list them, build nothing
 
-W/D/H and ATH Breakout left the dashboard on 2026-09-01, so dashboard_data stops
-producing their trade lists. Four scripts still read them:
+scripts/portfolio keys its caches by name PLUS universe size -- "EMA_101", not
+"EMA_all" -- so dashboard_data never builds them even though the trades are
+identical. That is the whole reason this file exists.
 
-    drawdown_report, scaleout_test   Breakout_all, Breakout_half_all,
-                                     Breakout_halfbe_all
-    scripts/portfolio                EMA_101, Breakout_101 (its cache key is
-                                     name + universe size)
+Left alone those two would sit on disk unstamped forever: readable, but unable
+to say which universe, price files or code produced them. That is exactly how
+"Darvas_20_10_all" went on serving pre-gate trades under a current label. This
+rebuilds them through kitelab.signals so they carry the same stamp as
+everything else.
 
-Left alone, those caches would sit on disk unstamped forever -- readable, but
-unable to say which universe, price files or code produced them. That is exactly
-how "Darvas_20_10_all" went on serving pre-gate trades under a current label.
-This rebuilds them through kitelab.signals so they carry the same stamp
-everything else does.
+It used to cover the ATH Breakout lists too, for drawdown_report and
+scaleout_test. Those scripts were retired on 2026-09-01 when the dashboard
+replaced the workbooks, and the Breakout caches went with them.
 
-If those four scripts are ever retired, delete this file with them; nothing else
-needs it.
+If scripts/portfolio is ever retired, or taught to use the dashboard's cache
+names, delete this file with it; nothing else needs it.
 """
 from __future__ import annotations
 
@@ -34,15 +34,10 @@ def builders(symbols: list[str]) -> dict:
     expect; they are copied from the dashboard_data code that used to own them.
     """
     n = len(symbols)
+    # The names scripts/portfolio composes: strategy + universe size.
     return {
-        "Breakout_all": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
-        "Breakout_half_all": lambda s: strategies.ath_breakout_trades(
-            s, trailing_stops=True, scale_out="half"),
-        "Breakout_halfbe_all": lambda s: strategies.ath_breakout_trades(
-            s, trailing_stops=True, scale_out="half_be"),
-        # scripts/portfolio keys its caches by universe SIZE, not by name alone
-        f"Breakout_{n}": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
         f"EMA_{n}": backtest.simulate,
+        f"Breakout_{n}": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
     }
 
 

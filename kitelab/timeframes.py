@@ -1,0 +1,205 @@
+"""The EMA stack at three speeds: Q/M/W, M/W/D, W/D/H.
+
+One rule -- two higher timeframes must agree on the trend before the lowest one
+is allowed to trigger -- run at three speeds. Q/M/W trades weekly closes, M/W/D
+daily (the class strategy), W/D/H hourly.
+
+This used to live in scripts/tf_compare.py alongside the workbook it wrote. The
+report scripts were retired on 2026-09-01 because the dashboard replaced them,
+but the strategy is not a report, so it moved into the package. The five
+assigned stocks tf_compare used to define now live in config.CLASS_ASSIGNED,
+because clean_data needs to know about them too.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from . import backtest, frames, indicators, report, sizing, slippage
+
+LENGTH = 20
+BAND = 0.02
+
+VARIANTS = [
+    ("QMW", "Q/M/W", "quarterly + monthly stacks, traded on WEEKLY closes, stop = entry week's low"),
+    ("MWD", "M/W/D", "monthly + weekly stacks, traded on DAILY closes, stop = entry day's low (class strategy)"),
+    ("WDH", "W/D/H", "weekly + daily stacks, traded on HOURLY closes, stop = entry hour's low"),
+]
+
+
+def _stack_frames(symbol: str, variant: str):
+    """Return (base bars, [higher-TF bar frames]) for one variant."""
+    day = frames.daily(symbol)
+    if variant == "QMW":
+        return frames.weekly(day), [frames.monthly(day), frames.quarterly(day)]
+    if variant == "MWD":
+        return day, [frames.weekly(day), frames.monthly(day)]
+    if variant == "WDH":
+        hour = frames.load(symbol, "1h")
+        return hour, [day, frames.weekly(day)]
+    raise ValueError(variant)
+
+
+def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
+                 length: int = LENGTH, band: float = BAND) -> pd.DataFrame:
+    """entry_ok/exit_ok on the base bars, higher TFs via forming-bar EMAs.
+
+    Same conventions as backtest.ema_stack_signal: the base EMA includes the
+    current bar's close (TradingView convention); each higher-timeframe EMA is
+    the forming-bar value alpha*close + (1-alpha)*last-COMPLETED-bar EMA, and
+    before any completed higher bar exists it degenerates to the close itself,
+    which correctly fails the "close > ema" test.
+    """
+    alpha = 2.0 / (length + 1)
+    close = base["close"].to_numpy()
+    base_ema = indicators.ema(base["close"], length).to_numpy()
+    # The bar's DECISION session, not its stamp. An aggregated bar is stamped at
+    # its FIRST session but closes on its LAST, so a weekly bar running Mon->Fri
+    # carries a Monday stamp. Looking a higher timeframe up by that stamp puts a
+    # week that straddles a month boundary in the WRONG month, and the code then
+    # recurses from the month before that -- one month stale. On ABB 144 of 1,078
+    # weekly bars straddle (13.4%), median EMA error 1.44%, max 7.89%, against a
+    # 2% band. Base frames that are not aggregated (daily, hourly) have no end_ts
+    # and their stamp already IS the decision session.
+    decided = base["end_ts"] if "end_ts" in base.columns else base["ts"]
+    stamps = decided.to_numpy().astype("datetime64[ns]")
+
+    upper, lower = 1 + band, 1 - band
+    entry_ok = close > base_ema * upper
+    exit_ok = close < base_ema * lower
+    completed_counts = []
+    for higher in highers:
+        h_ema = indicators.ema(higher["close"], length).to_numpy()
+        pos = np.searchsorted(higher["ts"].to_numpy().astype("datetime64[ns]"),
+                              stamps, side="right") - 1
+        prev = np.where(pos >= 1, h_ema[np.maximum(pos - 1, 0)], np.nan)
+        asof = np.where(np.isnan(prev), close, alpha * close + (1 - alpha) * prev)
+        entry_ok &= close > asof * upper
+        exit_ok |= close < asof * lower
+        completed_counts.append(pos)
+
+    out = base.copy()
+    out["entry_ok"] = entry_ok
+    out["exit_ok"] = exit_ok
+    out["top_tf_done"] = completed_counts[-1]  # completed bars of the HIGHEST TF
+    return out
+
+
+def simulate_variant(symbol: str, variant: str,
+                     stop_on_close: bool = True,
+                     band: float = BAND) -> list[dict]:
+    """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly.
+
+    stop_on_close=True is the class convention (everything checked at bar
+    closes only); False is the pre-2026-08-28 broker convention.
+    """
+    base, highers = _stack_frames(symbol, variant)
+    signal = stack_signal(base, highers, band=band)
+    entry_ok = signal["entry_ok"].to_numpy()
+    exit_ok = signal["exit_ok"].to_numpy()
+    open_, high, low, close = (signal[c].to_numpy()
+                               for c in ("open", "high", "low", "close"))
+    # Stamp each trade on the session it was DECIDED on -- the session whose close
+    # is the fill price. Stamping a Mon->Fri weekly bar on the Monday made the
+    # account engine free and commit cash up to four days before the price it uses
+    # existed, and made the daily curve mark a position from Monday at Friday's
+    # price. Non-aggregated bases (daily, hourly) are unaffected: stamp == session.
+    stamps = (signal["end_ts"] if "end_ts" in signal.columns else signal["ts"]).tolist()
+    total = len(signal)
+
+    trades: list[dict] = []
+    position = 0
+    while position < total:
+        fresh = entry_ok[position] and position > 0 and not entry_ok[position - 1]
+        if not fresh:
+            position += 1
+            continue
+        entry_price = float(close[position])
+        stop = float(low[position])
+        exit_at = None
+        for step in range(position + 1, total):
+            if stop_on_close:
+                if close[step] <= stop:
+                    exit_at = (step, float(close[step]), "stop (close)")
+                    break
+            elif low[step] <= stop:
+                gapped = open_[step] < stop
+                exit_at = (step, float(open_[step]) if gapped else stop,
+                           "gap through stop" if gapped else "stop")
+                break
+            if exit_ok[step]:
+                exit_at = (step, float(close[step]), "ema break")
+                break
+        if exit_at is None:
+            break  # still open; not a closed trade
+        exit_index, exit_price, reason = exit_at
+        shares, risk_taken, capped = sizing.position(entry_price, stop)
+        if shares <= 0:
+            position = exit_index + 1
+            continue
+        gross = (exit_price - entry_price) * shares
+        buy_value = entry_price * shares
+        sell_value = exit_price * shares
+        same_session = stamps[position].date() == stamps[exit_index].date()
+        trades.append({
+            "symbol": symbol,
+            "entry_ts": stamps[position],
+            "exit_ts": stamps[exit_index],
+            "entry_price": entry_price,
+            "stop": stop,
+            "exit_price": exit_price,
+            "exit_reason": reason,
+            "shares": shares,
+            "risk_taken": risk_taken,
+            "capital_capped": capped,
+            "gross_profit": gross,
+            "charges": backtest.charges(buy_value, sell_value,
+                                        intraday=same_session),
+            "r_multiple": (gross / risk_taken) if risk_taken else 0.0,
+            "bars_held": exit_index - position,
+            "days_held": (stamps[exit_index] - stamps[position]).days,
+            "stop_pct": (entry_price - stop) / entry_price * 100,
+            "top_tf_done": int(signal["top_tf_done"].iloc[position]),
+        })
+        position = exit_index + 1
+    return trades
+
+
+def window_start(symbol: str) -> pd.Timestamp:
+    """First hourly bar's day -- the date all three variants can see."""
+    return frames.base_15m(symbol)["ts"].min().normalize()
+
+
+def summarise(trades: list[dict]) -> dict:
+    """One convention, shared with every other summary in the project (2026-08-31):
+    NET OF CHARGES, and a win is net > 0.
+
+    This used to score on GROSS profit, so this file and band_compare reported a
+    different win rate and profit factor for the same trades than the six other
+    implementations -- 30.03% and 2.11 against 29.41% and 1.94 -- under column
+    headers spelled identically. A trade that made Rs50 and paid Rs80 in charges is
+    a loss, because it is.
+
+    Zero-loss profit factor is None, not inf and not 0.0. There were four different
+    answers to that case across the project; a ratio with no denominator is not a
+    number, so it is not reported as one.
+    """
+    net = [t["gross_profit"] - t["charges"] for t in trades]
+    wins = [v for v in net if v > 0]
+    losses = [v for v in net if v <= 0]
+    gross = sum(t["gross_profit"] for t in trades)
+    return {
+        "trades": len(trades),
+        "wins": len(wins),
+        "win_rate": len(wins) / len(trades) if trades else 0.0,
+        "avg_win": np.mean(wins) if wins else 0.0,
+        "avg_loss": np.mean(losses) if losses else 0.0,
+        "expectancy": sum(net) / len(net) if net else 0.0,
+        "profit_factor": (sum(wins) / -sum(losses)) if losses and sum(losses) < 0
+                         else None,
+        "net": sum(net),
+        "gross": gross,
+        "charges": sum(t["charges"] for t in trades),
+        "median_hold_days": float(np.median([t["days_held"] for t in trades])) if trades else 0.0,
+        "median_stop_pct": float(np.median([t["stop_pct"] for t in trades])) if trades else 0.0,
+    }

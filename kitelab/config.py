@@ -51,11 +51,11 @@ CONFIG_PATH = ROOT / "config.local.toml"
 # exactly that -- listed October 2024, 1.8 years of history, excluded from every
 # backtest below, but still one of the five the dashboard has to draw.
 #
-# It lives here because two very different programs need it: tf_compare, which
-# charts them, and clean_data, which has to know that their price files belong
-# in the working set. Keeping it in tf_compare meant clean_data did not know,
-# so the 2026-09-01 tidy-up deleted HYUNDAI's cleaned files and the dashboard
-# rebuild died on "No 15-minute data for HYUNDAI" -- 25 minutes in.
+# It lives here because two very different programs need it: the dashboard,
+# which charts them individually, and clean_data, which has to know that their
+# price files belong in the working set. While it lived in the timeframe module
+# clean_data did not know, so the 2026-09-01 tidy-up deleted HYUNDAI's cleaned
+# files and the dashboard rebuild died on "No 15-minute data for HYUNDAI".
 CLASS_ASSIGNED = ["HAL", "HINDZINC", "HYUNDAI", "IRFC", "INDHOTEL"]
 
 # The cached Kite access token, overridable with KITELAB_TOKEN_PATH. The
