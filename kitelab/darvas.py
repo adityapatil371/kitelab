@@ -1,14 +1,17 @@
 """Darvas: a WEEKLY breakout gates a daily 20-candle-high entry.
 
-    gate    THE SAME RULE, one timeframe up, checked FIRST. While it is shut the
-            daily rule is not consulted at all.
-              opens   a weekly close above the previous 20 weekly candles' high
-              shuts   a weekly close at or below the previous 10 weekly candles' low
-            It is a state with memory, not a per-bar test. That matters: a
-            20-candle high is a record, and a record stops being one the moment
-            it is set, so testing "is this week above the 20-week high" on its
-            own would shut the gate a week after it opened. What keeps you in is
-            the 10-week low not being broken.
+    gate    a WEEKLY test, checked FIRST. While it is false the daily rule is not
+            consulted at all.
+              in      the weekly close is ABOVE the previous 20 weekly candles' high
+              out     the weekly close is BELOW that same line
+            One line, both directions. There is no 10-week low on the weekly --
+            the 10 belongs to the daily exit only.
+
+            This is deliberately a per-bar test with no memory, which makes it
+            strict: a 20-candle high is a record, and once set it joins the
+            window it is measured against, so staying above it means closing
+            above your own breakout week after week. The gate is open roughly
+            7% of days, and that is the rule as drawn in class.
 
             WHY (2026-09-01): on one timeframe the Turtle rule takes every
             breakout, including the ones against the larger trend, and those are
@@ -57,8 +60,7 @@ from .backtest import charges
 
 ENTRY_LEN = 20
 EXIT_LEN = 10
-WEEKLY_ENTRY_LEN = 20    # the weekly gate opens above this many weeks' high
-WEEKLY_EXIT_LEN = 10     # and shuts below this many weeks' low
+WEEKLY_LEN = 20          # the weekly line: in above it, out below it
 
 
 def channels(symbol: str, entry_len: int = ENTRY_LEN,
@@ -72,41 +74,18 @@ def channels(symbol: str, entry_len: int = ENTRY_LEN,
     return out
 
 
-def weekly_state(day: pd.DataFrame, entry_len: int = WEEKLY_ENTRY_LEN,
-                 exit_len: int = WEEKLY_EXIT_LEN) -> np.ndarray:
-    """Per WEEKLY bar: is the gate open at that week's close?
+def weekly_gate(day: pd.DataFrame, weekly_len: int = WEEKLY_LEN) -> np.ndarray:
+    """Per DAILY bar: was the last COMPLETED week closed above its 20-week line?
 
-    A state machine, not a formula. The gate has memory, so whether it is open
-    this week depends on a breakout that may have happened months ago and has
-    not been given back since.
-    """
-    week = frames.weekly(day)
-    close = week["close"].to_numpy(dtype=float)
-    upper = week["high"].rolling(entry_len).max().shift(1).to_numpy(dtype=float)
-    floor = week["low"].rolling(exit_len).min().shift(1).to_numpy(dtype=float)
-
-    on = np.zeros(len(week), dtype=bool)
-    state = False
-    for i in range(len(week)):
-        if state and np.isfinite(floor[i]) and close[i] <= floor[i]:
-            state = False
-        elif not state and np.isfinite(upper[i]) and close[i] > upper[i]:
-            state = True
-        on[i] = state
-    return on
-
-
-def weekly_gate(day: pd.DataFrame, entry_len: int = WEEKLY_ENTRY_LEN,
-                exit_len: int = WEEKLY_EXIT_LEN) -> np.ndarray:
-    """Per DAILY bar: was the gate open at the last COMPLETED week's close?
-
-    Two guards against reading the future. The weekly channel is shift(1), so a
+    Two guards against reading the future. The weekly line is shift(1), so a
     week is never compared with itself; and the week CONSULTED is the previous
     one, because on a Wednesday the current week has not closed and using it
     would let Thursday's decision depend on Friday's price.
     """
     week = frames.weekly(day)
-    on = weekly_state(day, entry_len, exit_len)
+    close = week["close"].to_numpy(dtype=float)
+    line = week["high"].rolling(weekly_len).max().shift(1).to_numpy(dtype=float)
+    on = np.isfinite(line) & (close > line)
     pos = np.searchsorted(week["ts"].to_numpy(), day["ts"].to_numpy(), side="right") - 1
     prev = pos - 1
     out = np.zeros(len(day), dtype=bool)

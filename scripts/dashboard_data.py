@@ -85,7 +85,10 @@ STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
 # much, so they ride in the same slot of the key that the band uses for the EMA
 # stacks: "dv|20-10|all|1|250000|0". 20/10 is what the class specified and is the
 # page default; it is not the best of them.
-DARVAS_WINDOWS = [(10, 5), (20, 10), (20, 20), (40, 20), (55, 20)]
+# The two systems the Turtles actually traded: System 1 (20 in, 10 out) and
+# System 2 (55 in, 20 out). The other window pairs tried earlier were ours, not
+# theirs, and are dropped.
+DARVAS_WINDOWS = [(20, 10), (55, 20)]
 
 # Every window is computed BOTH ways, because that is the question being asked.
 # The class found that one timeframe took every breakout, including the ones
@@ -317,8 +320,7 @@ def main() -> None:
     for gated in DARVAS_GATED:
         for entry_len, exit_len in DARVAS_WINDOWS:
             window_tag = f"{entry_len}-{exit_len}" + ("" if gated else " 1TF")
-            stem = (f"Darvas_w{darvas.WEEKLY_ENTRY_LEN}_{darvas.WEEKLY_EXIT_LEN}"
-                    if gated else "Darvas_1tf")
+            stem = f"Turtle_w{darvas.WEEKLY_LEN}" if gated else "Turtle_1tf"
             base[("dv", window_tag)] = cached_signals(
                 f"{stem}_{entry_len}_{exit_len}_all",
                 lambda s, a=entry_len, b=exit_len, g=gated:
