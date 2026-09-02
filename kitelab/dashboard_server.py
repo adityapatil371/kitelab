@@ -36,6 +36,11 @@ from .config import CLEAN
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 DATA_PATH = CLEAN / "dashboard.json"
+# One curve per line, addressed by the byte offsets in payload["curve_index"].
+# The comparison table needs no curves at all, and a detail view needs exactly
+# one, so shipping all 83,904 of them was 89% of a 303 MB payload spent on data
+# the page would almost never look at.
+CURVES_PATH = CLEAN / "dashboard.curves.jsonl"
 STAMP_PATH = CLEAN / "dashboard.stamp.json"
 
 
@@ -149,6 +154,29 @@ class Handler(BaseHTTPRequestHandler):
             if route in ("/", "/index.html", "/dashboard"):
                 self._send((WEB_ROOT / "dashboard.html").read_bytes(),
                            "text/html; charset=utf-8")
+            elif route == "/api/curve":
+                # ?at=<offset>&len=<bytes>, both from the index in the payload.
+                # Offsets rather than a key lookup keeps the server from holding
+                # an 84,000-entry index of its own in memory.
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    at, length = int(q["at"][0]), int(q["len"][0])
+                except (KeyError, ValueError, IndexError):
+                    self._send(json.dumps({"error": "need at= and len="}).encode(),
+                               "application/json", 400)
+                    return
+                if not CURVES_PATH.exists():
+                    self._send(json.dumps({"error": "no curve file -- rebuild"}).encode(),
+                               "application/json", 404)
+                    return
+                size = CURVES_PATH.stat().st_size
+                if at < 0 or length < 0 or at + length > size:
+                    self._send(json.dumps({"error": "out of range"}).encode(),
+                               "application/json", 400)
+                    return
+                with open(CURVES_PATH, "rb") as fh:
+                    fh.seek(at)
+                    self._send(fh.read(length), "application/json")
             elif route == "/api/status":
                 self._send(json.dumps(status()).encode(), "application/json")
             elif route == "/api/dashboard":

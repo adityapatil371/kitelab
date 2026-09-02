@@ -897,6 +897,34 @@ def main() -> None:
         "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
+    # THE CURVES DO NOT TRAVEL WITH THE NUMBERS.
+    #
+    # 83,904 grid cells carried a curve and a drawdown-episode list: 226 MB and
+    # 43 MB of a 303 MB payload, 89% of it, so that ONE of them could be drawn
+    # when a row is opened. The comparison table -- the page people actually
+    # land on -- needs none of it.
+    #
+    # They move to a JSONL sidecar with a byte-offset index. The server seeks to
+    # the line it wants, so opening a detail costs one disk read rather than the
+    # browser holding every curve it might one day show. The index is small
+    # enough to sit in the payload.
+    detail_path = OUT.with_name("dashboard.curves.jsonl")
+    index: dict = {}
+    offset = 0
+    with open(detail_path, "w") as fh:
+        for key, cell in grid.items():
+            if not cell:
+                continue
+            blob = json.dumps({"curve": cell.pop("curve", None),
+                               "episodes": cell.pop("episodes", None)})
+            line = blob + "\n"
+            index[key] = [offset, len(blob)]
+            fh.write(line)
+            offset += len(line.encode())
+    payload["curve_index"] = index
+    print(f"  curves -> {detail_path.name} "
+          f"({detail_path.stat().st_size/1e6:.0f} MB, {len(index):,} entries)")
+
     leaked: list = []
     payload = to_native(payload, "payload", leaked)
     if leaked:

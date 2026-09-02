@@ -187,6 +187,24 @@ function hydrate(d) {
   return d;
 }
 
+/* Curves live in a sidecar file, one JSON object per line, addressed by the byte
+   offsets in curve_index. Detail asks for the one it needs; Compare asks for
+   none. Cached per key, because flipping back to a row you have already opened
+   should not go to disk again. */
+const CURVE_CACHE = new Map();
+async function fetchDetail(key) {
+  if (CURVE_CACHE.has(key)) return CURVE_CACHE.get(key);
+  const at = (DATA.curve_index || {})[key];
+  if (!at) return null;
+  const res = await fetch(`/api/curve?at=${at[0]}&len=${at[1]}`);
+  if (!res.ok) return null;
+  const got = await res.json();
+  if (got.curve && got.curve.c !== undefined && DATA.calendars)
+    got.curve.d = DATA.calendars[got.curve.c];
+  CURVE_CACHE.set(key, got);
+  return got;
+}
+
 /* ── formatting ───────────────────────────────────────────────────────── */
 const inr = v => v == null ? "—" :
   Math.abs(v) >= 1e7 ? "₹" + (v / 1e7).toFixed(2) + " cr" :
@@ -419,8 +437,11 @@ function renderDetail() {
   if (!row) { body.innerHTML = `<div class="card"><div class="empty">Nothing to show —
     pick a row on Compare.</div></div>`; return; }
   S.sel = row.id;
-  const r = row.r, c = r.curve;
-  const bh = DATA.nifty ? null : null;
+  const r = row.r;
+  const gridKey = keyFor(row.skey, row.v);
+  /* The stats are in hand; the charts are a disk seek away. Draw what we have
+     rather than showing nothing until the curve lands. */
+  const c = { d: [], eq: [], dd: [], cash: [] };
   const stat = (k, v, d, cls = "", hero = false) =>
     `<div class="stat${hero ? " hero" : ""}"><div class="k">${k}</div>
      <div class="v ${cls}">${v}</div><div class="d">${d || ""}</div></div>`;
@@ -450,21 +471,34 @@ function renderDetail() {
           <span><i class="swatch" style="background:var(--equity)"></i>equity</span>
           <span><i class="swatch" style="background:var(--cash)"></i>cash in hand</span>
         </div>
-        ${chart(c, ["eq", "cash"], { colors: ["var(--equity)", "var(--cash)"],
-                                     fill: true, zero: true, fmt: v => inr(v) })}
+        <div id="chart-eq"><div class="empty">loading…</div></div>
         <p class="note">Where the gold line hugs the floor, every rupee is committed and a
           new signal cannot be taken however good it looks.</p>
       </div>
       <div class="card">
         <h3>Below the peak</h3><p class="sub">how far under water, day by day</p>
-        ${chart(c, ["dd"], { colors: ["var(--down)"], fill: true,
-                             fmt: v => v.toFixed(0) + "%" })}
-        <p class="note">${(r.episodes || []).length} spells below a previous peak.
+        <div id="chart-dd"><div class="empty">loading…</div></div>
+        <p class="note"><span id="ep-note"></span>
           The longest lasted ${r.uw_long ?? "—"} years; the account is
           ${r.uw_now ? r.uw_now + " years" : "not"} under water where the data ends.</p>
       </div>
     </div>
     <div style="margin-top:var(--gap)">${waterfallBlock(row.skey, row.v)}</div>`;
+
+  fetchDetail(gridKey).then(got => {
+    if (!got || S.sel !== row.id) return;          // moved on while it loaded
+    const cv = got.curve;
+    if (!cv) return;
+    const eqBox = document.getElementById("chart-eq");
+    const ddBox = document.getElementById("chart-dd");
+    if (eqBox) eqBox.innerHTML = chart(cv, ["eq", "cash"],
+      { colors: ["var(--equity)", "var(--cash)"], fill: true, zero: true, fmt: v => inr(v) });
+    if (ddBox) ddBox.innerHTML = chart(cv, ["dd"],
+      { colors: ["var(--down)"], fill: true, fmt: v => v.toFixed(0) + "%" });
+    const epBox = document.getElementById("ep-note");
+    if (epBox) epBox.textContent =
+      `${(got.episodes || []).length} spells below a previous peak.`;
+  });
 }
 
 function renderStocks() {
