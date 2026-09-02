@@ -117,6 +117,15 @@
   #stale .who { color: var(--ink-2); margin-top: 0.4rem; font-size: 0.76rem; }
   .page { display: none; }
   .page.on { display: grid; }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
+  table.cmp th, table.cmp td { padding: 0.4rem 0.6rem; text-align: right;
+                               border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  table.cmp th { cursor: pointer; user-select: none; color: var(--ink-2);
+                 font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+  table.cmp th:hover { color: var(--ink); }
+  table.cmp th.sorted { color: var(--accent); }
+  table.cmp td.name, table.cmp th.name { text-align: left; }
+  table.cmp tr.best td { background: var(--accent-soft); }
 </style>
 </head>
 <body>
@@ -163,6 +172,16 @@
         Buy at &#8377;100 with a &#8377;90 stop and R is &#8377;10, so 1R is &#8377;110.
         Perfect fills — the Fills slicer does not reach this page.</p>
     </div>
+    <div id="rail-compare" style="display:none">
+      <div class="slicer"><span class="eyebrow">Fills</span><div class="slist" id="sl-c-fill"></div></div>
+      <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-c-uni"></div></div>
+      <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-c-risk"></div></div>
+      <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-c-cap"></div></div>
+      <div class="slicer"><span class="eyebrow">Started trading in</span><div class="slist" id="sl-c-year"></div></div>
+      <p class="fillnote">Change any of these and the whole ranking moves. That is the
+        point of the page: no single row is the answer.</p>
+    </div>
+
     <div id="rail-breadth" style="display:none">
       <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-br-strat"></div></div>
       <p class="fillnote">Random baskets of each size, one &#8377;2,00,000 account at 1% risk,
@@ -272,6 +291,20 @@
       <div class="card span12">
         <h2 id="sor-why-title">What banking early actually does</h2>
         <div class="sub" id="sor-why"></div>
+      </div>
+    </div>
+
+    <div class="canvas page" id="page-compare">
+      <div class="card span12">
+        <div class="card-head"><h3>Every strategy, same conditions</h3>
+          <p class="sub" id="cmp-sub"></p></div>
+        <div style="overflow-x:auto"><table class="cmp" id="cmp-table"></table></div>
+        <p class="fillnote">One row per strategy variant, all at the settings in the
+          rail. <b>MAR</b> is CAGR divided by the worst drawdown &mdash; return against
+          pain, and the column to sort by when two rows look similar. <b>Captured</b> is
+          the share of the rule's signals the account could actually afford; a low
+          number means you are reading the result of a cash constraint as much as of a
+          rule. Click any heading to sort.</p>
       </div>
     </div>
 
@@ -397,11 +430,13 @@ let DATA = null;
 const state = { page: "portfolio", family: "ema", emaTf: "ema",
                 strat: "ema", uni: "all", riskIdx: 2, capIdx: 1, bandIdx: 2, year: null,
                 hgIdx: 0,
+                cFill: "1", cUni: "all", cRisk: 2, cCap: 1, cYear: null,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
                 soStrat: "ema", soUni: "all", dvIdx: 1, brStrat: "dv" };
 
-const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
+const PAGES = [["portfolio", "Portfolio"], ["compare", "Compare"],
+               ["stocks", "Individual stocks"],
                ["scaleout", "Scale-out"], ["breadth", "How many stocks"],
                ["assets", "Futures & assets"]];
 
@@ -483,6 +518,19 @@ function init() {
   state.dvIdx = Math.max(0, dvWins.indexOf(DATA.darvas_default || "20-10"));
   slicer("sl-dvwin", dvWins.map((w, i) => [String(i), dvLabel(w)]),
          () => String(state.dvIdx), k => { state.dvIdx = +k; renderPortfolio(); });
+  // compare page: its own copies, so exploring there does not disturb the
+  // portfolio page you were reading
+  if (state.cYear === null) state.cYear = DATA.start_default || YEARS[YEARS.length - 1];
+  slicer("sl-c-fill", DATA.fills || [["0", "Perfect fills"]], () => state.cFill,
+         k => { state.cFill = k; renderCompare(); });
+  slicer("sl-c-uni", Object.entries(DATA.universes), () => state.cUni,
+         k => { state.cUni = k; renderCompare(); });
+  slicer("sl-c-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
+         () => String(state.cRisk), k => { state.cRisk = +k; renderCompare(); });
+  slicer("sl-c-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
+         () => String(state.cCap), k => { state.cCap = +k; renderCompare(); });
+  slicer("sl-c-year", YEARS.map(y => [String(y), String(y)]),
+         () => String(state.cYear), k => { state.cYear = +k; renderCompare(); });
   const HG = DATA.hg_tags || ["tight"];
   slicer("sl-hgstop", HG.map((t, i) => [String(i), t === "tight"
              ? "Tight — signal candle's low" : "Wide — multi-bar swing low"]),
@@ -533,15 +581,110 @@ function setPage(key) {
   $("rail-stocks").style.display = key === "stocks" ? "" : "none";
   $("rail-scaleout").style.display = key === "scaleout" ? "" : "none";
   $("rail-breadth").style.display = key === "breadth" ? "" : "none";
+  $("rail-compare").style.display = key === "compare" ? "" : "none";
   $("rail-assets").style.display = key === "assets" ? "" : "none";
   if (key === "portfolio") renderPortfolio();
   if (key === "stocks") renderStock();
   if (key === "scaleout") renderScaleoutPage();
   if (key === "breadth") renderBreadth();
+  if (key === "compare") renderCompare();
   if (key === "assets") renderAsset();
   // Pages differ in height; landing halfway down a fresh page looks like a dead button.
   if (changed) window.scrollTo(0, 0);
 }
+
+// ===================================================== compare page ====
+// Every strategy variant at one set of conditions. Built entirely from the grid
+// the other pages already read -- no extra payload, no extra simulation. It
+// exists because every real question asked of this dashboard has been a
+// comparison, and until now answering one meant flipping a slicer and
+// remembering numbers.
+const CMP = { sort: "mar", desc: true };
+
+function compareRows() {
+  const out = [];
+  for (const [skey, label] of Object.entries(DATA.strategies)) {
+    // the settings slot means something different per strategy
+    const variants = skey === "dv" ? (DATA.darvas_windows || [])
+                   : skey === "hg" ? (DATA.hg_tags || [])
+                   : (DATA.bands || []).map(b => b);
+    for (const v of variants) {
+      const key = `${skey}|${typeof v === "number" ? v : v}|${state.cUni}|` +
+                  `${DATA.risks[state.cRisk]}|${DATA.capitals[state.cCap]}|` +
+                  `${state.cFill}|${state.cYear}`;
+      const r = DATA.grid[key];
+      if (!r) continue;
+      const setting = skey === "dv" ? dvLabel(v)
+                    : skey === "hg" ? (v === "tight" ? "tight stop" : "wide stop")
+                    : `${(v * 100).toFixed(0)}% band`;
+      out.push({
+        name: `${label} · ${setting}`,
+        cagr: r.cagr, maxdd: r.maxdd, mar: r.mar, ulcer: r.ulcer,
+        final: r.final, taken: r.taken, signals: r.signals,
+        capture: r.signals ? 100 * r.taken / r.signals : null,
+        full: r.full_pct, wiped: r.wiped,
+      });
+    }
+  }
+  return out;
+}
+
+const CMP_COLS = [
+  ["name", "Strategy", v => v, "name"],
+  ["cagr", "CAGR", v => v == null ? "wiped" : v.toFixed(1) + "%"],
+  ["maxdd", "Worst DD", v => v == null ? "—" : v.toFixed(1) + "%"],
+  ["mar", "MAR", v => v == null ? "—" : v.toFixed(2)],
+  ["ulcer", "Ulcer", v => v == null ? "—" : v.toFixed(1)],
+  ["final", "Final", v => v == null ? "—" : inr(v)],
+  ["taken", "Trades", v => v == null ? "—" : v.toLocaleString("en-IN")],
+  ["capture", "Captured", v => v == null ? "—" : v.toFixed(0) + "%"],
+  ["full", "Fully invested", v => v == null ? "—" : v.toFixed(0) + "%"],
+];
+
+function renderCompare() {
+  for (const id of ["sl-c-fill", "sl-c-uni", "sl-c-risk", "sl-c-cap", "sl-c-year"])
+    $(id)._sync();
+  const rows = compareRows();
+  // A wiped account has no CAGR at all. It must sort BELOW everything that
+  // merely lost money, not above it as a null would.
+  const rank = r => { const v = r[CMP.sort];
+                      return v == null ? (CMP.desc ? -Infinity : Infinity) : v; };
+  rows.sort((a, b) => CMP.sort === "name"
+    ? a.name.localeCompare(b.name) * (CMP.desc ? -1 : 1)
+    : (rank(b) - rank(a)) * (CMP.desc ? 1 : -1));
+
+  const t = $("cmp-table");
+  t.innerHTML = "";
+  const head = t.insertRow();
+  for (const [key, label, , cls] of CMP_COLS) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    if (cls) th.className = cls;
+    if (CMP.sort === key) th.classList.add("sorted");
+    th.addEventListener("click", () => {
+      if (CMP.sort === key) CMP.desc = !CMP.desc; else { CMP.sort = key; CMP.desc = true; }
+      renderCompare();
+    });
+    head.appendChild(th);
+  }
+  rows.forEach((r, i) => {
+    const tr = t.insertRow();
+    if (i === 0 && CMP.sort !== "name") tr.className = "best";
+    for (const [key, , fmt, cls] of CMP_COLS) {
+      const td = tr.insertCell();
+      td.textContent = fmt(r[key]);
+      if (cls) td.className = cls;
+      if (key === "cagr" && r.wiped) td.className = "neg";
+    }
+  });
+  $("cmp-sub").textContent =
+    `${rows.length} variants · ${DATA.universes[state.cUni][0]} · ` +
+    `${inr(DATA.capitals[state.cCap])} · ${DATA.risks[state.cRisk]}% risk · ` +
+    `${fillLabelFor(state.cFill)} · started ${state.cYear}`;
+}
+
+const fillLabelFor = k =>
+  ((DATA.fills || []).find(([f]) => f === k) || [null, "Perfect fills"])[1];
 
 function slicer(id, options, get, set) {
   const el = $(id);
