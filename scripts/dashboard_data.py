@@ -56,10 +56,16 @@ RISKS = [0.25, 0.5, 1.0, 2.0]
 # is a different account: fresh capital, different position sizes, different
 # signals affordable.
 #
-# 2024 is the last year offered; a 2025 or 2026 start has under two years of
-# trades and the number would be noise wearing a percent sign.
-START_YEARS = list(range(2006, 2025))
-START_DEFAULT = 2020
+# FIVE years, not nineteen. Every axis here multiplies every other, and the start
+# year was the largest multiplier on the board -- 19 of them turned a 9-minute
+# rebuild into 65. Adjacent years answer nearly the same question anyway: a 2013
+# start and a 2014 start share nineteen twentieths of their trades. These five
+# span the range and land on the market's own turning points.
+#
+# 2024 is the last offered: a 2025 or 2026 start has under two years of trades,
+# and that number would be noise wearing a percent sign.
+START_YEARS = [2006, 2012, 2018, 2022, 2024]
+START_DEFAULT = 2018
 
 # The execution dimension, and it is TWO independent things, not one.
 #
