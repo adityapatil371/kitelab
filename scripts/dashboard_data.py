@@ -130,6 +130,20 @@ def tag(band) -> str:
 
 # ------------------------------------------------------------ helpers ----
 
+# Every curve is sampled to about this many points, whatever its length. A fixed
+# every-Nth-day step gave a 20-year window 500 points and a 3-year window 80, so
+# the long ones cost six times as much to carry and drew no more shape. Also the
+# reason a 19-year start axis produced a 319 MB payload.
+CURVE_POINTS = 120
+
+# Date lists are shared, not repeated. The same trading calendar was being written
+# out once per grid cell -- 117 MB of the 319 MB was duplicate date strings. Each
+# distinct list is stored once in payload["calendars"] and referenced by index;
+# the page swaps the reference back in on load, so every consumer still reads
+# curve.d and the arrays are shared in memory rather than copied 29,184 times.
+_CALENDARS: dict[tuple, int] = {}
+
+
 def curve_payload(curve, cash_curve=None):
     """Equity, drawdown and CASH IN HAND, sampled at the same points.
 
@@ -138,18 +152,21 @@ def curve_payload(curve, cash_curve=None):
     committed to open positions.
     """
     cash_at = dict(cash_curve or ())
+    step = max(1, len(curve) // CURVE_POINTS)
     days, eq, dd, cash = [], [], [], []
     peak = float("-inf")
     for i, (day, equity) in enumerate(curve):
         peak = max(peak, equity)
-        if i % STEP and i != len(curve) - 1:
+        if i % step and i != len(curve) - 1:
             continue
         days.append(day.strftime("%Y-%m-%d"))
         eq.append(round(equity))
         dd.append(round(100 * (equity - peak) / peak, 1))
         if cash_at:
             cash.append(round(max(cash_at.get(day, 0.0), 0.0)))
-    out = {"d": days, "eq": eq, "dd": dd}
+    key = tuple(days)
+    cal = _CALENDARS.setdefault(key, len(_CALENDARS))
+    out = {"c": cal, "eq": eq, "dd": dd}
     if cash:
         out["cash"] = cash
     return out
@@ -718,6 +735,8 @@ def main() -> None:
         "excluded": cfg.excluded,
         "risks": RISKS, "capitals": CAPITALS,
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
+        # index -> the date list every curve carrying that index shares
+        "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
         "breadth": breadth, "tie_break": portfolio.TIE_BREAK,
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,

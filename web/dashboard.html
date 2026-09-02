@@ -400,8 +400,26 @@ const PAGES = [["portfolio", "Portfolio"], ["stocks", "Individual stocks"],
                ["scaleout", "Scale-out"], ["breadth", "How many stocks"],
                ["assets", "Futures & assets"]];
 
+// Curves carry a calendar INDEX rather than their own copy of the dates: the
+// same trading calendar was being sent once per grid cell, 117 MB of duplicates.
+// Swap the reference back in once, so every consumer still reads curve.d and the
+// arrays are shared in memory instead of copied thousands of times.
+function hydrateCalendars(d) {
+  const cals = d.calendars;
+  if (!cals) return d;                       // an older payload; nothing to do
+  const fix = c => { if (c && c.c !== undefined && !c.d) c.d = cals[c.c]; };
+  const walk = obj => {
+    if (!obj || typeof obj !== "object") return;
+    if (obj.curve) fix(obj.curve);
+    for (const v of Object.values(obj)) if (v && typeof v === "object") walk(v);
+  };
+  walk(d.grid); walk(d.stocks); walk(d.assets); walk(d.basket10);
+  walk(d.scaleout); walk(d.scaleout_r); walk(d.breadth); walk(d.timeframes);
+  return d;
+}
+
 fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
-  .then(d => { DATA = d; init(); })
+  .then(d => { DATA = hydrateCalendars(d); init(); })
   .catch(() => { $("loading").textContent = "No data yet — run: python -m scripts.dashboard_data, then reload."; });
 
 // Is what we are showing still the universe being traded? Asked separately from
