@@ -81,7 +81,12 @@ def ordinary_equities() -> pd.DataFrame:
 
 def assess(symbol: str) -> dict | None:
     """Every quality check, on the daily file. None if there is no file yet."""
-    p = CLEAN / f"{symbol}_day.parquet"
+    # RAW, not CLEAN. A candidate has only ever been fetched -- clean_data
+    # processes the WORKING SET, which by definition a candidate is not in
+    # yet, so its cleaned copy does not exist. Screening is triage of raw
+    # arrivals, the same category as data_audit, and reading CLEAN here would
+    # have found nothing and rejected every candidate for want of history.
+    p = DATA / f"{symbol}_day.parquet"
     if not p.exists():
         return None
     try:
