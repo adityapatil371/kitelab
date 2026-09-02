@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import bisect
 import json
+import re
 import pickle
 
+import numpy as np
 import pandas as pd
 
 from kitelab import (backtest, config, darvas, dashboard_server, frames, holygrail,
@@ -315,6 +317,28 @@ def trade_stats(trades: list[dict]) -> dict:
             "best": round(max(nets)) if nets else 0,
             "worst": round(min(nets)) if nets else 0,
             "worst_run": round(worst_run)}
+
+
+def to_native(obj, path="payload", found=None):
+    """Convert numpy scalars to Python ones, and say where they were.
+
+    numpy values leak into the payload easily -- any comparison of two numpy
+    floats yields numpy.bool_, and numpy 2 renders its class name as plain
+    "bool", so json.dumps fails with the baffling "Object of type bool is not
+    JSON serializable" after the whole 20-minute run has completed. Converting
+    on the way out is cheap; doing it silently would hide the leak, so the paths
+    are reported once.
+    """
+    if found is None:
+        found = []
+    if isinstance(obj, dict):
+        return {k: to_native(v, f"{path}.{k}", found) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_native(v, f"{path}[{i}]", found) for i, v in enumerate(obj)]
+    if isinstance(obj, np.generic):
+        found.append((path, type(obj).__name__))
+        return obj.item()
+    return obj
 
 
 def slim_trades(trades: list[dict]) -> list[dict]:
@@ -799,6 +823,17 @@ def main() -> None:
         "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
     }
+    leaked: list = []
+    payload = to_native(payload, "payload", leaked)
+    if leaked:
+        kinds = {}
+        for where, kind in leaked:
+            # collapse [0], [1], ... so 30,000 grid cells report as one path
+            key = (re.sub(r"\[\d+\]", "[]", where), kind)
+            kinds[key] = kinds.get(key, 0) + 1
+        print(f"  converted {len(leaked):,} numpy values on the way out:")
+        for (where, kind), n in sorted(kinds.items(), key=lambda kv: -kv[1])[:6]:
+            print(f"    {where}  ({kind}) x{n:,}")
     OUT.write_text(json.dumps(payload))
     print(f"\n  written: {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
 
