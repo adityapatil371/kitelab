@@ -1,0 +1,77 @@
+// 20 EMA + all-time-high band
+//
+// Two things drawn on the candles, on WHATEVER timeframe the chart is set to:
+//
+//   the 20 EMA
+//   the all-time high, and a band a chosen % below it
+//
+// Nothing is pulled from another timeframe. Switch the chart to weekly and you
+// get the weekly 20 EMA and the weekly all-time high; switch to daily and you
+// get the daily ones. Each timeframe has its own, which is the point.
+//
+// The all-time high is the highest CLOSE so far, today included. It is a step
+// line: flat until a new high is made, then it jumps. That flatness is what
+// makes the band readable -- the zone stays put while price moves through it.
+
+//@version=5
+indicator("20 EMA + ATH band", overlay = true)
+
+len     = input.int(20,    "EMA length",        minval = 2)
+bandPct = input.float(10., "Band below the high %", minval = 0, maxval = 90, step = 1)
+useHigh = input.bool(false, "Use the highest HIGH instead of the highest close")
+shade   = input.bool(true,  "Shade the band")
+
+ema  = ta.ema(close, len)
+ath  = useHigh ? ta.max(high) : ta.max(close)
+floorLine = ath * (1 - bandPct / 100)
+
+// ── the lines ─────────────────────────────────────────────────────────────
+pEma   = plot(ema,       "20 EMA",        color = color.new(#2f6fd0, 0), linewidth = 2)
+pAth   = plot(ath,       "All-time high", color = color.new(#8d8b82, 30),
+              style = plot.style_stepline)
+pFloor = plot(floorLine, "Band floor",    color = color.new(#0a7a4a, 20),
+              style = plot.style_stepline, linewidth = 2)
+
+// The zone between the high and the band floor. Anything inside it is "near the
+// high"; anything below has further to climb than the band allows.
+fill(pAth, pFloor, color = shade ? color.new(#0a7a4a, 92) : na, title = "band")
+
+// ── where price actually is ───────────────────────────────────────────────
+inBand   = close >= floorLine
+aboveEma = close > ema
+
+// Green where both are true, amber where the trend is fine but price sits below
+// the band. The amber is the interesting one: it is what the band filter would
+// refuse, and on the 101-stock backtest that refusal cost more than it saved.
+bgcolor(inBand and aboveEma ? color.new(#0a7a4a, 90) :
+        aboveEma            ? color.new(#c9a227, 92) : na, title = "state")
+
+// ── a readout, so you do not have to eyeball the gap ──────────────────────
+gapPct = (close - ath) / ath * 100
+
+if barstate.islast
+    var table t = table.new(position.top_right, 2, 4,
+                            bgcolor = color.new(color.white, 15),
+                            border_color = color.new(color.gray, 60), border_width = 1)
+    table.cell(t, 0, 0, "below the high", text_size = size.small,
+               text_color = color.gray, text_halign = text.align_left)
+    table.cell(t, 1, 0, str.tostring(gapPct, "#.0") + "%", text_size = size.small,
+               text_color = gapPct >= -bandPct ? #0a7a4a : #c0392b)
+    table.cell(t, 0, 1, "band floor", text_size = size.small,
+               text_color = color.gray, text_halign = text.align_left)
+    table.cell(t, 1, 1, str.tostring(floorLine, format.mintick), text_size = size.small,
+               text_color = color.black)
+    table.cell(t, 0, 2, "20 EMA", text_size = size.small,
+               text_color = color.gray, text_halign = text.align_left)
+    table.cell(t, 1, 2, str.tostring(ema, format.mintick), text_size = size.small,
+               text_color = color.black)
+    table.cell(t, 0, 3, "in the band", text_size = size.small,
+               text_color = color.gray, text_halign = text.align_left)
+    table.cell(t, 1, 3, inBand ? "yes" : "no", text_size = size.small,
+               text_color = inBand ? #0a7a4a : #c0392b)
+
+// ── alerts, if you want telling rather than watching ──────────────────────
+alertcondition(ta.crossover(close, ema),       "Crossed above the 20 EMA")
+alertcondition(ta.crossunder(close, ema),      "Crossed below the 20 EMA")
+alertcondition(ta.crossover(close, floorLine), "Entered the band below the high")
+alertcondition(ta.crossunder(close, floorLine),"Fell out of the band")
