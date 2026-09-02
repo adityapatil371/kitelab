@@ -35,8 +35,8 @@ import pickle
 
 import pandas as pd
 
-from kitelab import (backtest, config, darvas, dashboard_server, frames, portfolio,
-                     signals, sizing, slippage, strategies)
+from kitelab import (backtest, config, darvas, dashboard_server, frames, holygrail,
+                     portfolio, signals, sizing, slippage, strategies)
 from kitelab.progress import Bar
 from kitelab.curves import bh_stats, episodes, underwater_stats
 from kitelab.timeframes import (VARIANTS as TF_VARIANTS, simulate_variant,
@@ -97,7 +97,15 @@ BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 # traded, which is what the class is studying. The old label was wrong and the
 # module docstring has always said so.
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "dv": "Turtle channel"}
+                   "dv": "Turtle channel", "hg": "Holy Grail · ADX"}
+
+# The Holy Grail's band slot carries its STOP, because that is the choice worth
+# seeing: "tight" is the signal candle's low, which is what the class marks and
+# what its own spreadsheet measures out at a median 0.8% below entry; "wide" is
+# the confirmed multi-bar pivot, 5.8% below, which sizes positions about five
+# times smaller. Same signals, very different trade.
+HG_VARIANTS = [("tight", "signal_low"), ("wide", "pivot")]
+HG_TAGS = [tag for tag, _ in HG_VARIANTS]
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as
 # much, so they ride in the same slot of the key that the band uses for the EMA
@@ -119,7 +127,7 @@ DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
 DARVAS_DEFAULT = "20-10"
 
 # The one setting each strategy shows on the per-stock page.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "dv": DARVAS_DEFAULT}
+PRIMARY = {"ema": 0.02, "qmw": 0.02, "dv": DARVAS_DEFAULT, "hg": "tight"}
 
 
 def tag(band) -> str:
@@ -378,7 +386,12 @@ def main() -> None:
                 f"{stem}_{entry_len}_{exit_len}_all",
                 lambda s, a=entry_len, b=exit_len, g=gated:
                     darvas.simulate(s, a, b, weekly=g))
-    print("    darvas windows ready", flush=True)
+    print("    turtle windows ready", flush=True)
+    for hg_tag, hg_stop in HG_VARIANTS:
+        base[("hg", hg_tag)] = cached_signals(
+            f"HolyGrail_{hg_tag}_all",
+            lambda s, st=hg_stop: holygrail.simulate(s, stop=st))
+    print("    holy grail ready", flush=True)
     scale_lists = {
         ("ema", "half"): cached_signals("EMA_half_all",
                                         lambda s: backtest.simulate(s, scale_out="half")),
@@ -659,9 +672,10 @@ def main() -> None:
                             "years": round(bh["years"], 1)}}
             builders = {"ema": lambda so=None: backtest.simulate(symbol, scale_out=so),
                         "qmw": lambda so=None: variant_builder("QMW")(symbol),
-                        # Darvas needs only daily bars, so it runs on every
-                        # instrument here, at the windows the class specified.
-                        "dv": lambda so=None: darvas.simulate(symbol, 20, 10)}
+                        # Both of these need only daily bars, so they run on
+                        # every instrument here, at the class's own settings.
+                        "dv": lambda so=None: darvas.simulate(symbol, 20, 10),
+                        "hg": lambda so=None: holygrail.simulate(symbol)}
             # (per-stock pages show the gated 20/10; the 1TF control lives in the
             #  grid, where it can be compared across every setting at once)
             for skey, build in builders.items():
@@ -772,6 +786,7 @@ def main() -> None:
         "excluded": cfg.excluded,
         "risks": RISKS, "capitals": CAPITALS,
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
+        "hg_tags": HG_TAGS,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,

@@ -139,6 +139,10 @@
           candles, out on a close at or below the lowest low of the second — the two
           systems the Turtles traded. "1TF" drops the weekly gate, so it is the daily
           rule alone. The stop is always the entry candle's low.</p></div>
+      <div class="slicer" id="wrap-hgstop" style="display:none"><span class="eyebrow">Stop</span><div class="slist" id="sl-hgstop"></div>
+        <p class="fillnote">"Tight" is the signal candle's own low — what the class marks,
+          a median 0.8% below entry. "Wide" is a confirmed multi-bar swing low, 5.8% below,
+          which buys about a fifth as many shares for the same risk.</p></div>
       <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
       <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
       <div class="slicer"><span class="eyebrow">Started trading in</span><div class="slist" id="sl-year"></div>
@@ -392,6 +396,7 @@ let DATA = null;
 // for the EMA family only, a timeframe stack. Those two resolve into strat.
 const state = { page: "portfolio", family: "ema", emaTf: "ema",
                 strat: "ema", uni: "all", riskIdx: 2, capIdx: 1, bandIdx: 2, year: null,
+                hgIdx: 0,
                 fill: "0", log: false,
                 tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
                 soStrat: "ema", soUni: "all", dvIdx: 1, brStrat: "dv" };
@@ -478,6 +483,10 @@ function init() {
   state.dvIdx = Math.max(0, dvWins.indexOf(DATA.darvas_default || "20-10"));
   slicer("sl-dvwin", dvWins.map((w, i) => [String(i), dvLabel(w)]),
          () => String(state.dvIdx), k => { state.dvIdx = +k; renderPortfolio(); });
+  const HG = DATA.hg_tags || ["tight"];
+  slicer("sl-hgstop", HG.map((t, i) => [String(i), t === "tight"
+             ? "Tight — signal candle's low" : "Wide — multi-bar swing low"]),
+         () => String(state.hgIdx), k => { state.hgIdx = +k; renderPortfolio(); });
   slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
          () => String(state.riskIdx), k => { state.riskIdx = +k; renderPortfolio(); });
   slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
@@ -571,8 +580,10 @@ function syncStockList() {
 // =================================================== portfolio page ====
 // Darvas has no band; its two window lengths ride in the same slot of the key.
 const dvWindow = () => (DATA.darvas_windows || ["20-10"])[state.dvIdx];
+const hgStop = () => (DATA.hg_tags || ["tight"])[state.hgIdx];
 const bandOf = (strat, bandIdx) =>
   strat === "dv" ? dvWindow()
+  : strat === "hg" ? hgStop()
   : (DATA.bands || [0.02])[bandIdx];
 // The band slot means different things per strategy, so describe it in one place
 // rather than assuming it is a number and printing "NaN% band". A Darvas tag is
@@ -586,6 +597,7 @@ const dvLabel = w => {
 };
 const settingLabel = strat =>
   strat === "dv" ? dvLabel(dvWindow())
+  : strat === "hg" ? (hgStop() === "tight" ? "tight stop" : "wide stop")
   : `${bandOf(strat, state.bandIdx) * 100}% band`;
 const joinParts = parts => parts.filter(Boolean).join(" · ");
 const keyWith = (strat, bandVal, uni, riskIdx, capIdx) =>
@@ -599,12 +611,13 @@ const runFor = (riskIdx, capIdx) =>
 
 function renderPortfolio() {
   for (const id of ["sl-fill", "sl-strat", "sl-tf", "sl-uni", "sl-band", "sl-dvwin",
-                    "sl-risk", "sl-cap", "sl-year"]) $(id)._sync();
+                    "sl-hgstop", "sl-risk", "sl-cap", "sl-year"]) $(id)._sync();
   // Each strategy shows only what it actually has: the EMA stack has a timeframe
   // trio and a band, Darvas has its two windows and its gate.
   $("wrap-tf").style.display = state.family === "ema" ? "" : "none";
   $("wrap-band").style.display = state.family === "ema" ? "" : "none";
   $("wrap-dvwin").style.display = state.family === "dv" ? "" : "none";
+  $("wrap-hgstop").style.display = state.family === "hg" ? "" : "none";
   const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
   const r = runFor(state.riskIdx, state.capIdx);
   // A start year late enough to leave no trades is stored as null, not as a
@@ -684,7 +697,7 @@ function renderPortfolio() {
   barChart($("riskdd"), DATA.risks.map((rk, i) => ({
     label: rk + "%", value: runFor(i, state.capIdx).maxdd, on: i === state.riskIdx
   })), "var(--dd)", v => v.toFixed(0) + "%");
-  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", dv: "Darvas" };
+  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", dv: "Turtle", hg: "Holy Grail" };
   barChart($("stackbars"), Object.keys(stackNames).map(k => ({
     label: stackNames[k],
     // NOT `?? 0`: a missing key is not a 0% account, and a wiped one is not either.

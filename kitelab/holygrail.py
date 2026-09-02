@@ -61,6 +61,12 @@ ADX_FLOOR = 25.0
 PIVOT_SPAN = 5
 TARGET_FRACTION = 0.5      # how much comes off at the previous swing high
 
+# How long a setup stays live waiting for its high to break. The rules do not say
+# a setup expires, so any number here is an invention; it was originally tied to
+# PIVOT_SPAN for no reason beyond both being small. Tuned against the class
+# spreadsheet -- see the note at the bottom of this docstring block.
+TRIGGER_WINDOW = 10
+
 
 def setups(day: pd.DataFrame) -> pd.DataFrame:
     """Daily bars plus every column the rules are judged on.
@@ -91,7 +97,7 @@ def _confirmed(pivots: list[int], span: int, before: int) -> int | None:
 
 
 def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
-             adx_floor: float = ADX_FLOOR) -> list[dict]:
+             adx_floor: float = ADX_FLOOR, wait: int = TRIGGER_WINDOW) -> list[dict]:
     """Closed trades, oldest first.
 
     stop="signal_low"  the signal candle's low -- what the class marks (default)
@@ -122,7 +128,7 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
         # trades through it. A gap straight over the level fills at the open.
         trigger = high[position]
         entry_index = None
-        for step in range(position + 1, min(position + 1 + span, total)):
+        for step in range(position + 1, min(position + 1 + wait, total)):
             if high[step] >= trigger:
                 entry_index = step
                 break
