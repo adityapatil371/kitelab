@@ -728,7 +728,8 @@ def main() -> None:
 
     nifty = frames.daily("NIFTY 50")
     payload = {
-        "built": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+        # IST, and labelled: the build machine may be on any clock.
+        "built": config.now_local().strftime("%Y-%m-%d %H:%M IST"),
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
         "universe_size": len(cfg.all_symbols),

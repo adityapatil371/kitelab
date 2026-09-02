@@ -152,7 +152,10 @@ def check_frame(f: Findings, symbol: str, interval: str, d: pd.DataFrame) -> Non
     # ---- calendar ----
     if symbol not in ALWAYS_ON:
         f.add("weekend bar", symbol, interval, int((ts.dt.dayofweek >= 5).sum()))
-    f.add("future-dated bar", symbol, interval, int((ts > pd.Timestamp.now()).sum()))
+    # Bars are stamped in IST. Comparing them against a UTC clock would miss a
+    # future-dated bar for five and a half hours after it appeared.
+    f.add("future-dated bar", symbol, interval,
+          int((ts > config.now_local().tz_localize(None)).sum()))
     if interval != "day" and symbol not in ALWAYS_ON:
         tod = ts - ts.dt.normalize()
         f.add("bar outside 09:15-15:35", symbol, interval,

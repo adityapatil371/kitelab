@@ -45,6 +45,19 @@ CLEAN = Path(os.environ.get("KITELAB_CLEAN_DIR") or "/data/clean/kitelab")
 
 CONFIG_PATH = ROOT / "config.local.toml"
 
+# Everything user-facing is stamped in IST. The machine's own clock is not a safe
+# default: this project is developed in a UTC container against a laptop on IST,
+# so a dashboard built at 23:21 IST announced itself as "17:51" and the two
+# disagreed by five and a half hours. NSE and MCX both trade on IST, so it is the
+# right zone regardless of where the code runs.
+TIMEZONE = "Asia/Kolkata"
+
+
+def now_local():
+    """The current time in the market's timezone, as a pandas Timestamp."""
+    import pandas as pd
+    return pd.Timestamp.now(tz=TIMEZONE)
+
 # The five stocks of the class assignment, charted individually on the dashboard
 # and compared timeframe by timeframe. This is NOT the tradeable universe: a
 # stock can be assigned coursework and still fail the quality gate. HYUNDAI does
