@@ -106,7 +106,11 @@ STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
 # what its own spreadsheet measures out at a median 0.8% below entry; "wide" is
 # the confirmed multi-bar pivot, 5.8% below, which sizes positions about five
 # times smaller. Same signals, very different trade.
-HG_VARIANTS = [("tight", "signal_low"), ("wide", "pivot")]
+# Only the swing-low stop. Rule 6 of the class sheet says "SL will be swing
+# low", and the signal-candle variant was dropped on 2026-09-02: it was measured
+# against a CLASSMATE's spreadsheet, not the written rule, and having both on the
+# board invited reading the fit as the rule.
+HG_VARIANTS = [("swing", "pivot")]
 HG_TAGS = [tag for tag, _ in HG_VARIANTS]
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as

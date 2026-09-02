@@ -4,141 +4,152 @@
 <style>
 /* ── tokens ───────────────────────────────────────────────────────────────
    One accent. Red and green mean loss and gain and nothing else, so they stay
-   rare enough to notice. Everything else is greys, which is what lets a single
-   coloured number carry weight.                                             */
+   rare enough to notice; everything else is greys, which is what lets a single
+   coloured number carry weight.
+
+   Type scale raised one step on 2026-09-02 -- the first pass needed leaning in
+   to read. Table rows stay tight so the whole comparison still fits one screen
+   without scrolling, which is the point of the page.                         */
 :root {
   --bg:#f7f7f5; --card:#fff; --line:#e6e5e0; --line-soft:#f0efea;
-  --ink:#14140f; --ink-2:#5c5b54; --ink-3:#8d8b82;
+  --ink:#14140f; --ink-2:#5c5b54; --ink-3:#8b897f;
   --accent:#2f6fd0; --accent-soft:rgba(47,111,208,.10);
   --up:#0a7a4a; --down:#c0392b; --equity:#2f6fd0; --cash:#c9a227;
-  --radius:10px; --gap:14px;
+  --radius:10px; --gap:14px; --rail:236px;
+  --fs:15px; --fs-sm:13.5px; --fs-xs:12px;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
 }
 @media (prefers-color-scheme:dark){
   :root{ --bg:#131316; --card:#1b1b1f; --line:#2c2c32; --line-soft:#232328;
-         --ink:#f0efeb; --ink-2:#a9a8a2; --ink-3:#75746e;
-         --accent:#6ea8fe; --accent-soft:rgba(110,168,254,.14);
+         --ink:#f0efeb; --ink-2:#adaca6; --ink-3:#7c7b74;
+         --accent:#6ea8fe; --accent-soft:rgba(110,168,254,.15);
          --up:#3ddc97; --down:#ff6b5e; --equity:#6ea8fe; --cash:#e0b93a; }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);
-     -webkit-font-smoothing:antialiased}
+html,body{height:100%}
+/* The app owns the viewport: nothing scrolls but the rail and, if a screen is
+   genuinely too short, the content area. The comparison must not. */
+body{margin:0;overflow:hidden;background:var(--bg);color:var(--ink);
+     font:var(--fs)/1.45 var(--sans);-webkit-font-smoothing:antialiased;
+     display:flex}
 h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
-a{color:inherit}
 
-/* ── chrome ───────────────────────────────────────────────────────────── */
-header{position:sticky;top:0;z-index:20;background:var(--bg);
-       border-bottom:1px solid var(--line)}
-.bar{display:flex;align-items:baseline;gap:12px;padding:14px 20px 10px}
-.bar h1{font-size:15px}
-.built{color:var(--ink-3);font-size:11.5px;font-family:var(--mono)}
-.banner{display:none;margin:0 20px 10px;padding:9px 12px;border-radius:8px;
-        background:rgba(192,57,43,.09);border:1px solid var(--down);
-        color:var(--ink);font-size:12.5px;line-height:1.5}
-.banner.on{display:block}
-.banner b{color:var(--down)}
-.banner code{font-family:var(--mono);font-size:11.5px;background:var(--line-soft);
-             padding:1px 5px;border-radius:4px}
-
-/* the scenario: one compact row, always visible, never a tall column */
-.scenario{display:flex;flex-wrap:wrap;gap:16px;padding:0 20px 12px}
-.field{display:flex;flex-direction:column;gap:4px}
-.field > span{font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+/* ── left rail: identity, pages, then the scenario ────────────────────── */
+aside{width:var(--rail);flex:0 0 var(--rail);height:100vh;overflow-y:auto;
+      border-right:1px solid var(--line);background:var(--card);
+      padding:16px 14px;display:flex;flex-direction:column;gap:16px}
+.brand h1{font-size:17px}
+.built{color:var(--ink-3);font-size:var(--fs-xs);font-family:var(--mono);
+       margin-top:3px;display:block;line-height:1.4}
+nav{display:flex;flex-direction:column;gap:2px}
+nav button{border:0;background:none;font:inherit;font-size:var(--fs);
+           color:var(--ink-2);padding:8px 11px;cursor:pointer;text-align:left;
+           border-radius:8px;width:100%}
+nav button:hover{background:var(--line-soft);color:var(--ink)}
+nav button.on{background:var(--accent-soft);color:var(--ink);font-weight:600}
+.scenario{display:flex;flex-direction:column;gap:14px;
+          border-top:1px solid var(--line);padding-top:16px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field > span{font-size:var(--fs-xs);letter-spacing:.06em;text-transform:uppercase;
               color:var(--ink-3);font-weight:600}
-.seg{display:flex;background:var(--line-soft);border-radius:7px;padding:2px}
-.seg button{border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;
-            padding:4px 9px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.seg{display:flex;flex-wrap:wrap;background:var(--line-soft);border-radius:8px;
+     padding:2px;gap:1px}
+.seg button{border:0;background:none;color:var(--ink-2);font:inherit;
+            font-size:var(--fs-sm);padding:5px 9px;border-radius:6px;
+            cursor:pointer;white-space:nowrap;flex:1 1 auto}
 .seg button:hover{color:var(--ink)}
 .seg button.on{background:var(--card);color:var(--ink);font-weight:600;
                box-shadow:0 1px 2px rgba(0,0,0,.10)}
-select{font:inherit;font-size:12px;padding:5px 8px;border-radius:7px;
-       border:1px solid var(--line);background:var(--card);color:var(--ink)}
+select{font:inherit;font-size:var(--fs-sm);padding:6px 9px;border-radius:8px;
+       border:1px solid var(--line);background:var(--card);color:var(--ink);width:100%}
 
-nav{display:flex;gap:2px;padding:0 20px}
-nav button{border:0;background:none;font:inherit;font-size:13px;color:var(--ink-3);
-           padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent;
-           margin-bottom:-1px}
-nav button:hover{color:var(--ink-2)}
-nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
-
-main{padding:20px;max-width:1500px;margin:0 auto}
+/* ── content ──────────────────────────────────────────────────────────── */
+main{flex:1;height:100vh;overflow:auto;padding:18px 20px}
+.banner{display:none;margin-bottom:14px;padding:10px 13px;border-radius:8px;
+        background:rgba(192,57,43,.09);border:1px solid var(--down);
+        font-size:var(--fs-sm);line-height:1.5}
+.banner.on{display:block}
+.banner b{color:var(--down)}
+.banner code{font-family:var(--mono);font-size:var(--fs-xs);
+             background:var(--line-soft);padding:1px 5px;border-radius:4px}
 .view{display:none} .view.on{display:block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
       padding:16px}
-.card > h3{font-size:13px;margin-bottom:2px}
-.card > .sub{color:var(--ink-3);font-size:11.5px;margin-bottom:12px}
-.note{color:var(--ink-3);font-size:11.5px;line-height:1.6;margin-top:12px}
-.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--gap)}
+.card > h3{font-size:var(--fs);margin-bottom:2px}
+.card > .sub{color:var(--ink-3);font-size:var(--fs-sm);margin-bottom:11px}
+.note{color:var(--ink-3);font-size:var(--fs-sm);line-height:1.55;margin-top:11px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:var(--gap)}
 
-/* ── compare table: the front door ─────────────────────────────────────── */
+/* ── compare table: sized to fit, not to scroll ───────────────────────── */
 .tablewrap{overflow-x:auto;margin:0 -16px}
-table{border-collapse:collapse;width:100%;font-size:12.5px}
-th,td{padding:8px 10px;text-align:right;white-space:nowrap;
+table{border-collapse:collapse;width:100%;font-size:var(--fs-sm)}
+th,td{padding:6px 10px;text-align:right;white-space:nowrap;
       border-bottom:1px solid var(--line-soft)}
-th{position:sticky;top:0;background:var(--card);cursor:pointer;user-select:none;
-   font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);
+th{background:var(--card);cursor:pointer;user-select:none;font-size:var(--fs-xs);
+   letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);
    font-weight:600;border-bottom:1px solid var(--line)}
-th:hover{color:var(--ink)}
-th.on{color:var(--accent)}
+th:hover{color:var(--ink)} th.on{color:var(--accent)}
 th.l,td.l{text-align:left}
 tbody tr{cursor:pointer}
 tbody tr:hover{background:var(--accent-soft)}
 tbody tr.sel{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
 td.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
 td.up{color:var(--up)} td.down{color:var(--down)}
-.rank{color:var(--ink-3);font-family:var(--mono);font-size:11px}
-.pill{display:inline-block;padding:1px 6px;border-radius:20px;font-size:10.5px;
+.rank{color:var(--ink-3);font-family:var(--mono);font-size:var(--fs-xs)}
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:var(--fs-xs);
       background:var(--line-soft);color:var(--ink-2);margin-left:6px}
 
-/* ── stat blocks: one hero, the rest supporting ────────────────────────── */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+/* ── stat blocks: one hero, the rest supporting ───────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
        gap:1px;background:var(--line);border:1px solid var(--line);
        border-radius:var(--radius);overflow:hidden;margin-bottom:var(--gap)}
 .stat{background:var(--card);padding:12px 14px}
-.stat .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+.stat .k{font-size:var(--fs-xs);letter-spacing:.05em;text-transform:uppercase;
          color:var(--ink-3);font-weight:600}
-.stat .v{font-size:20px;font-weight:600;font-family:var(--mono);
+.stat .v{font-size:23px;font-weight:600;font-family:var(--mono);
          font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:-.02em}
-.stat .d{font-size:11px;color:var(--ink-3);margin-top:1px}
+.stat .d{font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px}
 .stat.hero{background:var(--accent-soft)}
-.stat.hero .v{font-size:26px}
+.stat.hero .v{font-size:30px}
 .v.up{color:var(--up)} .v.down{color:var(--down)}
 
 svg{display:block;width:100%;overflow:visible}
-.axis{fill:var(--ink-3);font-size:10px;font-family:var(--mono)}
+.axis{fill:var(--ink-3);font-size:11px;font-family:var(--mono)}
 .gridline{stroke:var(--line-soft);stroke-width:1}
-.legend{display:flex;gap:14px;font-size:11px;color:var(--ink-2);margin-bottom:8px}
-.swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+.legend{display:flex;gap:14px;font-size:var(--fs-sm);color:var(--ink-2);margin-bottom:8px}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;
         vertical-align:-1px}
-.empty{padding:40px 0;text-align:center;color:var(--ink-3);font-size:13px}
-.wf{display:flex;flex-direction:column;gap:7px;font-size:12px}
-.wf-row{display:grid;grid-template-columns:130px 1fr 62px;align-items:center;gap:10px}
-.wf-bar{height:16px;border-radius:3px;background:var(--line-soft);position:relative}
+.empty{padding:40px 0;text-align:center;color:var(--ink-3);font-size:var(--fs)}
+.wf{display:flex;flex-direction:column;gap:8px;font-size:var(--fs-sm)}
+.wf-row{display:grid;grid-template-columns:140px 1fr 66px;align-items:center;gap:10px}
+.wf-bar{height:17px;border-radius:3px;background:var(--line-soft);position:relative}
 .wf-fill{position:absolute;top:0;bottom:0;border-radius:3px}
 </style>
 
-<header>
-  <div class="bar">
+<aside>
+  <div class="brand">
     <h1>Kitelab</h1>
     <span class="built" id="built"></span>
   </div>
-  <div class="banner" id="stale"></div>
-  <div class="scenario" id="scenario"></div>
   <nav id="nav"></nav>
-</header>
+  <div class="scenario" id="scenario"></div>
+</aside>
 
 <main>
+  <div class="banner" id="stale"></div>
+
   <div class="view" id="v-compare">
     <div class="card">
       <h3>Every rule, the same conditions</h3>
       <p class="sub" id="cmp-sub"></p>
       <div class="tablewrap"><table id="cmp"></table></div>
-      <p class="note">Sorted by <b>MAR</b> — return divided by the worst drawdown — because
-        that is the comparison being made when two rows look alike. <b>Ulcer</b> charges for
-        how long the account sat underwater, not just how deep it went. <b>Captured</b> is the
-        share of the rule's own signals the account could afford; when it is low you are
-        reading a cash constraint as much as a rule. Click a row for its detail.</p>
+      <p class="note">Sorted by <b>MAR</b> &mdash; return divided by the worst drawdown &mdash;
+        because that is the comparison being made when two rows look alike. <b>Ulcer</b>
+        charges for how long the account sat underwater, not just how deep it went.
+        <b>Captured</b> is the share of the rule's own signals the account could afford; when
+        it is low you are reading a cash constraint as much as a rule. Click a row for its
+        detail.</p>
     </div>
   </div>
 
@@ -150,7 +161,7 @@ svg{display:block;width:100%;overflow:visible}
     <div class="card">
       <h3>One stock at a time</h3>
       <p class="sub" id="stk-sub"></p>
-      <div class="field" style="margin-bottom:14px">
+      <div class="field" style="margin-bottom:14px;max-width:280px">
         <span>Stock</span>
         <select id="stk-pick"></select>
       </div>
@@ -245,15 +256,20 @@ function buildScenario() {
 }
 
 /* ── the rows: every strategy variant at the chosen scenario ──────────── */
+/* The ADX rule keeps only its swing-low stop. The signal-candle variant was
+   fitted to a CLASSMATE's spreadsheet rather than to rule 6, and having both on
+   the board invited reading the fit as the rule. Filtered here as well as in the
+   generator so it leaves the board without waiting for a rebuild. */
 const variantsOf = skey =>
   skey === "dv" ? (DATA.darvas_windows || []) :
-  skey === "hg" ? (DATA.hg_tags || []) : (DATA.bands || []);
+  skey === "hg" ? (DATA.hg_tags || []).filter(t => t !== "tight") :
+  (DATA.bands || []);
 
 const settingLabel = (skey, v) =>
   skey === "dv" ? (String(v).includes("1TF")
       ? String(v).replace(" 1TF", "") + " · daily only"
       : String(v) + " · + weekly") :
-  skey === "hg" ? (v === "tight" ? "stop at signal candle" : "stop at swing low") :
+  skey === "hg" ? "stop at swing low" :
   (v * 100).toFixed(0) + "% band";
 
 const keyFor = (skey, v) =>
