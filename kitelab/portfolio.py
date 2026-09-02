@@ -147,6 +147,13 @@ def daily_curve(taken: list[dict], capital: float) -> dict:
             "peak_date": peak_date, "trough_date": trough_date}
 
 
+# The most a round trip may cost, as a fraction of the position. Above this the
+# trade is refused as too small to be worth placing. 0.5% is roughly a Rs5,400
+# floor at 2026 charges; the same number in a world of different fees moves by
+# itself, which a rupee constant would not.
+MAX_COST_FRACTION = 0.005
+
+
 def _cash_shares(marked: dict) -> list[float]:
     """Cash as a percent of equity, per day. Empty when there is no curve."""
     eq = dict(marked["curve"])
@@ -190,6 +197,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
     curve: list[tuple] = [(entries[0]["entry_ts"], capital)] if entries else []
     taken: list[dict] = []
     skipped_cash = skipped_size = skipped_busy = skipped_liquidity = 0
+    skipped_tiny = 0
     max_drawdown = 0.0
     max_concurrent = 0
 
@@ -232,6 +240,25 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
                 skipped_size += 1      # 1% of equity cannot cover even one share's risk
             else:
                 skipped_cash += 1      # the risk rule allows it, the bank balance does not
+            continue
+
+        # A POSITION TOO SMALL TO BE WORTH PLACING.
+        #
+        # Sizing is risk / stop distance, capped by cash. When the account is
+        # nearly fully committed -- which on the class stack is 80% of days --
+        # the cash cap hands back whatever scraps are left, and the scraps can be
+        # tiny: the 10th percentile position on that run was Rs52. Zerodha's DP
+        # charge is Rs15.34 per sell whatever the size, so a Rs52 position pays
+        # 29% of its own value in fees. It cannot profit. No one would place it.
+        #
+        # The floor is expressed as a COST FRACTION rather than a rupee figure,
+        # so it follows the fee schedule instead of needing a rethink whenever
+        # charges change: refuse the trade when a round trip costs more than
+        # MAX_COST_FRACTION of the position. At the 2026 rates that bites at
+        # roughly Rs5,400.
+        value = shares * trade["entry_price"]
+        if value > 0 and charges(value, value, False) > MAX_COST_FRACTION * value:
+            skipped_tiny += 1
             continue
 
         # What the stock can actually absorb. The trade-level sizer works off a
@@ -308,6 +335,8 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         "skipped_cash": skipped_cash, "skipped_size": skipped_size,
         "skipped_busy": skipped_busy,
         "skipped_liquidity": skipped_liquidity,
+        # positions the fee schedule would have eaten -- see MAX_COST_FRACTION
+        "skipped_tiny": skipped_tiny,
         # True drawdown: daily mark-to-market, percent of the concurrent peak.
         "max_drawdown": marked["max_drawdown"],
         "max_drawdown_pct": marked["max_drawdown_pct"],

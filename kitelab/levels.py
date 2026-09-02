@@ -111,6 +111,22 @@ def valid_from(frame: pd.DataFrame, price: float,
     return frame.iloc[events[1]]["ts"]
 
 
+def pivot_highs(frame: pd.DataFrame, span: int = 5) -> list[int]:
+    """Positions of swing highs: a high with `span` lower highs on both sides.
+
+    The mirror of pivot_lows, and it carries the same warning: a pivot is only
+    CONFIRMED `span` bars after it happens, so a backtest may not use one until
+    that confirmation bar. Using it earlier is reading the future.
+    """
+    high = frame["high"].to_numpy()
+    found = []
+    for position in range(span, len(high) - span):
+        window = high[position - span: position + span + 1]
+        if high[position] == window.max() and (window == high[position]).sum() == 1:
+            found.append(position)
+    return found
+
+
 def pivot_lows(frame: pd.DataFrame, span: int = 5) -> list[int]:
     """Positions of swing lows: a low with `span` higher lows on both sides.
 
