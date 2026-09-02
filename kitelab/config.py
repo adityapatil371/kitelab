@@ -8,15 +8,32 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+def _resolve(env_var: str, kind: str, fallback: Path) -> Path:
+    """Where the data lives, found rather than assumed.
+
+    An environment variable always wins. Otherwise take the first candidate that
+    actually exists: the container mounts /data/{raw,clean}/kitelab, the laptop
+    keeps the same two under $HOME. Hard-coding the container path meant every
+    direct entry point died on the laptop --
+
+        OSError [Errno 30] Read-only file system: '/data'
+
+    -- because CLEAN had no fallback at all and load() tries to create it. Only
+    run_dashboard.sh worked, and only because it exports the variables first.
+    """
+    chosen = os.environ.get(env_var)
+    if chosen:
+        return Path(chosen)
+    for candidate in (Path(f"/data/{kind}/kitelab"),
+                      Path.home() / "data" / kind / "kitelab"):
+        if candidate.is_dir():
+            return candidate
+    return fallback
+
+
 # Where the RAW parquet files live. READ-ONLY: nothing in this project may write
-# into it. KITELAB_DATA_DIR wins if it is set; otherwise use the shared
-# /data/raw/kitelab when that directory exists, and fall back to the repo's own
-# ./data when it does not.
-_SHARED_DATA = Path("/data/raw/kitelab")
-DATA = Path(
-    os.environ.get("KITELAB_DATA_DIR")
-    or (_SHARED_DATA if _SHARED_DATA.is_dir() else ROOT / "data")
-)
+# into it.
+DATA = _resolve("KITELAB_DATA_DIR", "raw", ROOT / "data")
 
 # Where CLEANED and derived data lives. This one IS writable, and it is the only
 # directory the analysis side of this project ever touches. Overridable with
@@ -41,7 +58,7 @@ DATA = Path(
 #
 # CLEAN is rebuildable from DATA with `python -m scripts.clean_data`, with ONE
 # exception: levels.json is hand-drawn and cannot be regenerated. Back it up.
-CLEAN = Path(os.environ.get("KITELAB_CLEAN_DIR") or "/data/clean/kitelab")
+CLEAN = _resolve("KITELAB_CLEAN_DIR", "clean", ROOT / "data-clean")
 
 CONFIG_PATH = ROOT / "config.local.toml"
 
