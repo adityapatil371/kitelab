@@ -58,29 +58,24 @@ aboveEma = close > ema
 bgcolor(inBand and aboveEma ? color.new(#0a7a4a, 90) :
         aboveEma            ? color.new(#c9a227, 92) : na, title = "state")
 
-// ── a readout, so you do not have to eyeball the gap ──────────────────────
+// ── a readout that MOVES WITH THE CHART ───────────────────────────────────
+// This was a table.new(position.top_right) and tables are anchored to the
+// SCREEN, not to the bars: scroll the chart and it sat there, welded to the
+// corner while the candles slid underneath. A label is anchored to a bar, so it
+// travels with the price like everything else here.
+readout = input.bool(true, "Show the readout on the last bar")
+
 gapPct = (close - ath) / ath * 100
 
-if barstate.islast
-    var table t = table.new(position.top_right, 2, 4,
-                            bgcolor = color.new(color.white, 15),
-                            border_color = color.new(color.gray, 60), border_width = 1)
-    table.cell(t, 0, 0, "below the high", text_size = size.small,
-               text_color = color.gray, text_halign = text.align_left)
-    table.cell(t, 1, 0, str.tostring(gapPct, "#.0") + "%", text_size = size.small,
-               text_color = gapPct >= -bandPct ? #0a7a4a : #c0392b)
-    table.cell(t, 0, 1, "band floor", text_size = size.small,
-               text_color = color.gray, text_halign = text.align_left)
-    table.cell(t, 1, 1, str.tostring(floorLine, format.mintick), text_size = size.small,
-               text_color = color.black)
-    table.cell(t, 0, 2, "20 EMA", text_size = size.small,
-               text_color = color.gray, text_halign = text.align_left)
-    table.cell(t, 1, 2, str.tostring(ema, format.mintick), text_size = size.small,
-               text_color = color.black)
-    table.cell(t, 0, 3, "in the band", text_size = size.small,
-               text_color = color.gray, text_halign = text.align_left)
-    table.cell(t, 1, 3, inBand ? "yes" : "no", text_size = size.small,
-               text_color = inBand ? #0a7a4a : #c0392b)
+if readout and barstate.islast
+    var label tag = na
+    label.delete(tag)
+    tag := label.new(bar_index, close,
+        text  = str.tostring(gapPct, "#.0") + "% below the high" +
+                (inBand ? "  ·  in the band" : "  ·  outside"),
+        style = label.style_label_left,
+        color = color.new(inBand ? #0a7a4a : #c0392b, 85),
+        textcolor = chart.fg_color, size = size.small)
 
 // ── alerts, if you want telling rather than watching ──────────────────────
 alertcondition(ta.crossover(close, ema),       "Crossed above the 20 EMA")
