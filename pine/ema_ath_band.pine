@@ -14,12 +14,24 @@
 // makes the band readable -- the zone stays put while price moves through it.
 
 //@version=5
-indicator("20 EMA + ATH band", overlay = true)
+// overlay      draw on the candles, not in a pane of its own
+// scale.right   pin to the SAME price scale as the candles. Without it an
+//               overlay can end up on its own axis, and then the lines drift
+//               against the bars as you zoom -- they look unlocked because they
+//               are, each scaling to its own range.
+// format.price  read the values as prices, with the instrument's own tick size
+indicator("20 EMA + ATH band", overlay = true, scale = scale.right,
+          format = format.price)
 
 len     = input.int(20,    "EMA length",        minval = 2)
 bandPct = input.float(10., "Band below the high %", minval = 0, maxval = 90, step = 1)
 useHigh = input.bool(false, "Use the highest HIGH instead of the highest close")
 shade   = input.bool(true,  "Shade the band")
+// A stock far below its record forces the y-axis to span from today's price all
+// the way up to that record, which squashes the candles into a strip. Turn the
+// high itself off and only the band floor is drawn: the zone still reads, and
+// the chart keeps a normal scale.
+showAth = input.bool(true,  "Draw the all-time-high line")
 
 ema  = ta.ema(close, len)
 ath  = useHigh ? ta.max(high) : ta.max(close)
@@ -27,7 +39,7 @@ floorLine = ath * (1 - bandPct / 100)
 
 // ── the lines ─────────────────────────────────────────────────────────────
 pEma   = plot(ema,       "20 EMA",        color = color.new(#2f6fd0, 0), linewidth = 2)
-pAth   = plot(ath,       "All-time high", color = color.new(#8d8b82, 30),
+pAth   = plot(showAth ? ath : na, "All-time high", color = color.new(#8d8b82, 30),
               style = plot.style_stepline)
 pFloor = plot(floorLine, "Band floor",    color = color.new(#0a7a4a, 20),
               style = plot.style_stepline, linewidth = 2)
