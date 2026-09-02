@@ -1,0 +1,89 @@
+// EMA · near the high  —  item 4, 2026-09-02
+//
+// The class 20 EMA stack, but only buying while price is within a band of its
+// own all-time high. The idea: a 20 EMA cross means more in a name already
+// making highs than in one clawing back from a fall.
+//
+// Matches kitelab/backtest.py — simulate(stack="mwd", ath_band=0.10) — so what
+// the chart shows and what the backtest counts are the same rule:
+//
+//   trend    close above the 20 EMA on DAILY, WEEKLY and MONTHLY, all three
+//   entry    all three clear of the EMA by the band (2%), and price within
+//            10% of the running all-time high
+//   stop     the entry candle's low
+//   exit     ANY of the three closing below its EMA by the band
+//
+// The all-time high is a RUNNING maximum of the close, today included. That is
+// knowable at the close and is not lookahead — unlike a high still to come.
+//
+// Set the chart to Daily. The weekly and monthly values are pulled with
+// request.security using lookahead_off, so a partly-formed higher bar cannot
+// leak a value it has not printed yet.
+
+//@version=5
+strategy("EMA · near the high", overlay = true,
+         initial_capital       = 200000,
+         default_qty_type      = strategy.percent_of_equity,
+         default_qty_value     = 100,
+         commission_type       = strategy.commission.percent,
+         commission_value      = 0.1,          // STT both legs, roughly
+         process_orders_on_close = true,
+         calc_on_every_tick    = false)
+
+len       = input.int(20,    "EMA length",              minval = 2)
+band      = input.float(2.0, "Band %  (dead zone)",     minval = 0, step = 0.5) / 100
+athBand   = input.float(10.0,"Buy within % of the high",minval = 0, step = 1)   / 100
+useATH    = input.bool(true, "Require price near the high")
+useHigher = input.bool(true, "Require weekly and monthly agreement")
+
+// ── the three timeframes ───────────────────────────────────────────────────
+// lookahead_off is the whole point: with it on, the weekly EMA on a Tuesday
+// would be the one that only exists on Friday, and every backtest would look
+// wonderful and be a lie.
+emaD = ta.ema(close, len)
+emaW = request.security(syminfo.tickerid, "W", ta.ema(close, len),
+                        lookahead = barmerge.lookahead_off)
+emaM = request.security(syminfo.tickerid, "M", ta.ema(close, len),
+                        lookahead = barmerge.lookahead_off)
+
+up   = 1 + band
+down = 1 - band
+
+// Entry wants ALL three clear of the upper line. Exit needs only ONE below the
+// lower line — the asymmetry is deliberate: it is harder to get in than out.
+stackUp   = close > emaD * up  and (not useHigher or (close > emaW * up  and close > emaM * up))
+stackDown = close < emaD * down or  (useHigher and (close < emaW * down or close < emaM * down))
+
+// ── the all-time high filter ───────────────────────────────────────────────
+ath     = ta.max(close)                    // running max of the close, today included
+nearATH = not useATH or close >= ath * (1 - athBand)
+
+// ── orders ─────────────────────────────────────────────────────────────────
+// The stop is the entry candle's low, as in every strategy in this project.
+var float stopPrice = na
+
+if stackUp and nearATH and strategy.position_size == 0
+    stopPrice := low
+    strategy.entry("long", strategy.long)
+
+if strategy.position_size > 0
+    if stackDown
+        strategy.close("long", comment = "EMA break")
+    else
+        strategy.exit("stop", from_entry = "long", stop = stopPrice)
+
+// ── what you see ───────────────────────────────────────────────────────────
+plot(emaD, "20 EMA daily",   color = color.new(color.blue,   0), linewidth = 2)
+plot(useHigher ? emaW : na, "20 EMA weekly",
+     color = color.new(color.orange, 0), linewidth = 1)
+plot(useHigher ? emaM : na, "20 EMA monthly",
+     color = color.new(color.purple, 0), linewidth = 1)
+plot(useATH ? ath * (1 - athBand) : na, "buy-above line",
+     color = color.new(color.teal, 40), style = plot.style_stepline)
+plot(useATH ? ath : na, "all-time high",
+     color = color.new(color.gray, 60), style = plot.style_stepline)
+
+// Green where the rule would buy; grey where the high filter is what stopped it,
+// so you can see how often that one condition is the binding one.
+bgcolor(stackUp and nearATH        ? color.new(color.green, 88) :
+        stackUp and not nearATH    ? color.new(color.gray,  92) : na)

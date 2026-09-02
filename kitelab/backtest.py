@@ -142,9 +142,26 @@ def charges(buy_value: float, sell_value: float, intraday: bool = False) -> floa
     return brokerage + stt + transaction + sebi + gst + stamp + demat
 
 
+# How much below its own all-time high a stock may be and still be bought. The
+# class idea: a 20 EMA cross means more in a name already making highs than in
+# one recovering from a fall. None = no restriction, which is the original rule.
+ATH_BAND = 0.10
+
+
 def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
-                     band: float = BAND) -> pd.DataFrame:
-    """Daily bars plus the point-in-time EMA-stack condition."""
+                     band: float = BAND, stack: str = "mwd",
+                     ath_band: float | None = None) -> pd.DataFrame:
+    """Daily bars plus the point-in-time EMA-stack condition.
+
+    stack="mwd"    monthly and weekly must agree with daily (the class rule)
+    stack="daily"  the daily 20 EMA alone -- the control that says what the two
+                   higher timeframes are actually worth
+    ath_band       when set, only bars within this fraction of the running
+                   all-time high can trigger an entry. The high is a running max
+                   INCLUDING today, which is knowable at the close; exits are
+                   left alone, because a rule that refuses to sell what it has
+                   already bought is not a filter, it is a trap.
+    """
     day = frames.daily(symbol).reset_index(drop=True)
     week = frames.weekly(day)
     month = frames.monthly(day)
@@ -173,14 +190,31 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
     out["daily_ema"] = daily_ema
     out["weekly_ema"] = week_asof
     out["monthly_ema"] = month_asof
-    out["in_stack"] = (close > daily_ema) & (close > week_asof) & (close > month_asof)
-    # Entry needs ALL three clear of the upper line; exit needs only ONE below the
-    # lower line, mirroring the original "any EMA broken" rule.
     upper, lower = 1 + band, 1 - band
-    out["entry_ok"] = ((close > daily_ema * upper) & (close > week_asof * upper)
-                       & (close > month_asof * upper))
-    out["exit_ok"] = ((close < daily_ema * lower) | (close < week_asof * lower)
-                      | (close < month_asof * lower))
+    if stack == "daily":
+        # The control for "what do the higher timeframes buy us?". One line in,
+        # one line out, nothing above it consulted.
+        out["in_stack"] = close > daily_ema
+        out["entry_ok"] = close > daily_ema * upper
+        out["exit_ok"] = close < daily_ema * lower
+    elif stack == "mwd":
+        out["in_stack"] = (close > daily_ema) & (close > week_asof) & (close > month_asof)
+        # Entry needs ALL three clear of the upper line; exit needs only ONE below
+        # the lower line, mirroring the original "any EMA broken" rule.
+        out["entry_ok"] = ((close > daily_ema * upper) & (close > week_asof * upper)
+                           & (close > month_asof * upper))
+        out["exit_ok"] = ((close < daily_ema * lower) | (close < week_asof * lower)
+                          | (close < month_asof * lower))
+    else:
+        raise ValueError(f"unknown stack: {stack!r}")
+
+    if ath_band is not None:
+        # Running all-time high of the CLOSE, today included. Buying only within
+        # a band of it is a strength filter, not a lookahead: the high so far is
+        # known at the close, unlike the high that is still to come.
+        peak = day["close"].cummax().to_numpy()
+        out["near_ath"] = close >= peak * (1 - ath_band)
+        out["entry_ok"] = out["entry_ok"] & out["near_ath"]
     # How many COMPLETED higher-timeframe bars existed. An EMA-20 resting on 3 monthly
     # bars is what TradingView draws, but it is not worth much -- surfaced, not hidden.
     out["weeks_done"] = week_pos
@@ -190,7 +224,8 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
 
 def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
              band: float = BAND, scale_out: str | None = None,
-             stop_on_close: bool = True, scale_r: float = 1.0) -> list[dict]:
+             stop_on_close: bool = True, scale_r: float = 1.0,
+             stack: str = "mwd", ath_band: float | None = None) -> list[dict]:
     """Walk the signal series and produce closed trades, oldest first.
 
     stop_on_close=True is the CLASS convention (2026-08-28): everything --
@@ -207,7 +242,7 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     if NEXT_OPEN_FILLS and not stop_on_close:
         raise ValueError("NEXT_OPEN_FILLS assumes decisions are taken at closes; it is "
                          "meaningless with a live intrabar stop (stop_on_close=False).")
-    signal = ema_stack_signal(symbol, length, band)
+    signal = ema_stack_signal(symbol, length, band, stack, ath_band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
     open_, high, low, close = (signal[c].to_numpy() for c in ("open", "high", "low", "close"))

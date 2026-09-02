@@ -99,7 +99,19 @@ BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 # traded, which is what the class is studying. The old label was wrong and the
 # module docstring has always said so.
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
+                   "e1": "EMA · daily only", "eath": "EMA · near the high",
                    "dv": "Turtle channel", "hg": "Holy Grail · ADX"}
+
+# Two questions asked on 2026-09-02, each answered by ONE variant at the class's
+# own 2% band rather than a fresh band sweep -- the question is the filter, not
+# the band, and a sweep on each would have tripled the grid to say the same thing.
+#
+#   e1    the daily 20 EMA with no higher timeframe consulted. The control that
+#         says what monthly and weekly are actually worth.
+#   eath  the full M/W/D stack, but only buying within 10% of the running
+#         all-time high.
+SOLO_BAND = 0.02
+ATH_BAND = 0.10
 
 # The Holy Grail's band slot carries its STOP, because that is the choice worth
 # seeing: "tight" is the signal candle's low, which is what the class marks and
@@ -133,7 +145,8 @@ DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
 DARVAS_DEFAULT = "20-10"
 
 # The one setting each strategy shows on the per-stock page.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "dv": DARVAS_DEFAULT, "hg": "tight"}
+PRIMARY = {"ema": 0.02, "qmw": 0.02, "e1": "daily", "eath": "near-high",
+           "dv": DARVAS_DEFAULT, "hg": "swing"}
 
 
 def tag(band) -> str:
@@ -423,6 +436,13 @@ def main() -> None:
                 f"{stem}_{entry_len}_{exit_len}_all",
                 lambda s, a=entry_len, b=exit_len, g=gated:
                     darvas.simulate(s, a, b, weekly=g))
+    base[("e1", "daily")] = cached_signals(
+        "EMA_daily_only_all",
+        lambda s: backtest.simulate(s, band=SOLO_BAND, stack="daily"))
+    base[("eath", "near-high")] = cached_signals(
+        f"EMA_ath{ATH_BAND*100:g}_all",
+        lambda s: backtest.simulate(s, band=SOLO_BAND, ath_band=ATH_BAND))
+    print("    ema variants ready", flush=True)
     print("    turtle windows ready", flush=True)
     for hg_tag, hg_stop in HG_VARIANTS:
         base[("hg", hg_tag)] = cached_signals(
@@ -465,8 +485,28 @@ def main() -> None:
     # questions actually being asked: the whole universe, and the 10 stocks you
     # would really hold. cfg.in_sample / cfg.out_of_sample still exist for
     # scripts that want them.
+    # Liquidity buckets, so a rule can be judged on the stocks it would actually
+    # be run on. Median daily traded value over each stock's whole history --
+    # the same measure and the same cut points scripts.screen_universe uses to
+    # admit a stock, so "mid" here means what it means there.
+    turn = {}
+    for sym in cfg.all_symbols:
+        try:
+            d = frames.daily(sym)
+            v = (d["close"] * d["volume"]).to_numpy(float)
+            v = v[v > 0]
+            if len(v):
+                turn[sym] = float(np.median(v))
+        except SystemExit:
+            pass
+    small = {s for s, t in turn.items() if t < 5e7}
+    mid = {s for s, t in turn.items() if 5e7 <= t < 25e7}
+    print(f"  liquidity: {len(small)} small/micro, {len(mid)} mid, "
+          f"{len(turn) - len(small) - len(mid)} large", flush=True)
     universes = {"all": (f"All {len(cfg.all_symbols)} stocks", None),
-                 "b10": ("10 random stocks", set(median_basket))}
+                 "b10": ("10 random stocks", set(median_basket)),
+                 "mid": (f"{len(mid)} mid caps", mid),
+                 "small": (f"{len(small)} small caps", small)}
 
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and
@@ -712,7 +752,11 @@ def main() -> None:
                         # Both of these need only daily bars, so they run on
                         # every instrument here, at the class's own settings.
                         "dv": lambda so=None: darvas.simulate(symbol, 20, 10),
-                        "hg": lambda so=None: holygrail.simulate(symbol)}
+                        "hg": lambda so=None: holygrail.simulate(symbol),
+                        "e1": lambda so=None: backtest.simulate(
+                            symbol, band=SOLO_BAND, stack="daily"),
+                        "eath": lambda so=None: backtest.simulate(
+                            symbol, band=SOLO_BAND, ath_band=ATH_BAND)}
             # (per-stock pages show the gated 20/10; the 1TF control lives in the
             #  grid, where it can be compared across every setting at once)
             for skey, build in builders.items():
