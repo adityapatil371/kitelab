@@ -64,6 +64,22 @@ RISKS = [0.25, 0.5, 1.0, 2.0]
 #
 # 2024 is the last offered: a 2025 or 2026 start has under two years of trades,
 # and that number would be noise wearing a percent sign.
+# How many random 10-stock baskets the Monte Carlo draws. Once the start-year
+# axis came down to five, this became the longest part of the rebuild -- it was
+# never on that axis, so it never shrank with it.
+#
+# 40 rather than 75. The draws feed two things: a distribution of outcomes, and
+# the choice of the median basket that becomes the "10 random stocks" universe.
+# 40 is ample for the percentiles actually read off it (median, 10th, 90th); the
+# standard error of a median falls with the square root of the count, so going
+# 75 -> 40 widens it by about a third while costing 47% less. For a figure quoted
+# to one decimal that is not a trade worth refusing.
+#
+# It does move the chosen median basket, and with it every "b10" number -- a
+# different draw can land on a different middle. That is a change of sample, not
+# a change of method.
+BASKET_DRAWS = 40
+
 START_YEARS = [2006, 2012, 2018, 2022, 2024]
 START_DEFAULT = 2018
 
@@ -483,7 +499,7 @@ def main() -> None:
     import random
     rng = random.Random(20260823)
     symbols_all = sorted(cfg.all_symbols)
-    baskets = [rng.sample(symbols_all, 10) for _ in range(75)]
+    baskets = [rng.sample(symbols_all, 10) for _ in range(BASKET_DRAWS)]
     scored = []
     for basket in baskets:
         members = set(basket)
