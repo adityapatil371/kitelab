@@ -147,6 +147,42 @@ def daily_curve(taken: list[dict], capital: float) -> dict:
             "peak_date": peak_date, "trough_date": trough_date}
 
 
+def ulcer_index(curve) -> float | None:
+    """Root-mean-square of the percentage drawdown, day by day.
+
+    Peter Martin's measure. Max drawdown says how deep the worst hole was and
+    nothing about how long you sat in it; the Ulcer Index charges for both,
+    because a 20% dip you climb out of in a month is not the same experience as
+    a 20% dip that lasts three years. Squaring means a long shallow misery
+    scores below one deep plunge, which matches how it feels.
+    """
+    peak = float("-inf")
+    squares = []
+    for _, equity in curve:
+        peak = max(peak, equity)
+        if peak > 0:
+            squares.append((100 * (equity - peak) / peak) ** 2)
+    return (sum(squares) / len(squares)) ** 0.5 if squares else None
+
+
+def mar_ratio(cagr_pct, max_drawdown_pct) -> float | None:
+    """CAGR divided by the worst drawdown, both over the whole record.
+
+    The comparison actually being made when two strategies are read off side by
+    side. Deliberately NOT Sharpe: Sharpe rewards smoothness and penalises the
+    large up-moves this kind of strategy lives on, and worse here, it would
+    reward an account for sitting in cash -- cash has no volatility, and this
+    account is starved of money 80% of the time.
+
+    Not Calmar either, which by its original definition uses only the last 36
+    months. The two get conflated constantly; this one uses everything, so it is
+    named for what it is.
+    """
+    if cagr_pct is None or not max_drawdown_pct:
+        return None
+    return cagr_pct / abs(max_drawdown_pct)
+
+
 # The most a round trip may cost, as a fraction of the position. Above this the
 # trade is refused as too small to be worth placing. 0.5% is roughly a Rs5,400
 # floor at 2026 charges; the same number in a world of different fees moves by
@@ -198,9 +234,29 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
     taken: list[dict] = []
     skipped_cash = skipped_size = skipped_busy = skipped_liquidity = 0
     skipped_tiny = 0
+    # Signals offered vs signals affordable, by year. The headline capture rate
+    # hides a drift: as equity compounds, position sizes grow with it, so a
+    # constrained account takes a SMALLER share of its signals in later years.
+    # Without this the result can be an artefact of account size rather than of
+    # the rule.
+    offered_by_year: dict[int, int] = {}
+    taken_by_year: dict[int, int] = {}
     max_drawdown = 0.0
     max_concurrent = 0
 
+    # SETTLEMENT. settle() runs before every entry, so a position closed today
+    # releases its cash in time to fund a purchase today. Two consequences worth
+    # stating rather than leaving in the code:
+    #
+    #   - It avoids the ordering defect that bites naive engines, where buy
+    #     orders are pseudo-executed against a running balance BEFORE the sells
+    #     that fund them, and get rejected for want of money that was about to
+    #     arrive. Exits are settled first here, always.
+    #   - It assumes same-day proceeds are spendable. Under T+1 brokers commonly
+    #     allow 80-100% of sale proceeds against fresh purchases, so this is
+    #     defensible, but it IS optimistic and it interacts directly with the
+    #     cash starvation this account already runs into. Trade-to-trade scrips
+    #     are the exception and are not modelled.
     def settle(upto) -> None:
         nonlocal cash, peak, max_drawdown
         for symbol, pos in list(open_by_symbol.items()):
@@ -218,6 +274,8 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
             max_drawdown = min(max_drawdown, equity - peak)
 
     for trade in entries:
+        year = pd.Timestamp(trade["entry_ts"]).year
+        offered_by_year[year] = offered_by_year.get(year, 0) + 1
         settle(trade["entry_ts"])
         if trade["symbol"] in open_by_symbol:
             skipped_busy += 1
@@ -302,6 +360,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
                                                exit_fill * shares)
 
         cash -= shares * entry_fill
+        taken_by_year[year] = taken_by_year.get(year, 0) + 1
         open_by_symbol[trade["symbol"]] = {**trade, "shares": shares,
                                            "entry_price": entry_fill,
                                            "exit_price": exit_fill}
@@ -337,6 +396,10 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         "skipped_liquidity": skipped_liquidity,
         # positions the fee schedule would have eaten -- see MAX_COST_FRACTION
         "skipped_tiny": skipped_tiny,
+        # [year, offered, taken] -- how much of the strategy the account could
+        # afford to run, and whether that share falls away as equity compounds
+        "capture": [[y, offered_by_year[y], taken_by_year.get(y, 0)]
+                    for y in sorted(offered_by_year)],
         # True drawdown: daily mark-to-market, percent of the concurrent peak.
         "max_drawdown": marked["max_drawdown"],
         "max_drawdown_pct": marked["max_drawdown_pct"],
@@ -356,6 +419,14 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
         # unaffordable no matter how good it looks.
         "median_cash_pct": _median_cash_pct(marked),
         "fully_invested_pct": _fully_invested_pct(marked),
+        # Return against pain, two ways. MAR is return per unit of worst dip;
+        # the Martin ratio is return per unit of Ulcer, which charges for how
+        # long the dips lasted as well as how deep they went.
+        "ulcer": (round(ui, 2) if (ui := ulcer_index(marked["curve"])) is not None
+                  else None),
+        "mar": (round(m, 2) if (m := mar_ratio(
+            (100 * (growth ** (1 / years) - 1)) if years > 0 and growth > 0 else None,
+            marked["max_drawdown_pct"])) is not None else None),
         "legacy_curve": curve,
         "taken": taken,
     }
