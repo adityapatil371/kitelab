@@ -1,1397 +1,525 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kitelab Control Room</title>
+<title>Kitelab</title>
 <style>
-  :root {
-    color-scheme: light;
-    --plane: #f0f0ee; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
-    --muted: #898781; --grid: #e1e0d9; --baseline: #c3c2b7;
-    --ring: rgba(11,11,11,0.10);
-    --equity: #2a78d6; --bench: #1baf7a; --dd: #d03b3b; --good: #006300;
-    --accent: #2a78d6; --accent-ink: #ffffff; --accent-soft: rgba(42,120,214,0.12);
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body { background: var(--plane); color: var(--ink);
-         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .frame { display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
+/* ── tokens ───────────────────────────────────────────────────────────────
+   One accent. Red and green mean loss and gain and nothing else, so they stay
+   rare enough to notice. Everything else is greys, which is what lets a single
+   coloured number carry weight.                                             */
+:root {
+  --bg:#f7f7f5; --card:#fff; --line:#e6e5e0; --line-soft:#f0efea;
+  --ink:#14140f; --ink-2:#5c5b54; --ink-3:#8d8b82;
+  --accent:#2f6fd0; --accent-soft:rgba(47,111,208,.10);
+  --up:#0a7a4a; --down:#c0392b; --equity:#2f6fd0; --cash:#c9a227;
+  --radius:10px; --gap:14px;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#131316; --card:#1b1b1f; --line:#2c2c32; --line-soft:#232328;
+         --ink:#f0efeb; --ink-2:#a9a8a2; --ink-3:#75746e;
+         --accent:#6ea8fe; --accent-soft:rgba(110,168,254,.14);
+         --up:#3ddc97; --down:#ff6b5e; --equity:#6ea8fe; --cash:#e0b93a; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);
+     -webkit-font-smoothing:antialiased}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
+a{color:inherit}
 
-  aside { background: var(--surface); border-right: 1px solid var(--grid);
-          padding: 1.1rem 1rem 2rem; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-  aside h1 { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; }
-  aside .built { color: var(--muted); font-size: 0.7rem; margin: 0.15rem 0 1rem; }
-  .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.66rem; color: var(--muted); font-weight: 700; }
-  .slicer { margin-bottom: 1.05rem; }
-  .slicer .eyebrow { display: block; margin-bottom: 0.35rem; }
-  .fillnote { color: var(--muted); font-size: 0.68rem; line-height: 1.45; margin: 0.4rem 0 0; }
-  .slist { display: flex; flex-direction: column; gap: 3px; }
-  .slist button, .navlist button {
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    border: 0; background: transparent; color: var(--ink-2); border-radius: 7px;
-    padding: 0.38rem 0.55rem; font: inherit; font-size: 0.82rem; cursor: pointer; text-align: left;
-  }
-  .slist button:hover, .navlist button:hover { background: var(--accent-soft); color: var(--ink); }
-  .slist button.on, .navlist button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  .slist button .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--baseline); flex: none; }
-  .slist button.on .dot { background: var(--accent-ink); }
-  .slist button:focus-visible, .navlist button:focus-visible, .tabs button:focus-visible,
-  .logtoggle:focus-visible, #stock-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .navlist { display: flex; flex-direction: column; gap: 3px; margin-bottom: 1.1rem; }
-  #stock-search { width: 100%; border: 1px solid var(--grid); border-radius: 7px; background: var(--plane);
-                  color: var(--ink); padding: 0.38rem 0.55rem; font: inherit; font-size: 0.82rem; margin-bottom: 0.35rem; }
-  #sl-stock { max-height: 40vh; overflow-y: auto; }
-  aside .note { color: var(--muted); font-size: 0.7rem; margin-top: 1.1rem; line-height: 1.5; }
+/* ── chrome ───────────────────────────────────────────────────────────── */
+header{position:sticky;top:0;z-index:20;background:var(--bg);
+       border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:baseline;gap:12px;padding:14px 20px 10px}
+.bar h1{font-size:15px}
+.built{color:var(--ink-3);font-size:11.5px;font-family:var(--mono)}
+.banner{display:none;margin:0 20px 10px;padding:9px 12px;border-radius:8px;
+        background:rgba(192,57,43,.09);border:1px solid var(--down);
+        color:var(--ink);font-size:12.5px;line-height:1.5}
+.banner.on{display:block}
+.banner b{color:var(--down)}
+.banner code{font-family:var(--mono);font-size:11.5px;background:var(--line-soft);
+             padding:1px 5px;border-radius:4px}
 
-  main { padding: 1rem 1.2rem 3rem; min-width: 0; }
-  .canvas { display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.8rem; }
-  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
-          padding: 0.75rem 0.9rem; min-width: 0; }
-  .card h2 { font-size: 0.78rem; font-weight: 700; color: var(--ink-2); margin-bottom: 0.1rem; }
-  .card .sub { color: var(--muted); font-size: 0.7rem; margin-bottom: 0.45rem; max-width: 90ch; }
-  .card p { font-size: 0.8rem; color: var(--ink-2); max-width: 78ch; margin: 0.3rem 0; }
-  .span12 { grid-column: span 12; } .span8 { grid-column: span 8; }
-  .span6 { grid-column: span 6; } .span4 { grid-column: span 4; } .span2 { grid-column: span 2; }
-  @media (max-width: 980px) {
-    .frame { grid-template-columns: 1fr; }
-    aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--grid); }
-    .span8, .span6, .span4 { grid-column: span 12; } .span2 { grid-column: span 6; }
-  }
+/* the scenario: one compact row, always visible, never a tall column */
+.scenario{display:flex;flex-wrap:wrap;gap:16px;padding:0 20px 12px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field > span{font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+              color:var(--ink-3);font-weight:600}
+.seg{display:flex;background:var(--line-soft);border-radius:7px;padding:2px}
+.seg button{border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;
+            padding:4px 9px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--card);color:var(--ink);font-weight:600;
+               box-shadow:0 1px 2px rgba(0,0,0,.10)}
+select{font:inherit;font-size:12px;padding:5px 8px;border-radius:7px;
+       border:1px solid var(--line);background:var(--card);color:var(--ink)}
 
-  .kpi .v { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1.15; }
-  .kpi .v.bad { color: var(--dd); } .kpi .v.good { color: var(--good); }
-  .kpi .lbl { color: var(--muted); font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-bottom: 0.25rem; }
-  .kpi .delta { font-size: 0.7rem; color: var(--muted); margin-top: 0.2rem; font-variant-numeric: tabular-nums; }
-  .kpi .delta b.up { color: var(--good); } .kpi .delta b.down { color: var(--dd); }
+nav{display:flex;gap:2px;padding:0 20px}
+nav button{border:0;background:none;font:inherit;font-size:13px;color:var(--ink-3);
+           padding:8px 12px;cursor:pointer;border-bottom:2px solid transparent;
+           margin-bottom:-1px}
+nav button:hover{color:var(--ink-2)}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
 
-  .legend { display: flex; gap: 0.9rem; font-size: 0.7rem; color: var(--ink-2); align-items: center; flex-wrap: wrap; }
-  .legend .key { display: inline-block; width: 13px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-  .legend .keydot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-  .logtoggle { border: 1px solid var(--ring); background: transparent; color: var(--ink-2); border-radius: 6px;
-               padding: 0.1rem 0.5rem; font: inherit; font-size: 0.68rem; cursor: pointer; }
-  .logtoggle.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
+main{padding:20px;max-width:1500px;margin:0 auto}
+.view{display:none} .view.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+      padding:16px}
+.card > h3{font-size:13px;margin-bottom:2px}
+.card > .sub{color:var(--ink-3);font-size:11.5px;margin-bottom:12px}
+.note{color:var(--ink-3);font-size:11.5px;line-height:1.6;margin-top:12px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--gap)}
 
-  svg { display: block; width: 100%; height: auto; }
-  /* The small horizontal-bar charts are drawn in a 360-unit box. Left to stretch they
-     hit 2.3x on a narrow window -- 24px axis labels and bars thicker than the rows they
-     describe. Cap them so they keep roughly the scale the line charts render at. */
-  svg.barchart { max-width: 460px; }
-  svg text { font: 10.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--muted); font-variant-numeric: tabular-nums; }
-  .tip { position: fixed; pointer-events: none; z-index: 20; display: none;
-         background: var(--surface); border: 1px solid var(--ring); border-radius: 8px;
-         box-shadow: 0 4px 16px rgba(0,0,0,0.18); padding: 0.4rem 0.6rem; font-size: 0.75rem;
-         font-variant-numeric: tabular-nums; min-width: 155px; }
-  .tip .d { color: var(--muted); margin-bottom: 2px; }
-  .tip .row { display: flex; justify-content: space-between; gap: 1rem; }
+/* ── compare table: the front door ─────────────────────────────────────── */
+.tablewrap{overflow-x:auto;margin:0 -16px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:8px 10px;text-align:right;white-space:nowrap;
+      border-bottom:1px solid var(--line-soft)}
+th{position:sticky;top:0;background:var(--card);cursor:pointer;user-select:none;
+   font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);
+   font-weight:600;border-bottom:1px solid var(--line)}
+th:hover{color:var(--ink)}
+th.on{color:var(--accent)}
+th.l,td.l{text-align:left}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--accent-soft)}
+tbody tr.sel{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+td.up{color:var(--up)} td.down{color:var(--down)}
+.rank{color:var(--ink-3);font-family:var(--mono);font-size:11px}
+.pill{display:inline-block;padding:1px 6px;border-radius:20px;font-size:10.5px;
+      background:var(--line-soft);color:var(--ink-2);margin-left:6px}
 
-  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; font-variant-numeric: tabular-nums; }
-  th { text-align: right; color: var(--muted); font-weight: 700; padding: 0.3rem 0.45rem; border-bottom: 1px solid var(--grid);
-       text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.63rem; background: var(--surface); }
-  th:first-child, td:first-child { text-align: left; }
-  td { text-align: right; padding: 0.3rem 0.45rem; border-bottom: 1px solid var(--grid); }
-  tr:last-child td { border-bottom: 0; }
-  tr.total td { font-weight: 700; border-top: 2px solid var(--baseline); }
-  td.neg { color: var(--dd); } td.pos { color: var(--good); }
-  .table-scroll { overflow: auto; }
-  .tall { max-height: 420px; }
-  .tall thead th { position: sticky; top: 0; }
-  .databar { position: relative; }
-  .databar .bg { position: absolute; inset: 3px auto 3px 0; border-radius: 3px; background: var(--accent-soft); z-index: 0; }
-  .databar span { position: relative; z-index: 1; }
-  .tabs { display: inline-flex; border: 1px solid var(--ring); border-radius: 7px; overflow: hidden; background: var(--plane); }
-  .tabs button { border: 0; background: transparent; color: var(--ink-2); padding: 0.25rem 0.7rem; font: inherit; font-size: 0.74rem; cursor: pointer; }
-  .tabs button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  #loading { padding: 3rem; color: var(--muted); }
-  /* Shown when the served numbers were built over a different universe than the
-     one configured now. Loud on purpose: the failure it guards against is a
-     stale dashboard that looks current. */
-  #stale { display: none; margin: 0 0 1.25rem; padding: 0.85rem 1rem;
-           border: 1px solid var(--dd); border-left-width: 4px;
-           border-radius: 4px; background: rgba(208,59,59,0.06);
-           color: var(--ink); font-size: 0.82rem; line-height: 1.5; }
-  #stale.on { display: block; }
-  #stale b { color: var(--dd); }
-  #stale code { background: var(--plane); padding: 0.1rem 0.35rem; border-radius: 3px; }
-  #stale .who { color: var(--ink-2); margin-top: 0.4rem; font-size: 0.76rem; }
-  .page { display: none; }
-  .page.on { display: grid; }
-  table.cmp { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
-  table.cmp th, table.cmp td { padding: 0.4rem 0.6rem; text-align: right;
-                               border-bottom: 1px solid var(--grid); white-space: nowrap; }
-  table.cmp th { cursor: pointer; user-select: none; color: var(--ink-2);
-                 font-weight: 600; position: sticky; top: 0; background: var(--surface); }
-  table.cmp th:hover { color: var(--ink); }
-  table.cmp th.sorted { color: var(--accent); }
-  table.cmp td.name, table.cmp th.name { text-align: left; }
-  table.cmp tr.best td { background: var(--accent-soft); }
+/* ── stat blocks: one hero, the rest supporting ────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+       gap:1px;background:var(--line);border:1px solid var(--line);
+       border-radius:var(--radius);overflow:hidden;margin-bottom:var(--gap)}
+.stat{background:var(--card);padding:12px 14px}
+.stat .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+         color:var(--ink-3);font-weight:600}
+.stat .v{font-size:20px;font-weight:600;font-family:var(--mono);
+         font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:-.02em}
+.stat .d{font-size:11px;color:var(--ink-3);margin-top:1px}
+.stat.hero{background:var(--accent-soft)}
+.stat.hero .v{font-size:26px}
+.v.up{color:var(--up)} .v.down{color:var(--down)}
+
+svg{display:block;width:100%;overflow:visible}
+.axis{fill:var(--ink-3);font-size:10px;font-family:var(--mono)}
+.gridline{stroke:var(--line-soft);stroke-width:1}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--ink-2);margin-bottom:8px}
+.swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+        vertical-align:-1px}
+.empty{padding:40px 0;text-align:center;color:var(--ink-3);font-size:13px}
+.wf{display:flex;flex-direction:column;gap:7px;font-size:12px}
+.wf-row{display:grid;grid-template-columns:130px 1fr 62px;align-items:center;gap:10px}
+.wf-bar{height:16px;border-radius:3px;background:var(--line-soft);position:relative}
+.wf-fill{position:absolute;top:0;bottom:0;border-radius:3px}
 </style>
-</head>
-<body>
-<div class="frame">
-  <aside>
-    <h1>Kitelab Control Room</h1>
-    <div class="built" id="built"></div>
-    <nav class="navlist" id="nav" aria-label="Pages"></nav>
 
-    <div id="rail-portfolio">
-      <div class="slicer"><span class="eyebrow">Fills</span><div class="slist" id="sl-fill"></div>
-        <p class="fillnote" id="fillnote"></p></div>
-      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-strat"></div></div>
-      <div class="slicer" id="wrap-tf"><span class="eyebrow">Timeframe stack</span><div class="slist" id="sl-tf"></div>
-        <p class="fillnote">Which three timeframes must agree before the EMA stack lets you in.</p></div>
-      <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-uni"></div></div>
-      <div class="slicer" id="wrap-band"><span class="eyebrow">Band (dead zone)</span><div class="slist" id="sl-band"></div></div>
-      <div class="slicer" id="wrap-dvwin" style="display:none"><span class="eyebrow">Turtle windows</span><div class="slist" id="sl-dvwin"></div>
-        <p class="fillnote">In on a close above the highest high of the first number of
-          candles, out on a close at or below the lowest low of the second — the two
-          systems the Turtles traded. "1TF" drops the weekly gate, so it is the daily
-          rule alone. The stop is always the entry candle's low.</p></div>
-      <div class="slicer" id="wrap-hgstop" style="display:none"><span class="eyebrow">Stop</span><div class="slist" id="sl-hgstop"></div>
-        <p class="fillnote">"Tight" is the signal candle's own low — what the class marks,
-          a median 0.8% below entry. "Wide" is a confirmed multi-bar swing low, 5.8% below,
-          which buys about a fifth as many shares for the same risk.</p></div>
-      <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-risk"></div></div>
-      <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-cap"></div></div>
-      <div class="slicer"><span class="eyebrow">Started trading in</span><div class="slist" id="sl-year"></div>
-        <p class="fillnote">A fresh account opened in January of that year. Every
-          earlier trade is ignored, so this is not a slice of one long run — it is a
-          different account, sizing its positions from its own equity.</p></div>
+<header>
+  <div class="bar">
+    <h1>Kitelab</h1>
+    <span class="built" id="built"></span>
+  </div>
+  <div class="banner" id="stale"></div>
+  <div class="scenario" id="scenario"></div>
+  <nav id="nav"></nav>
+</header>
+
+<main>
+  <div class="view" id="v-compare">
+    <div class="card">
+      <h3>Every rule, the same conditions</h3>
+      <p class="sub" id="cmp-sub"></p>
+      <div class="tablewrap"><table id="cmp"></table></div>
+      <p class="note">Sorted by <b>MAR</b> — return divided by the worst drawdown — because
+        that is the comparison being made when two rows look alike. <b>Ulcer</b> charges for
+        how long the account sat underwater, not just how deep it went. <b>Captured</b> is the
+        share of the rule's own signals the account could afford; when it is low you are
+        reading a cash constraint as much as a rule. Click a row for its detail.</p>
     </div>
-    <div id="rail-stocks" style="display:none">
-      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-stock-strat"></div></div>
-      <div class="slicer"><span class="eyebrow">Stock</span>
-        <input id="stock-search" type="search" placeholder="Search stocks…" autocomplete="off">
-        <div class="slist" id="sl-stock"></div></div>
+  </div>
+
+  <div class="view" id="v-detail">
+    <div id="det-body"></div>
+  </div>
+
+  <div class="view" id="v-stocks">
+    <div class="card">
+      <h3>One stock at a time</h3>
+      <p class="sub" id="stk-sub"></p>
+      <div class="field" style="margin-bottom:14px">
+        <span>Stock</span>
+        <select id="stk-pick"></select>
+      </div>
+      <div id="stk-body"></div>
     </div>
-    <div id="rail-scaleout" style="display:none">
-      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-so-strat"></div></div>
-      <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-so-uni"></div></div>
-      <p class="fillnote">R is the risk you took on that trade: entry minus the initial stop.
-        Buy at &#8377;100 with a &#8377;90 stop and R is &#8377;10, so 1R is &#8377;110.
-        Perfect fills — the Fills slicer does not reach this page.</p>
-    </div>
-    <div id="rail-compare" style="display:none">
-      <div class="slicer"><span class="eyebrow">Fills</span><div class="slist" id="sl-c-fill"></div></div>
-      <div class="slicer"><span class="eyebrow">Universe</span><div class="slist" id="sl-c-uni"></div></div>
-      <div class="slicer"><span class="eyebrow">Risk per trade</span><div class="slist" id="sl-c-risk"></div></div>
-      <div class="slicer"><span class="eyebrow">Starting capital</span><div class="slist" id="sl-c-cap"></div></div>
-      <div class="slicer"><span class="eyebrow">Started trading in</span><div class="slist" id="sl-c-year"></div></div>
-      <p class="fillnote">Change any of these and the whole ranking moves. That is the
-        point of the page: no single row is the answer.</p>
-    </div>
-
-    <div id="rail-breadth" style="display:none">
-      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-br-strat"></div></div>
-      <p class="fillnote">Random baskets of each size, one &#8377;2,00,000 account at 1% risk,
-        perfect fills. The question is not which stocks &mdash; it is how many the rule needs
-        before your money is actually working.</p>
-    </div>
-    <div id="rail-assets" style="display:none">
-      <div class="slicer"><span class="eyebrow">Strategy</span><div class="slist" id="sl-asset-strat"></div></div>
-      <div class="slicer"><span class="eyebrow">Instrument</span><div class="slist" id="sl-asset"></div></div>
-    </div>
-
-    <div class="note">Each strategy shows only the controls it has: the EMA stack has a
-      timeframe trio and a band, the Turtle channel has its two window lengths and its weekly gate
-      and is always read at the 2% band internally. Individual stocks and assets show every
-      variant at one fixed setting; the scale-out table is at the 2% band.
-      Every number is a real precomputed backtest — nothing is simulated in the browser.
-      Survivorship bias applies. Rebuild: <code>python -m scripts.dashboard_data</code></div>
-  </aside>
-
-  <main>
-    <div id="stale"></div>
-    <div id="empty-note" style="display:none;padding:2rem;color:var(--muted)"></div>
-    <div id="loading">Loading the backtest grid&hellip;</div>
-
-    <div class="canvas page" id="page-portfolio">
-      <div class="card kpi span2"><div class="lbl">Final equity</div><div class="v" id="k-final"></div><div class="delta" id="k-final-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">CAGR</div><div class="v" id="k-cagr"></div><div class="delta" id="k-cagr-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">Worst drawdown</div><div class="v bad" id="k-dd"></div><div class="delta" id="k-dd-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">Longest underwater</div><div class="v" id="k-uw"></div><div class="delta">below a previous peak</div></div>
-      <div class="card kpi span2"><div class="lbl">Underwater now</div><div class="v" id="k-uwnow"></div><div class="delta">as the data ends</div></div>
-      <div class="card kpi span2"><div class="lbl">Trades taken</div><div class="v" id="k-trades"></div><div class="delta" id="k-trades-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">Money already committed</div><div class="v" id="k-cash"></div><div class="delta" id="k-cash-d"></div></div>
-
-      <div class="card span8">
-        <div class="card-head">
-          <div><h2>Account equity</h2><div class="sub" id="eq-sub"></div></div>
-          <div class="legend">
-            <span><span class="key" style="background:var(--equity)"></span>Strategy</span>
-            <span><span class="key" style="background:var(--bench)"></span>NIFTY 50 B&amp;H</span>
-            <button class="logtoggle" id="logbtn" aria-pressed="false">log</button>
-          </div>
-        </div>
-        <svg id="eqchart" viewBox="0 0 760 280" role="img" aria-label="Equity curve"></svg>
-      </div>
-      <div class="card span4">
-        <h2>CAGR by risk %</h2><div class="sub">this strategy &amp; universe &amp; capital</div>
-        <svg id="riskbars" class="barchart" viewBox="0 0 360 120"></svg>
-        <h2 style="margin-top:0.7rem">Worst drawdown by risk %</h2>
-        <svg id="riskdd" class="barchart" viewBox="0 0 360 120"></svg>
-        <h2 style="margin-top:0.7rem" id="bandbars-title">CAGR by band</h2>
-        <svg id="bandbars" class="barchart" viewBox="0 0 360 160"></svg>
-        <h2 style="margin-top:0.7rem">CAGR by strategy stack</h2>
-        <svg id="stackbars" class="barchart" viewBox="0 0 360 120"></svg>
-      </div>
-
-      <div class="card span8">
-        <h2>Underwater — % below the account's own peak</h2>
-        <div class="sub">0 = fresh equity high. The deeper and longer the red, the harder to live through.</div>
-        <svg id="ddchart" viewBox="0 0 760 170"></svg>
-      </div>
-      <div class="card span4">
-        <h2>Five deepest dips</h2><div class="sub">&ldquo;not yet&rdquo; = still underwater at data end</div>
-        <div class="table-scroll"><table id="episodes"></table></div>
-      </div>
-
-      <div class="card span12">
-        <h2>Trade metrics by universe</h2>
-        <div class="sub" id="tm-sub"></div>
-        <div class="table-scroll"><table id="tm-table"></table></div>
-      </div>
-
-      <div class="card span12">
-        <h2>Scale-out: sell half when risk is covered (+1R)</h2>
-        <div class="sub" id="so-sub">Fixed capital per trade, net of charges, all history — measured per trade
-          (a two-part exit cannot be priced by the one-account simulation). Verdict: banking half caps roughly half the profit
-          for a shallower worst losing run; moving the stop to breakeven as well was the worst of the three — it ejects winners into noise.
-          The full sweep from 0.5R to 3R, for both rules, is on the <b>Scale-out</b> page.</div>
-        <div class="table-scroll"><table id="so-table"></table></div>
-      </div>
-
-      <div class="card span12">
-        <h2>The 10-stock reality check</h2>
-        <div class="sub" id="bk-sub"></div>
-        <div class="tiles" style="margin:0.3rem 0 0.6rem; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));" id="bk-tiles"></div>
-        <svg id="bk-hist" viewBox="0 0 1000 150" role="img" aria-label="Basket CAGR distribution"></svg>
-      </div>
-    </div>
-
-    <div class="canvas page" id="page-scaleout">
-      <div class="card span12">
-        <h2>Where you bank the half</h2>
-        <div class="sub" id="sor-sub"></div>
-        <div class="table-scroll"><table id="sor-table"></table></div>
-      </div>
-      <div class="card span6">
-        <h2>Sell half &mdash; what each trigger costs</h2>
-        <div class="sub">Total net against keeping the whole position, which is zero.
-          Red means the rule cost you, green means it helped.</div>
-        <svg id="sor-bars" class="barchart" viewBox="0 0 360 130" role="img" aria-label="Cost of selling half, by R multiple"></svg>
-      </div>
-      <div class="card span6">
-        <h2>&hellip;and with the stop moved to breakeven</h2>
-        <div class="sub">Same comparison for the second rule, which on the full
-          universe is worse at every trigger.</div>
-        <svg id="sor-bars-be" class="barchart" viewBox="0 0 360 130" role="img" aria-label="Cost of selling half with a breakeven stop, by R multiple"></svg>
-      </div>
-      <div class="card span12">
-        <h2 id="sor-why-title">What banking early actually does</h2>
-        <div class="sub" id="sor-why"></div>
-      </div>
-    </div>
-
-    <div class="canvas page" id="page-compare">
-      <div class="card span12">
-        <div class="card-head"><h3>Every strategy, same conditions</h3>
-          <p class="sub" id="cmp-sub"></p></div>
-        <div style="overflow-x:auto"><table class="cmp" id="cmp-table"></table></div>
-        <p class="fillnote">One row per strategy variant, all at the settings in the
-          rail. <b>MAR</b> is CAGR divided by the worst drawdown &mdash; return against
-          pain, and the column to sort by when two rows look similar. <b>Captured</b> is
-          the share of the rule's signals the account could actually afford; a low
-          number means you are reading the result of a cash constraint as much as of a
-          rule. Click any heading to sort.</p>
-      </div>
-    </div>
-
-    <div class="canvas page" id="page-breadth">
-      <div class="card span12">
-        <h2>How many stocks does this rule need?</h2>
-        <div class="sub" id="br-sub"></div>
-        <div class="table-scroll"><table id="br-table"></table></div>
-      </div>
-      <div class="card span6">
-        <h2>What you earn, by watchlist size</h2>
-        <div class="sub">Median of the random baskets at each size.</div>
-        <svg id="br-cagr" class="barchart" viewBox="0 0 360 240" role="img" aria-label="Median CAGR by basket size"></svg>
-      </div>
-      <div class="card span6">
-        <h2>Is the money working?</h2>
-        <div class="sub">Share of signals turned away because the cash was already committed.
-          While this reads 0% the account is idling and more stocks will still help.</div>
-        <svg id="br-starve" class="barchart" viewBox="0 0 360 240" role="img" aria-label="Signals starved of cash by basket size"></svg>
-      </div>
-      <div class="card span12">
-        <h2 id="br-why-title">Where it stops paying</h2>
-        <div class="sub" id="br-why"></div>
-      </div>
-    </div>
-
-    <div class="canvas page" id="page-stocks">
-      <div class="card kpi span2"><div class="lbl">Trades</div><div class="v" id="s-trades"></div><div class="delta" id="s-win"></div></div>
-      <div class="card kpi span2"><div class="lbl">Total net</div><div class="v" id="s-net"></div><div class="delta">fixed ₹1L, 1% risk, net of charges</div></div>
-      <div class="card kpi span2"><div class="lbl">Profit factor</div><div class="v" id="s-pf"></div><div class="delta">₹ won per ₹ lost</div></div>
-      <div class="card kpi span2"><div class="lbl">Best trade</div><div class="v good" id="s-best"></div><div class="delta" id="s-best-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">Worst trade</div><div class="v bad" id="s-worst"></div><div class="delta"></div></div>
-      <div class="card kpi span2"><div class="lbl">Worst losing run</div><div class="v bad" id="s-run"></div><div class="delta">cumulative net, peak to trough</div></div>
-
-      <div class="card span12">
-        <div class="card-head">
-          <div><h2 id="s-title">Price &amp; trades</h2><div class="sub">weekly closes · <span style="color:var(--good)">&#9650;</span> entry &nbsp;<span style="color:var(--dd)">&#9660;</span> exit · log scale</div></div>
-        </div>
-        <svg id="s-chart" viewBox="0 0 1140 300"></svg>
-      </div>
-
-      <div class="card span12">
-        <h2>Trade metrics, every strategy on this stock</h2>
-        <div class="sub">2% band · fixed ₹1,00,000 per trade · net of charges</div>
-        <div class="table-scroll"><table id="s-metrics"></table></div>
-      </div>
-
-      <div class="card span12">
-        <h2>Every trade, newest first</h2>
-        <div class="table-scroll tall"><table id="s-table"></table></div>
-      </div>
-    </div>
-
-    <div class="canvas page" id="page-assets">
-      <div class="card kpi span2"><div class="lbl">Account CAGR</div><div class="v" id="a-cagr"></div><div class="delta" id="a-years"></div></div>
-      <div class="card kpi span2"><div class="lbl">Account worst DD</div><div class="v bad" id="a-dd"></div><div class="delta" id="a-dd-d"></div></div>
-      <div class="card kpi span2"><div class="lbl">Buy &amp; hold CAGR</div><div class="v" id="a-bh-cagr"></div><div class="delta">just holding the asset</div></div>
-      <div class="card kpi span2"><div class="lbl">Buy &amp; hold worst DD</div><div class="v bad" id="a-bh-dd"></div><div class="delta" id="a-bh-uw"></div></div>
-      <div class="card kpi span2"><div class="lbl">Trades</div><div class="v" id="a-trades"></div><div class="delta" id="a-win"></div></div>
-      <div class="card kpi span2"><div class="lbl">Profit factor</div><div class="v" id="a-pf"></div><div class="delta">₹ won per ₹ lost</div></div>
-
-      <div class="card span8">
-        <div class="card-head">
-          <div><h2 id="a-title">Account equity</h2><div class="sub">100,000 units start · 1% risk · flat fees · vs holding the asset raw</div></div>
-          <div class="legend">
-            <span><span class="key" style="background:var(--equity)"></span>Strategy account</span>
-            <span><span class="key" style="background:var(--bench)"></span>Buy &amp; hold</span>
-          </div>
-        </div>
-        <svg id="a-eq" viewBox="0 0 760 260"></svg>
-      </div>
-      <div class="card span4">
-        <h2>Underwater</h2><div class="sub">strategy account, % below its own peak</div>
-        <svg id="a-uw" class="barchart" viewBox="0 0 360 260"></svg>
-      </div>
-
-      <div class="card span12">
-        <h2>Price &amp; trades</h2>
-        <div class="sub">weekly closes · <span style="color:var(--good)">&#9650;</span> entry &nbsp;<span style="color:var(--dd)">&#9660;</span> exit · log scale</div>
-        <svg id="a-chart" viewBox="0 0 1140 280"></svg>
-      </div>
-      <div class="card span12">
-        <h2>Trade metrics, every strategy on this instrument</h2>
-        <div class="sub">100,000 units · 1% risk · flat fees</div>
-        <div class="table-scroll"><table id="a-metrics"></table></div>
-      </div>
-
-      <div class="card span12">
-        <h2>Every trade, newest first</h2>
-        <div class="table-scroll tall"><table id="a-table"></table></div>
-      </div>
-    </div>
-
-  </main>
-</div>
-<div class="tip" id="tip"></div>
+  </div>
+</main>
 
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const inr = v => (v < 0 ? "−₹" : "₹") + Math.round(Math.abs(v)).toLocaleString("en-IN");
-const pct1 = v => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
-// CAGR has three states and they used to render as one number, 0.0%:
-//   a grid cell with cagr === null  -> the account was WIPED OUT, no rate exists
-//   no grid cell at all             -> nothing was computed for that combination
-//   cagr === 0.0                    -> genuinely flat, and 0.0% is the true answer
-// Anything that displays a CAGR goes through these, so the three stay distinct.
-const MISSING = "—", WIPED = "Wiped";
-// How many stocks are in the universe. NEVER type this: seven stocks were removed
-// on 2026-08-31 (kitelab.config.EXCLUDED) and every literal "199" on this page
-// would have gone on being wrong. dashboard_data publishes the count.
-const uniN = () => (DATA.universe_size || Object.keys(DATA.stocks || {}).length);
-const isWiped  = c => c === null;
-const isAbsent = c => c === undefined;
-const cagrText = c => isAbsent(c) ? MISSING : isWiped(c) ? WIPED : pct1(c) + "/yr";
-const cagrPct  = c => isAbsent(c) ? MISSING : isWiped(c) ? WIPED : pct1(c);
-const cagrClass = c => isWiped(c) ? " bad" : isAbsent(c) ? "" : c >= 7 ? " good" : c < 0 ? " bad" : "";
-
 let DATA = null;
-// strat is the GRID key and stays that way -- everything downstream reads it. The
-// rail no longer sets it directly: you pick a family (EMA stack / Darvas) and,
-// for the EMA family only, a timeframe stack. Those two resolve into strat.
-const state = { page: "portfolio", family: "ema", emaTf: "ema",
-                strat: "ema", uni: "all", riskIdx: 2, capIdx: 1, bandIdx: 2, year: null,
-                hgIdx: 0,
-                cFill: "1", cUni: "all", cRisk: 2, cCap: 1, cYear: null,
-                fill: "0", log: false,
-                tf: "MWD", stock: null, stockStrat: "ema", asset: "BITCOIN", assetStrat: "ema",
-                soStrat: "ema", soUni: "all", dvIdx: 1, brStrat: "dv" };
 
-const PAGES = [["portfolio", "Portfolio"], ["compare", "Compare"],
-               ["stocks", "Individual stocks"],
-               ["scaleout", "Scale-out"], ["breadth", "How many stocks"],
-               ["assets", "Futures & assets"]];
-
-// Curves carry a calendar INDEX rather than their own copy of the dates: the
-// same trading calendar was being sent once per grid cell, 117 MB of duplicates.
-// Swap the reference back in once, so every consumer still reads curve.d and the
-// arrays are shared in memory instead of copied thousands of times.
-function hydrateCalendars(d) {
+/* Curves carry a calendar INDEX, not their own copy of the dates: the same
+   trading calendar was being sent once per grid cell. Swap the reference back
+   in once so every consumer reads curve.d, sharing one array per calendar. */
+function hydrate(d) {
   const cals = d.calendars;
-  if (!cals) return d;                       // an older payload; nothing to do
-  const fix = c => { if (c && c.c !== undefined && !c.d) c.d = cals[c.c]; };
-  const walk = obj => {
-    if (!obj || typeof obj !== "object") return;
-    if (obj.curve) fix(obj.curve);
-    for (const v of Object.values(obj)) if (v && typeof v === "object") walk(v);
+  if (!cals) return d;
+  const seen = new Set();
+  const walk = o => {
+    if (!o || typeof o !== "object" || seen.has(o)) return;
+    seen.add(o);
+    if (o.c !== undefined && o.eq && !o.d) o.d = cals[o.c];
+    for (const v of Object.values(o)) if (v && typeof v === "object") walk(v);
   };
-  walk(d.grid); walk(d.stocks); walk(d.assets); walk(d.basket10);
-  walk(d.scaleout); walk(d.scaleout_r); walk(d.breadth); walk(d.timeframes);
+  walk(d);
   return d;
 }
 
-fetch("/api/dashboard").then(r => { if (!r.ok) throw 0; return r.json(); })
-  .then(d => { DATA = hydrateCalendars(d); init(); })
-  .catch(() => { $("loading").textContent = "No data yet — run: python -m scripts.dashboard_data, then reload."; });
+/* ── formatting ───────────────────────────────────────────────────────── */
+const inr = v => v == null ? "—" :
+  Math.abs(v) >= 1e7 ? "₹" + (v / 1e7).toFixed(2) + " cr" :
+  Math.abs(v) >= 1e5 ? "₹" + (v / 1e5).toFixed(2) + " L" :
+  "₹" + Math.round(v).toLocaleString("en-IN");
+const pct = (v, n = 1) => v == null ? "—" : v.toFixed(n) + "%";
+const num = (v, n = 2) => v == null ? "—" : v.toFixed(n);
+/* A wiped account has no growth rate at all. It must never print as 0.0%,
+   which reads as "broke even" — the worst outcome shown as the mildest. */
+const cagrText = r => r.wiped ? "wiped" : pct(r.cagr);
+/* trade_stats reports win_rate as a FRACTION (0.395) while every other percent
+   in this payload is already scaled. Convert once, here, rather than leaving a
+   0.4% win rate on the page for someone to puzzle over. */
+const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 
-// Is what we are showing still the universe being traded? Asked separately from
-// the data itself: the answer depends on the CURRENT config, not on the snapshot,
-// and the snapshot is far too big to re-read for two fields.
-fetch("/api/status").then(r => r.json()).then(s => {
-  if (!s || !s.stale) return;
-  const el = $("stale");
-  let html = "<b>These results are out of date.</b> " + (s.message || "");
-  html = html.replace(/(python -m [\w.]+)/g, "<code>$1</code>");
-  if (s.dropped && s.dropped.length) {
-    html += '<div class="who">No longer in the universe: ' +
-            s.dropped.slice(0, 12).join(", ") +
-            (s.dropped.length > 12 ? ", and " + (s.dropped.length - 12) + " more" : "") +
-            "</div>";
-  }
-  if (s.added && s.added.length) {
-    html += '<div class="who">Missing from these results: ' +
-            s.added.slice(0, 12).join(", ") +
-            (s.added.length > 12 ? ", and " + (s.added.length - 12) + " more" : "") +
-            "</div>";
-  }
-  el.innerHTML = html;
-  el.classList.add("on");
-}).catch(() => {});
+/* ── scenario: one row of controls, shared by every view ──────────────── */
+const S = { uni: "all", cap: 1, risk: 2, fill: "1", year: null, view: "compare",
+            sel: null, sort: "mar", desc: true, stock: null };
 
-function init() {
-  $("loading").style.display = "none";
-  $("built").textContent = "built " + DATA.built;
-  for (const [key, label] of PAGES) {
+function segment(label, options, get, set) {
+  const f = document.createElement("div"); f.className = "field";
+  const t = document.createElement("span"); t.textContent = label; f.appendChild(t);
+  const seg = document.createElement("div"); seg.className = "seg";
+  for (const [val, text] of options) {
     const b = document.createElement("button");
-    b.textContent = label; b.dataset.key = key;
-    b.addEventListener("click", () => setPage(key));
-    $("nav").appendChild(b);
+    b.textContent = text;
+    b.addEventListener("click", () => { set(val); render(); });
+    b.dataset.val = String(val);
+    seg.appendChild(b);
   }
-  const stratNames = DATA.strategies;
-  slicer("sl-fill", DATA.fills || [["0", "Perfect fills"]], () => state.fill,
-         k => { state.fill = k; renderPortfolio(); });
-  // Derived, never hardcoded: whatever EMA stacks the payload actually carries.
-  const EMA_STACKS = ["ema", "qmw", "wdh"].filter(k => k in stratNames);
-  const resolve = () => { state.strat = state.family === "ema" ? state.emaTf : state.family; };
-  // Families = the EMA stacks collapsed into one button, plus every other
-  // strategy present. A strategy dropped from the payload drops from the rail.
-  const FAMILIES = [["ema", "EMA stack"]].concat(
-    Object.keys(stratNames).filter(k => !EMA_STACKS.includes(k)).map(k => [k, stratNames[k]]));
-  if (!EMA_STACKS.includes(state.emaTf)) state.emaTf = EMA_STACKS[0];
-  if (!FAMILIES.some(([k]) => k === state.family)) state.family = FAMILIES[0][0];
-  slicer("sl-strat", FAMILIES,
-         () => state.family, k => { state.family = k; resolve(); renderPortfolio(); });
-  slicer("sl-tf", EMA_STACKS.map(k => [k, stratNames[k].replace("EMA · ", "")]),
-         () => state.emaTf, k => { state.emaTf = k; resolve(); renderPortfolio(); });
-  slicer("sl-uni", Object.entries(DATA.universes), () => state.uni, k => { state.uni = k; renderPortfolio(); });
-  slicer("sl-band", (DATA.bands || [0.02]).map((b, i) => [String(i), (b * 100) + "% band"]),
-         () => String(state.bandIdx), k => { state.bandIdx = +k; renderPortfolio(); });
-  const dvWins = DATA.darvas_windows || ["20-10"];
-  state.dvIdx = Math.max(0, dvWins.indexOf(DATA.darvas_default || "20-10"));
-  slicer("sl-dvwin", dvWins.map((w, i) => [String(i), dvLabel(w)]),
-         () => String(state.dvIdx), k => { state.dvIdx = +k; renderPortfolio(); });
-  // compare page: its own copies, so exploring there does not disturb the
-  // portfolio page you were reading
-  if (state.cYear === null) state.cYear = DATA.start_default || YEARS[YEARS.length - 1];
-  slicer("sl-c-fill", DATA.fills || [["0", "Perfect fills"]], () => state.cFill,
-         k => { state.cFill = k; renderCompare(); });
-  slicer("sl-c-uni", Object.entries(DATA.universes), () => state.cUni,
-         k => { state.cUni = k; renderCompare(); });
-  slicer("sl-c-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
-         () => String(state.cRisk), k => { state.cRisk = +k; renderCompare(); });
-  slicer("sl-c-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
-         () => String(state.cCap), k => { state.cCap = +k; renderCompare(); });
-  slicer("sl-c-year", YEARS.map(y => [String(y), String(y)]),
-         () => String(state.cYear), k => { state.cYear = +k; renderCompare(); });
-  const HG = DATA.hg_tags || ["tight"];
-  slicer("sl-hgstop", HG.map((t, i) => [String(i), t === "tight"
-             ? "Tight — signal candle's low" : "Wide — multi-bar swing low"]),
-         () => String(state.hgIdx), k => { state.hgIdx = +k; renderPortfolio(); });
-  slicer("sl-risk", DATA.risks.map((r, i) => [String(i), r + "% of equity"]),
-         () => String(state.riskIdx), k => { state.riskIdx = +k; renderPortfolio(); });
-  slicer("sl-cap", DATA.capitals.map((c, i) => [String(i), inr(c)]),
-         () => String(state.capIdx), k => { state.capIdx = +k; renderPortfolio(); });
-  const YEARS = DATA.start_years || [];
-  if (state.year === null) state.year = DATA.start_default || YEARS[YEARS.length - 1];
-  slicer("sl-year", YEARS.map(y => [String(y), String(y)]),
-         () => String(state.year), k => { state.year = +k; renderPortfolio(); });
-  slicer("sl-stock-strat", Object.entries(stratNames), () => state.stockStrat,
-         k => { state.stockStrat = k; renderStock(); });
-  const SO_STRATS = Object.keys(DATA.scaleout || {}).map(k => [k, stratNames[k] || k]);
-  if (!SO_STRATS.some(([k]) => k === state.soStrat) && SO_STRATS.length)
-    state.soStrat = SO_STRATS[0][0];
-  slicer("sl-so-strat", SO_STRATS,
-         () => state.soStrat, k => { state.soStrat = k; renderScaleoutPage(); });
-  slicer("sl-so-uni", Object.entries(DATA.universes), () => state.soUni,
-         k => { state.soUni = k; renderScaleoutPage(); });
-  slicer("sl-br-strat", Object.entries(stratNames), () => state.brStrat,
-         k => { state.brStrat = k; renderBreadth(); });
-  slicer("sl-asset-strat", Object.entries(stratNames), () => state.assetStrat,
-         k => { state.assetStrat = k; renderAsset(); });
-  slicer("sl-asset", Object.keys(DATA.assets).map(k => [k, k]), () => state.asset,
-         k => { state.asset = k; renderAsset(); });
-
-  state.stock = DATA.assigned[0];
-  buildStockList("");
-  $("stock-search").addEventListener("input", e => buildStockList(e.target.value.trim().toUpperCase()));
-
-  $("logbtn").addEventListener("click", () => {
-    state.log = !state.log;
-    $("logbtn").classList.toggle("on", state.log);
-    $("logbtn").setAttribute("aria-pressed", state.log);
-    renderPortfolio();
-  });
-  setPage("portfolio");
+  seg._sync = () => { for (const b of seg.children)
+    b.classList.toggle("on", b.dataset.val === String(get())); };
+  f.appendChild(seg); f._sync = seg._sync;
+  return f;
 }
 
-function setPage(key) {
-  const changed = state.page !== key;
-  state.page = key;
-  for (const b of $("nav").children) b.classList.toggle("on", b.dataset.key === key);
-  for (const [k] of PAGES) document.getElementById("page-" + k).classList.toggle("on", k === key);
-  $("rail-portfolio").style.display = key === "portfolio" ? "" : "none";
-  $("rail-stocks").style.display = key === "stocks" ? "" : "none";
-  $("rail-scaleout").style.display = key === "scaleout" ? "" : "none";
-  $("rail-breadth").style.display = key === "breadth" ? "" : "none";
-  $("rail-compare").style.display = key === "compare" ? "" : "none";
-  $("rail-assets").style.display = key === "assets" ? "" : "none";
-  if (key === "portfolio") renderPortfolio();
-  if (key === "stocks") renderStock();
-  if (key === "scaleout") renderScaleoutPage();
-  if (key === "breadth") renderBreadth();
-  if (key === "compare") renderCompare();
-  if (key === "assets") renderAsset();
-  // Pages differ in height; landing halfway down a fresh page looks like a dead button.
-  if (changed) window.scrollTo(0, 0);
+function buildScenario() {
+  const box = $("scenario"); box.innerHTML = "";
+  const add = el => { box.appendChild(el); return el; };
+  const fields = [
+    add(segment("Universe", Object.entries(DATA.universes),
+                () => S.uni, v => S.uni = v)),
+    add(segment("Capital", DATA.capitals.map((c, i) => [i, inr(c)]),
+                () => S.cap, v => S.cap = +v)),
+    add(segment("Risk per trade", DATA.risks.map((r, i) => [i, r + "%"]),
+                () => S.risk, v => S.risk = +v)),
+    add(segment("Fills", DATA.fills.map(([k, l]) => [k, l.replace(" fills", "")]),
+                () => S.fill, v => S.fill = v)),
+  ];
+  const yf = document.createElement("div"); yf.className = "field";
+  yf.innerHTML = "<span>Started trading in</span>";
+  const sel = document.createElement("select");
+  for (const y of DATA.start_years) {
+    const o = document.createElement("option"); o.value = o.textContent = y;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => { S.year = +sel.value; render(); });
+  yf.appendChild(sel); box.appendChild(yf);
+  yf._sync = () => sel.value = S.year;
+  fields.push(yf);
+  box._sync = () => fields.forEach(f => f._sync());
 }
 
-// ===================================================== compare page ====
-// Every strategy variant at one set of conditions. Built entirely from the grid
-// the other pages already read -- no extra payload, no extra simulation. It
-// exists because every real question asked of this dashboard has been a
-// comparison, and until now answering one meant flipping a slicer and
-// remembering numbers.
-const CMP = { sort: "mar", desc: true };
+/* ── the rows: every strategy variant at the chosen scenario ──────────── */
+const variantsOf = skey =>
+  skey === "dv" ? (DATA.darvas_windows || []) :
+  skey === "hg" ? (DATA.hg_tags || []) : (DATA.bands || []);
 
-function compareRows() {
+const settingLabel = (skey, v) =>
+  skey === "dv" ? (String(v).includes("1TF")
+      ? String(v).replace(" 1TF", "") + " · daily only"
+      : String(v) + " · + weekly") :
+  skey === "hg" ? (v === "tight" ? "stop at signal candle" : "stop at swing low") :
+  (v * 100).toFixed(0) + "% band";
+
+const keyFor = (skey, v) =>
+  `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}|${S.year}`;
+
+function rows() {
   const out = [];
-  for (const [skey, label] of Object.entries(DATA.strategies)) {
-    // the settings slot means something different per strategy
-    const variants = skey === "dv" ? (DATA.darvas_windows || [])
-                   : skey === "hg" ? (DATA.hg_tags || [])
-                   : (DATA.bands || []).map(b => b);
-    for (const v of variants) {
-      const key = `${skey}|${typeof v === "number" ? v : v}|${state.cUni}|` +
-                  `${DATA.risks[state.cRisk]}|${DATA.capitals[state.cCap]}|` +
-                  `${state.cFill}|${state.cYear}`;
-      const r = DATA.grid[key];
+  for (const [skey, label] of Object.entries(DATA.strategies))
+    for (const v of variantsOf(skey)) {
+      const r = DATA.grid[keyFor(skey, v)];
       if (!r) continue;
-      const setting = skey === "dv" ? dvLabel(v)
-                    : skey === "hg" ? (v === "tight" ? "tight stop" : "wide stop")
-                    : `${(v * 100).toFixed(0)}% band`;
-      out.push({
-        name: `${label} · ${setting}`,
-        cagr: r.cagr, maxdd: r.maxdd, mar: r.mar, ulcer: r.ulcer,
-        final: r.final, taken: r.taken, signals: r.signals,
-        capture: r.signals ? 100 * r.taken / r.signals : null,
-        full: r.full_pct, wiped: r.wiped,
-      });
+      out.push({ id: skey + "|" + v, skey, v, family: label,
+                 setting: settingLabel(skey, v), r,
+                 cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar: r.mar,
+                 ulcer: r.ulcer, final: r.final, taken: r.taken,
+                 capture: r.signals ? 100 * r.taken / r.signals : null,
+                 full: r.full_pct, wiped: r.wiped });
     }
-  }
   return out;
 }
 
-const CMP_COLS = [
-  ["name", "Strategy", v => v, "name"],
-  ["cagr", "CAGR", v => v == null ? "wiped" : v.toFixed(1) + "%"],
-  ["maxdd", "Worst DD", v => v == null ? "—" : v.toFixed(1) + "%"],
-  ["mar", "MAR", v => v == null ? "—" : v.toFixed(2)],
-  ["ulcer", "Ulcer", v => v == null ? "—" : v.toFixed(1)],
-  ["final", "Final", v => v == null ? "—" : inr(v)],
-  ["taken", "Trades", v => v == null ? "—" : v.toLocaleString("en-IN")],
-  ["capture", "Captured", v => v == null ? "—" : v.toFixed(0) + "%"],
-  ["full", "Fully invested", v => v == null ? "—" : v.toFixed(0) + "%"],
+const COLS = [
+  ["family",  "Strategy", r => r.family, "l"],
+  ["setting", "Setting",  r => r.setting, "l"],
+  ["cagr",    "CAGR",     r => cagrText(r.r)],
+  ["maxdd",   "Worst dip",r => pct(r.maxdd)],
+  ["mar",     "MAR",      r => num(r.mar)],
+  ["ulcer",   "Ulcer",    r => num(r.ulcer, 1)],
+  ["final",   "Final",    r => inr(r.final)],
+  ["taken",   "Trades",   r => r.taken == null ? "—" : r.taken.toLocaleString("en-IN")],
+  ["capture", "Captured", r => r.capture == null ? "—" : Math.round(r.capture) + "%"],
 ];
 
 function renderCompare() {
-  for (const id of ["sl-c-fill", "sl-c-uni", "sl-c-risk", "sl-c-cap", "sl-c-year"])
-    $(id)._sync();
-  const rows = compareRows();
-  // A wiped account has no CAGR at all. It must sort BELOW everything that
-  // merely lost money, not above it as a null would.
-  const rank = r => { const v = r[CMP.sort];
-                      return v == null ? (CMP.desc ? -Infinity : Infinity) : v; };
-  rows.sort((a, b) => CMP.sort === "name"
-    ? a.name.localeCompare(b.name) * (CMP.desc ? -1 : 1)
-    : (rank(b) - rank(a)) * (CMP.desc ? 1 : -1));
+  const list = rows();
+  /* A wiped account sorts BELOW everything that merely lost money. As a null it
+     would sort above, which is exactly backwards. */
+  const val = r => { const v = r[S.sort];
+    return v == null ? (S.desc ? -Infinity : Infinity) : v; };
+  list.sort((a, b) => typeof a[S.sort] === "string"
+    ? a[S.sort].localeCompare(b[S.sort]) * (S.desc ? -1 : 1)
+    : (val(b) - val(a)) * (S.desc ? 1 : -1));
 
-  const t = $("cmp-table");
-  t.innerHTML = "";
-  const head = t.insertRow();
-  for (const [key, label, , cls] of CMP_COLS) {
+  const t = $("cmp"); t.innerHTML = "";
+  const hr = t.createTHead().insertRow();
+  const rank = document.createElement("th"); rank.className = "l"; hr.appendChild(rank);
+  for (const [key, label, , cls] of COLS) {
     const th = document.createElement("th");
-    th.textContent = label;
-    if (cls) th.className = cls;
-    if (CMP.sort === key) th.classList.add("sorted");
+    th.textContent = label; if (cls) th.className = cls;
+    if (S.sort === key) th.classList.add("on");
     th.addEventListener("click", () => {
-      if (CMP.sort === key) CMP.desc = !CMP.desc; else { CMP.sort = key; CMP.desc = true; }
-      renderCompare();
+      if (S.sort === key) S.desc = !S.desc; else { S.sort = key; S.desc = true; }
+      render();
     });
-    head.appendChild(th);
+    hr.appendChild(th);
   }
-  rows.forEach((r, i) => {
-    const tr = t.insertRow();
-    if (i === 0 && CMP.sort !== "name") tr.className = "best";
-    for (const [key, , fmt, cls] of CMP_COLS) {
+  const tb = t.createTBody();
+  if (!list.length) {
+    const td = tb.insertRow().insertCell();
+    td.colSpan = COLS.length + 1; td.className = "empty l";
+    td.textContent = "No results for this combination — try an earlier start year.";
+  }
+  list.forEach((r, i) => {
+    const tr = tb.insertRow();
+    if (S.sel === r.id) tr.className = "sel";
+    tr.addEventListener("click", () => { S.sel = r.id; S.view = "detail"; render(); });
+    const c0 = tr.insertCell(); c0.className = "rank l"; c0.textContent = i + 1;
+    for (const [key, , fmt, cls] of COLS) {
       const td = tr.insertCell();
-      td.textContent = fmt(r[key]);
-      if (cls) td.className = cls;
-      if (key === "cagr" && r.wiped) td.className = "neg";
+      td.textContent = fmt(r);
+      td.className = cls || "num";
+      if (key === "cagr") td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
     }
   });
   $("cmp-sub").textContent =
-    `${rows.length} variants · ${DATA.universes[state.cUni][0]} · ` +
-    `${inr(DATA.capitals[state.cCap])} · ${DATA.risks[state.cRisk]}% risk · ` +
-    `${fillLabelFor(state.cFill)} · started ${state.cYear}`;
+    `${list.length} variants · ${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])}` +
+    ` · ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}`;
 }
 
-const fillLabelFor = k =>
-  ((DATA.fills || []).find(([f]) => f === k) || [null, "Perfect fills"])[1];
+const fillName = () =>
+  (DATA.fills.find(([k]) => k === S.fill) || [null, "Perfect fills"])[1];
 
-function slicer(id, options, get, set) {
-  const el = $(id);
-  for (const [k, label] of options) {
-    const b = document.createElement("button");
-    b.dataset.key = k;
-    b.innerHTML = `<span class="dot"></span>${label}`;
-    b.addEventListener("click", () => set(k));
-    el.appendChild(b);
-  }
-  el._sync = () => { for (const b of el.children) b.classList.toggle("on", b.dataset.key === get()); };
-  el._sync();
+/* ── charts: SVG, no dependency, readable in view-source ──────────────── */
+function line(points, w, h, color, fill) {
+  if (!points.length) return "";
+  const d = points.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const area = fill
+    ? `<path d="${d} L ${w} ${h} L 0 ${h} Z" fill="${color}" opacity=".10"/>` : "";
+  return area + `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"
+                        stroke-linejoin="round" stroke-linecap="round"/>`;
 }
 
-function buildStockList(filter) {
-  const el = $("sl-stock");
-  el.innerHTML = "";
-  const names = Object.keys(DATA.stocks).sort((a, b) =>
-    (DATA.assigned.includes(b) - DATA.assigned.includes(a)) || a.localeCompare(b));
-  let shown = 0;
-  for (const s of names) {
-    if (filter && !s.includes(filter)) continue;
-    if (++shown > 60) break;
-    const b = document.createElement("button");
-    b.dataset.key = s;
-    b.innerHTML = `<span class="dot"></span>${s}${DATA.assigned.includes(s) ? " ★" : ""}`;
-    b.addEventListener("click", () => { state.stock = s; renderStock(); syncStockList(); });
-    el.appendChild(b);
-  }
-  syncStockList();
-}
-function syncStockList() {
-  for (const b of $("sl-stock").children) b.classList.toggle("on", b.dataset.key === state.stock);
-}
-
-// =================================================== portfolio page ====
-// Darvas has no band; its two window lengths ride in the same slot of the key.
-const dvWindow = () => (DATA.darvas_windows || ["20-10"])[state.dvIdx];
-const hgStop = () => (DATA.hg_tags || ["tight"])[state.hgIdx];
-const bandOf = (strat, bandIdx) =>
-  strat === "dv" ? dvWindow()
-  : strat === "hg" ? hgStop()
-  : (DATA.bands || [0.02])[bandIdx];
-// The band slot means different things per strategy, so describe it in one place
-// rather than assuming it is a number and printing "NaN% band". A Darvas tag is
-// "20-10", or "20-10 1TF" for the single-timeframe control, so the suffix has to
-// survive the split -- "in 20 / out 10 1TF" would read as a window length of
-// "10 1TF".
-const dvLabel = w => {
-  const [win, ...rest] = w.split(" ");
-  const [a, b] = win.split("-");
-  return `in ${a} / out ${b}` + (rest.length ? ` · ${rest.join(" ")}` : " · +weekly");
-};
-const settingLabel = strat =>
-  strat === "dv" ? dvLabel(dvWindow())
-  : strat === "hg" ? (hgStop() === "tight" ? "tight stop" : "wide stop")
-  : `${bandOf(strat, state.bandIdx) * 100}% band`;
-const joinParts = parts => parts.filter(Boolean).join(" · ");
-const keyWith = (strat, bandVal, uni, riskIdx, capIdx) =>
-  `${strat}|${bandVal}|${uni}|${DATA.risks[riskIdx]}|${DATA.capitals[capIdx]}|${state.fill}|${state.year}`;
-const keyFor = (strat, bandIdx, uni, riskIdx, capIdx) =>
-  keyWith(strat, bandOf(strat, bandIdx), uni, riskIdx, capIdx);
-const fillLabel = () =>
-  ((DATA.fills || []).find(([k]) => k === state.fill) || [null, "Perfect fills"])[1];
-const runFor = (riskIdx, capIdx) =>
-  DATA.grid[keyFor(state.strat, state.bandIdx, state.uni, riskIdx, capIdx)];
-
-function renderPortfolio() {
-  for (const id of ["sl-fill", "sl-strat", "sl-tf", "sl-uni", "sl-band", "sl-dvwin",
-                    "sl-hgstop", "sl-risk", "sl-cap", "sl-year"]) $(id)._sync();
-  // Each strategy shows only what it actually has: the EMA stack has a timeframe
-  // trio and a band, Darvas has its two windows and its gate.
-  $("wrap-tf").style.display = state.family === "ema" ? "" : "none";
-  $("wrap-band").style.display = state.family === "ema" ? "" : "none";
-  $("wrap-dvwin").style.display = state.family === "dv" ? "" : "none";
-  $("wrap-hgstop").style.display = state.family === "hg" ? "" : "none";
-  const risk = DATA.risks[state.riskIdx], cap = DATA.capitals[state.capIdx];
-  const r = runFor(state.riskIdx, state.capIdx);
-  // A start year late enough to leave no trades is stored as null, not as a
-  // zero-trade run. Say so rather than throwing on r.curve.
-  if (!r) {
-    $("empty-note").textContent =
-      `No trades for this combination starting in ${state.year}. Pick an earlier year.`;
-    $("empty-note").style.display = "";
-    return;
-  }
-  $("empty-note").style.display = "none";
-  const years = (Date.parse(r.curve.d.at(-1)) - Date.parse(r.curve.d[0])) / 3.156e10;
-  const bench = benchFromCloses(DATA.nifty, r.curve.d[0], r.curve.d.at(-1), cap);
-  const benchFinal = bench ? bench.v.at(-1) : null;
-
-  $("k-final").textContent = inr(r.final);
-  $("k-final").className = "v" + (r.final < cap ? " bad" : "");
-  $("k-final-d").innerHTML = benchFinal
-    ? `NIFTY B&amp;H: <b class="${r.final >= benchFinal ? "up" : "down"}">${inr(benchFinal)}</b>` : "";
-  // How much of the account is working rather than waiting, and what that costs
-  // in signals you could not afford.
-  $("k-cash").textContent = (r.full_pct == null) ? "—" : r.full_pct + "%";
-  $("k-cash-d").textContent = (r.skipped_cash == null) ? "of days under 5% cash"
-    : `of days under 5% cash · ${r.skipped_cash.toLocaleString("en-IN")} signals unaffordable`;
-  $("k-cagr").textContent = cagrText(r.cagr);
-  $("k-cagr").className = "v" + cagrClass(r.cagr);
-  $("k-cagr-d").textContent = isWiped(r.cagr)
-    ? `account destroyed — ended at ${inr(r.final)} over ${years.toFixed(1)} yrs`
-    : `over ${years.toFixed(1)} yrs · FD ≈ 7%`;
-  $("k-dd").textContent = r.maxdd.toFixed(1) + "%";
-  $("k-dd-d").innerHTML = bench ? `NIFTY B&amp;H: <b>${seriesDD(bench.v).toFixed(1)}%</b>` : "";
-  $("k-uw").textContent = r.uw_long.toFixed(1) + " yrs";
-  $("k-uwnow").textContent = r.uw_now.toFixed(1) + " yrs";
-  $("k-uwnow").className = "v" + (r.uw_now > 0 ? " bad" : " good");
-  $("k-trades").textContent = r.taken.toLocaleString("en-IN");
-  $("k-trades-d").textContent = "of " + r.signals.toLocaleString("en-IN") + " signals";
-  $("eq-sub").textContent = joinParts([DATA.universes[state.uni], settingLabel(state.strat),
-    `${risk}% risk`, `start ${inr(cap)}`, fillLabel()])
-    // The 10-stock universe is ONE basket, picked as the median performer for the
-    // EMA M/W/D stack. It is not neutral: every other strategy is being judged on
-    // ten names chosen to suit a different rule. The card below draws 75 fresh
-    // baskets per strategy and is the honest read.
-    + (state.uni === "b10"
-       ? "  —  NOTE: these ten were picked as the median basket for EMA · M/W/D, so they "
-         + "flatter that stack and mean nothing for the others. Use the 75-basket card below."
-       : "");
-  // Two independent things used to hide behind one toggle. Say which is which.
-  const CAP_PCT = (DATA.participation || 0.01) * 100;
-  const FILL_NOTES = {
-    "0": null,   // falls through to the "every result before 2026-08-31" text below
-    "2": `TRADING COSTS ONLY. You cross a spread on the way in and out and your own order `
-       + `moves the price against you — but the account may still buy any quantity it can `
-       + `afford. This is the honest cost of dealing, on its own. The spread is an `
-       + `estimate — Kite sells candles, not quotes.`,
-    "3": `SIZE CAP ONLY, no costs at all. No single order may exceed ${CAP_PCT}% of what `
-       + `the stock trades in a day. This is NOT a cost — it is a position-sizing rule, `
-       + `and on its own it BEATS perfect fills, because it keeps the account out of `
-       + `positions many times larger than the stock's entire daily turnover. Compare `
-       + `this against Perfect fills to see how much of "realistic" is really sizing.`,
-    "1": `Both together: you cross a spread, your order moves the price, and no single `
-       + `order may exceed ${CAP_PCT}% of what the stock trades in a day. Because the cap `
-       + `HELPS and the costs HURT, this setting can score above Perfect fills — use the `
-       + `two middle settings to see which is doing what.`,
-  };
-  $("fillnote").textContent = FILL_NOTES[state.fill]
-    || `Every result before 2026-08-31. You get the price on the chart, instantly, at any `
-      + `size. Convenient, and wrong — switch to realistic fills to see the difference.`;
-
-  lineChart($("eqchart"), 760, 280, [
-    { d: bench.d, v: bench.v, color: "var(--bench)", width: 1.5, opacity: 0.85, name: "NIFTY B&H" },
-    { d: r.curve.d, v: r.curve.eq, color: "var(--equity)", width: 2.2, name: "Account", endDot: true },
-  ], { log: state.log, money: true, hover: { dd: r.curve } });
-  underwaterChart($("ddchart"), 760, 170, r.curve);
-  barChart($("riskbars"), DATA.risks.map((rk, i) => ({
-    label: rk + "%", value: (runFor(i, state.capIdx) || {}).cagr, on: i === state.riskIdx
-  })), "var(--equity)", v => v.toFixed(1) + "%");
-  barChart($("riskdd"), DATA.risks.map((rk, i) => ({
-    label: rk + "%", value: runFor(i, state.capIdx).maxdd, on: i === state.riskIdx
-  })), "var(--dd)", v => v.toFixed(0) + "%");
-  const stackNames = { ema: "M/W/D", qmw: "Q/M/W", dv: "Turtle", hg: "Holy Grail" };
-  barChart($("stackbars"), Object.keys(stackNames).map(k => ({
-    label: stackNames[k],
-    // NOT `?? 0`: a missing key is not a 0% account, and a wiped one is not either.
-    value: (DATA.grid[keyFor(k, state.bandIdx, state.uni, state.riskIdx, state.capIdx)] || {}).cagr,
-    on: k === state.strat
-  })), "var(--equity)", v => v.toFixed(1) + "%");
-  const isDv = state.strat === "dv";
-  // Every strategy on the board now has something to sweep.
-  // Showing it would draw five bars against keys that do not exist.
-  const sweepable = true;
-  $("bandbars-title").style.display = sweepable ? "" : "none";
-  $("bandbars").style.display = sweepable ? "" : "none";
-  const bandOpts = isDv ? (DATA.darvas_windows || ["20-10"]) : (DATA.bands || [0.02]);
-  $("bandbars-title").textContent = isDv ? "CAGR by window pair" : "CAGR by band";
-  if (sweepable) barChart($("bandbars"), bandOpts.map((b, i) => ({
-    label: isDv ? String(b) : (b * 100) + "%",
-    value: (DATA.grid[keyWith(state.strat, b, state.uni, state.riskIdx, state.capIdx)] || {}).cagr,
-    on: isDv ? i === state.dvIdx : i === state.bandIdx
-  })), "var(--bench)", v => v.toFixed(1) + "%", 160);
-  renderEpisodes(r);
-  renderTradeMetrics();
-  renderScaleout();
-  renderBasket();
-}
-
-function renderBasket() {
-  const tile = (v, sub, cls) =>
-    `<div class="card kpi" style="border:1px solid var(--grid)"><div class="v ${cls}">${v}</div><div class="s" style="color:var(--muted);font-size:0.7rem">${sub}</div></div>`;
-  const b = DATA.basket10 && DATA.basket10[
-    `${state.strat}|${bandOf(state.strat, state.bandIdx)}|${DATA.risks[state.riskIdx]}|${state.fill}`];
-  if (!b) { $("bk-sub").textContent = "No basket data — rebuild with scripts.dashboard_data."; return; }
-  const full = DATA.grid[keyFor(state.strat, state.bandIdx, "all", state.riskIdx, 1)];
-  $("bk-sub").textContent =
-    `Nobody tracks ${uniN()} stocks — so here are ${b.cagrs.length} random 10-stock baskets, each run as its own ` +
-    `₹1,00,000 account at ${DATA.risks[state.riskIdx]}% risk with the selected strategy. Which 10 you pick matters ` +
-    `more than anything else on this page. (Full ${uniN()}-stock account at ₹1L for reference: ` +
-    `${cagrText(full && full.cagr)}.)` +
-    (b.wiped ? ` ${b.wiped} of these ${b.cagrs.length} baskets were WIPED OUT — they have no CAGR at all, ` +
-               `so they sit below every basket that merely lost money.` : "");
-  $("bk-tiles").innerHTML = [
-    tile(cagrText(b.median), "median basket CAGR", cagrClass(b.median).trim()),
-    tile(cagrPct(b.p10) + " … " + cagrPct(b.p90), "middle 80% of baskets", ""),
-    tile(cagrPct(b.worst) + " / " + cagrPct(b.best), "worst / best basket", ""),
-    tile(b.beat_fd + "%", "baskets beating an FD (7%)", b.beat_fd >= 50 ? "good" : "bad"),
-    tile(b.negative + "%", "baskets that LOST money", b.negative > 10 ? "bad" : ""),
-    tile(b.wiped ? String(b.wiped) : "0", "baskets WIPED OUT", b.wiped ? "bad" : ""),
-    tile(b.median_dd.toFixed(1) + "%", "median worst drawdown", "bad"),
-  ].join("");
-
-  // histogram of basket CAGRs, median bin highlighted
-  // A wiped basket matches no CAGR bin, so it would silently vanish from this
-  // histogram. It gets its own leftmost bar instead -- that is where it belongs.
-  const edges = [-1e9, -5, 0, 5, 10, 15, 20, 30, 1000];
-  const names = ["WIPED", "< -5%", "-5–0%", "0–5%", "5–10%", "10–15%", "15–20%", "20–30%", "> 30%"];
-  const counts = new Array(names.length).fill(0);
-  for (const c of b.cagrs) {
-    if (isWiped(c)) { counts[0]++; continue; }
-    for (let i = 1; i < names.length; i++)
-      if (c >= edges[i - 1] && c < edges[i]) { counts[i]++; break; }
-  }
-  const maxC = Math.max(...counts, 1), w = 1000, h = 150, bw = w / names.length;
-  let g = "";
-  names.forEach((nm, i) => {
-    const bh = counts[i] / maxC * (h - 42);
-    const x = i * bw + 10, y = h - 26 - bh;
-    const isMed = i === 0 ? isWiped(b.median)
-                : (!isWiped(b.median) && b.median >= edges[i - 1] && b.median < edges[i]);
-    g += `<rect x="${x}" y="${y}" width="${bw - 20}" height="${Math.max(bh, 1)}" rx="4" ` +
-         `fill="${i === 0 || edges[i] <= 0 ? "var(--dd)" : "var(--equity)"}" opacity="${isMed ? 1 : 0.45}"/>`;
-    if (counts[i]) g += `<text x="${x + (bw - 20) / 2}" y="${y - 5}" text-anchor="middle" style="fill:var(--ink-2)">${counts[i]}</text>`;
-    g += `<text x="${x + (bw - 20) / 2}" y="${h - 10}" text-anchor="middle">${nm}</text>`;
-  });
-  $("bk-hist").innerHTML = g;
-}
-
-const METRIC_COLS = ["Win Trades", "Total Win", "Avg Win", "Lose Trades", "Total Loss",
-                     "Avg Loss", "Expectancy", "Capture", "Risk Reward"];
-
-function metricsTable(el, rows, firstHeader) {
-  // rows: [label, stats]
-  el.innerHTML =
-    `<thead><tr><th>${firstHeader}</th>${METRIC_COLS.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>` +
-    rows.map(([label, st]) => {
-      if (!st || !st.trades)
-        return `<tr><td>${label}</td>` + METRIC_COLS.map(() => '<td style="color:var(--muted)">—</td>').join("") + "</tr>";
-      const cap = st.capture === null || st.capture === undefined
-        ? '<span style="color:var(--muted)">—</span>' : (st.capture * 100).toFixed(1) + "%";
-      return `<tr><td>${label}</td>` +
-        `<td>${st.wins}</td><td class="pos">${st.total_win.toLocaleString("en-IN")}</td>` +
-        `<td>${st.avg_win.toLocaleString("en-IN")}</td>` +
-        `<td>${st.losses}</td><td class="neg">${st.total_loss.toLocaleString("en-IN")}</td>` +
-        `<td>${st.avg_loss.toLocaleString("en-IN")}</td>` +
-        `<td class="${st.expectancy >= 0 ? "pos" : "neg"}">${st.expectancy.toLocaleString("en-IN")}</td>` +
-        `<td>${cap}</td><td>${st.rr ?? "—"}</td></tr>`;
-    }).join("") + "</tbody>";
-}
-
-function renderBreadth() {
-  $("sl-br-strat")._sync();
-  const rows = DATA.breadth && DATA.breadth[state.brStrat];
-  if (!rows || !rows.length) {
-    $("br-table").innerHTML = "";
-    $("br-sub").textContent = "No breadth sweep in this data file — rebuild with python -m scripts.dashboard_data.";
-    $("br-why").textContent = "";
-    return;
-  }
-  const setting = state.brStrat === "dv" ? "20/10 windows, weekly gate"
-                : "2% band";
-  $("br-sub").textContent = joinParts([DATA.strategies[state.brStrat], setting])
-    + ` · random baskets drawn from all ${uniN()}, one ₹2,00,000 account each at 1% risk, perfect fills. `
-    + `The ${uniN()}-stock row is the single full universe, so it has no spread.`;
-
-  $("br-table").innerHTML =
-    `<thead><tr><th>Stocks</th><th>Baskets</th><th>Median CAGR</th><th>p10</th><th>p90</th>` +
-    `<th>Spread p90−p10</th><th>Worst</th><th>Best</th><th>Median max DD</th>` +
-    `<th>Positions held</th><th>Signals starved of cash</th></tr></thead><tbody>` +
-    rows.map(r => {
-      const num = v => isWiped(v) ? `<span class="neg">${WIPED}</span>`
-                     : isAbsent(v) ? MISSING : v.toFixed(1) + "%";
-      const spread = (isWiped(r.p90) || isWiped(r.p10)) ? MISSING
-                   : (r.p90 - r.p10).toFixed(1);
-      const idle = r.starved < 2;
-      return `<tr${idle ? ' style="color:var(--muted)"' : ""}>` +
-        `<td><b>${r.size}</b></td>` +
-        `<td>${r.draws}${r.wiped ? ` <span class="neg">(${r.wiped} wiped)</span>` : ""}</td>` +
-        `<td class="${!isWiped(r.median) && r.median >= 7 ? "pos" : ""}"><b>${num(r.median)}</b></td>` +
-        `<td>${num(r.p10)}</td><td>${num(r.p90)}</td><td>${spread}</td>` +
-        `<td class="${!isWiped(r.worst) && r.worst < 0 ? "neg" : ""}">${num(r.worst)}</td>` +
-        `<td>${num(r.best)}</td><td class="neg">${r.dd.toFixed(1)}%</td>` +
-        `<td>${r.held.toFixed(0)}</td>` +
-        `<td class="${idle ? "neg" : ""}">${r.starved.toFixed(0)}%${idle ? " — idling" : ""}</td></tr>`;
-    }).join("") + "</tbody>";
-
-  barChart($("br-cagr"), rows.map(r => ({
-    label: String(r.size), value: r.median, on: r.size === 50
-  })), "var(--equity)", v => v.toFixed(1) + "%", 240);
-  barChart($("br-starve"), rows.map(r => ({
-    label: String(r.size), value: r.starved,
-    on: r.starved >= 10
-  })), r => (r.value < 2 ? "var(--dd)" : "var(--bench)"), v => v.toFixed(0) + "%", 240);
-
-  // Where does the money start working, and where does adding stocks stop paying?
-  const working = rows.find(r => r.starved >= 10);
-  // The knee is a slope between two medians. A wiped median is not a number, so
-  // rows without one cannot take part rather than being treated as 0.
-  const sloped = rows.filter(r => typeof r.median === "number");
-  const gain = (a, b) => (b.median - a.median) / (b.size - a.size);
-  let knee = rows[rows.length - 1];
-  for (let i = 1; i < sloped.length - 1; i++)
-    if (gain(sloped[i], sloped[i + 1]) < 0.5 * gain(sloped[0], sloped[i])) { knee = sloped[i]; break; }
-  const idleRows = rows.filter(r => r.starved < 2);
-  $("br-why").innerHTML =
-    (idleRows.length
-      ? `Up to <b>${idleRows[idleRows.length - 1].size} stocks</b> this rule never once runs out of
-         money over the whole history — the greyed rows. That is not a good sign, it means the
-         account is sitting in cash it cannot deploy, and every stock you add is pure gain. `
-      : `This rule is short of cash even on the smallest baskets, so it is putting the money to
-         work from the start. `) +
-    (working ? `The money starts genuinely competing for itself at about
-         <b>${working.size} stocks</b>. ` : "") +
-    `Beyond roughly <b>${knee.size}</b> the curve flattens: each further stock adds about
-     <b>${gain(knee, rows[rows.length - 1]).toFixed(2)} points</b> of CAGR against
-     <b>${gain(rows[0], knee).toFixed(2)}</b> below it. The spread column is the other half of
-     the story — with few stocks your result depends mostly on which ones you happened to pick,
-     and that luck shrinks as the list grows.`;
-}
-
-function renderScaleoutPage() {
-  $("sl-so-strat")._sync(); $("sl-so-uni")._sync();
-  const rows = DATA.scaleout_r && DATA.scaleout_r[`${state.soStrat}|${state.soUni}`];
-  if (!rows) {
-    $("sor-table").innerHTML = "";
-    $("sor-sub").textContent = "No scale-out sweep in this data file — rebuild with python -m scripts.dashboard_data.";
-    return;
-  }
-  const keep = rows[0];
-  $("sor-sub").textContent =
-    `${DATA.strategies[state.soStrat]} · ${DATA.universes[state.soUni]} · 2% band · every signal ` +
-    `separately funded at a fixed ₹1,00,000, net of charges, all history. There is no CAGR on this ` +
-    `page on purpose: the one-account simulator prices a trade as shares × one exit price, and a ` +
-    `scale-out has two, so an account figure for these would be wrong.`;
-
-  const label = r => r.multiple === null ? r.rule : `${r.rule} at ${r.multiple}R`;
-  $("sor-table").innerHTML =
-    `<thead><tr><th>Rule</th><th>Trades</th><th>Banked</th><th>Win rate</th>` +
-    `<th>Avg win ₹</th><th>Avg loss ₹</th><th>Avg / trade ₹</th><th>PF</th>` +
-    `<th>Worst losing run</th><th>Total net ₹</th><th>vs keeping all</th></tr></thead><tbody>` +
-    rows.map((r, i) => {
-      const vs = r.vs_keep === undefined ? "—"
-        : `<span class="${r.vs_keep >= 0 ? "pos" : "neg"}">${r.vs_keep > 0 ? "+" : ""}${r.vs_keep}%</span>`;
-      return `<tr${i === 0 ? ' style="font-weight:600"' : ""}>` +
-        `<td>${label(r)}</td><td>${r.trades.toLocaleString("en-IN")}</td>` +
-        `<td>${r.banked.toLocaleString("en-IN")}</td><td>${(r.win_rate * 100).toFixed(1)}%</td>` +
-        `<td class="pos">${r.avg_win.toLocaleString("en-IN")}</td>` +
-        `<td class="neg">${Math.abs(r.avg_loss).toLocaleString("en-IN")}</td>` +
-        `<td>${r.avg.toLocaleString("en-IN")}</td><td>${r.pf ?? "—"}</td>` +
-        `<td class="neg">${inr(r.worst_run)}</td>` +
-        `<td class="${r.net >= 0 ? "pos" : "neg"}">${r.net.toLocaleString("en-IN")}</td>` +
-        `<td>${vs}</td></tr>`;
-    }).join("") + "</tbody>";
-
-  const costBars = variant => rows.filter(r => r.variant === variant).map(r => ({
-    label: `${r.multiple}R`, value: r.vs_keep, on: r.multiple === 1
-  }));
-  const sign = r => (r.value >= 0 ? "var(--bench)" : "var(--dd)");
-  barChart($("sor-bars"), costBars("half"), sign, v => `${v}%`, 130);
-  barChart($("sor-bars-be"), costBars("half_be"), sign, v => `${v}%`, 130);
-
-  // The mechanism is always true; the VERDICT depends on the slice, so it is computed
-  // rather than asserted. On a 30-trade universe this rule can look like a winner.
-  const rs = v => (v < 0 ? "\u2212\u20b9" : "\u20b9") + Math.abs(v).toLocaleString("en-IN");
-  const settings = rows.slice(1);
-  const costly = settings.filter(r => r.vs_keep < 0).length;
-  const worst = settings.reduce((a, b) => (a.vs_keep < b.vs_keep ? a : b));
-  const thin = keep.trades < 300;
-  const verdict = costly === settings.length
-    ? `Every one of the ${settings.length} settings here ends up behind keeping the whole position.`
-    : costly === 0
-      ? `On this slice every setting came out AHEAD of keeping the whole position, which is the
-         opposite of the full-universe result — treat it as a quirk of the sample, not a finding.`
-      : `${costly} of the ${settings.length} settings here end up behind keeping the whole
-         position, and ${settings.length - costly} ahead.`;
-  $("sor-why-title").textContent = thin
-    ? "What banking early does \u2014 careful, small sample"
-    : "What banking early actually does";
-  $("sor-why").innerHTML =
-    `Compare the two loss columns above, then the two win columns. Keeping the whole position ` +
-    `averages <b>${rs(keep.avg_win)}</b> on a win and <b>${rs(keep.avg_loss)}</b> on a loss. ` +
-    `Under the costliest setting here (<i>${worst.rule.toLowerCase()} at ${worst.multiple}R</i>) ` +
-    `the average loss is <b>${rs(worst.avg_loss)}</b> \u2014 barely moved \u2014 while the average win ` +
-    `falls to <b>${rs(worst.avg_win)}</b>. That is the mechanism: the rule can only fire on a trade ` +
-    `that is already going your way, so it trims winners and never touches losers. What it buys is a ` +
-    `higher win rate \u2014 ${(keep.win_rate * 100).toFixed(1)}% becomes ` +
-    `${(worst.win_rate * 100).toFixed(1)}% \u2014 which is comfort, not money. ` +
-    `Pushing the trigger further out costs less mainly because the rule fires less often: by 3R it ` +
-    `banks on a minority of trades, converging on keeping everything by quietly switching itself off. ` +
-    `<br><br><b>On this selection:</b> ${verdict}` +
-    (thin ? ` Only <b>${keep.trades.toLocaleString("en-IN")}</b> trades sit behind these numbers, so
-       single trades can swing a column by tens of percent. Read the ${uniN()}-stock or
-       ${DATA.universes.out} universes for a verdict you can lean on.` : "");
-}
-
-function renderTradeMetrics() {
-  if (!DATA.tradestats) return;
-  const band = bandOf(state.strat, state.bandIdx);
-  $("tm-sub").textContent = joinParts([DATA.strategies[state.strat], settingLabel(state.strat)])
-    + ` · every trade the rule produced (fixed ₹1,00,000 per trade, net of charges) — not the `
-    + `one-account view above, so the universes are directly comparable.`;
-  const rows = Object.entries(DATA.universes).map(([u, label]) =>
-    [label + (u === state.uni ? "  ←" : ""),
-     DATA.tradestats[`${state.strat}|${band}|${u}|${state.fill}`]]);
-  metricsTable($("tm-table"), rows, "Universe");
-}
-
-function renderScaleout() {
-  const block = DATA.scaleout[state.strat];
-  if (!block) {
-    $("so-table").innerHTML = "";
-    $("so-sub").textContent = "Scale-out was tested on the class stack (M/W/D) — pick it in the Strategy slicer to see it. The verdict there: banking half caps roughly half the profit; adding a breakeven stop was the worst of the three.";
-    return;
-  }
-  $("so-sub").textContent = `${DATA.universes[state.uni]} · 2% band · fixed capital per trade · net of charges · all history — measured per trade (a two-part exit cannot be priced by the one-account simulation). "Banked" counts trades that reached +1R and sold half.`
-    + (state.fill === "0" ? "" : "  NOTE: this card is PERFECT FILLS only — the Fills slicer does not reach it.");
-  const rows = block[state.uni];
-  const maxNet = Math.max(...rows.map(r => Math.abs(r.net)), 1);
-  $("so-table").innerHTML =
-    `<thead><tr><th>Exit rule</th><th>Trades</th><th>Banked</th><th>Win</th><th>Gross ₹</th><th>Charges ₹</th><th>Avg / trade ₹</th><th>PF</th><th>Worst losing run</th><th>Total net ₹</th></tr></thead><tbody>` +
-    rows.map((r, i) => {
-      const bw = (Math.abs(r.net) / maxNet * 100).toFixed(0);
-      return `<tr${i === 0 ? ' style="font-weight:600"' : ""}><td>${r.variant}</td><td>${r.trades.toLocaleString("en-IN")}</td>` +
-        `<td>${r.banked.toLocaleString("en-IN")}</td><td>${(r.win_rate * 100).toFixed(0)}%</td>` +
-        `<td>${r.gross.toLocaleString("en-IN")}</td><td>${r.charges.toLocaleString("en-IN")}</td>` +
-        `<td>${r.avg.toLocaleString("en-IN")}</td><td>${r.pf ?? "—"}</td><td class="neg">${inr(r.worst_run)}</td>` +
-        `<td class="databar"><div class="bg" style="width:${bw}%"></div><span class="${r.net >= 0 ? "pos" : "neg"}">${inr(r.net)}</span></td></tr>`;
-    }).join("") + "</tbody>";
-}
-
-function renderEpisodes(r) {
-  $("episodes").innerHTML =
-    `<thead><tr><th>Peak</th><th>Depth</th><th>Recovered</th><th>Len</th></tr></thead><tbody>` +
-    r.episodes.map(e => `<tr><td>${e.peak}</td><td class="neg">${e.depth.toFixed(1)}%</td>` +
-      `<td>${e.recovered ?? "not yet"}</td><td>${e.years.toFixed(1)}y</td></tr>`).join("") + "</tbody>";
-}
-
-// ====================================================== stocks page ====
-function renderStock() {
-  $("sl-stock-strat")._sync();
-  const s = DATA.stocks[state.stock];
-  if (!s) return;
-  const block = s[state.stockStrat];
-  fillTradeKPIs("s", block.stats);
-  $("s-title").textContent = `${state.stock} — price & ${DATA.strategies[state.stockStrat]} trades`;
-  metricsTable($("s-metrics"),
-               Object.keys(DATA.strategies).map(k => [DATA.strategies[k], (s[k] || {}).stats]),
-               "Strategy");
-  priceChart($("s-chart"), 1140, 300, s.closes, block.trades);
-  tradesTable($("s-table"), block.trades);
-}
-
-function fillTradeKPIs(prefix, st) {
-  $(prefix + "-trades").textContent = st.trades.toLocaleString("en-IN");
-  $(prefix + "-win").textContent = st.trades ? (st.win_rate * 100).toFixed(0) + "% winners" : "no trades";
-  if ($(prefix + "-net")) {
-    $(prefix + "-net").textContent = inr(st.net);
-    $(prefix + "-net").className = "v " + (st.net >= 0 ? "good" : "bad");
-  }
-  $(prefix + "-pf").textContent = st.pf ?? "—";
-  if ($(prefix + "-best")) {
-    $(prefix + "-best").textContent = inr(st.best);
-    $(prefix + "-worst").textContent = inr(st.worst);
-  }
-  if ($(prefix + "-run")) $(prefix + "-run").textContent = inr(st.worst_run);
-  if ($(prefix + "-best-d")) $(prefix + "-best-d").textContent = "single-trade extremes";
-}
-
-function tradesTable(el, trades) {
-  el.innerHTML =
-    `<thead><tr><th>Entry</th><th>Entry ₹</th><th>Stop ₹</th><th>Exit</th><th>Exit ₹</th><th>Qty</th><th>Net ₹</th><th>Why it ended</th></tr></thead><tbody>` +
-    trades.map(t =>
-      `<tr><td>${t.e}</td><td>${t.ep.toLocaleString("en-IN")}</td><td>${t.st.toLocaleString("en-IN")}</td>` +
-      `<td>${t.x}</td><td>${t.xp.toLocaleString("en-IN")}</td><td>${t.sh}</td>` +
-      `<td class="${t.net >= 0 ? "pos" : "neg"}">${t.net.toLocaleString("en-IN")}</td><td style="text-align:left">${t.why}</td></tr>`).join("") +
-    "</tbody>";
-}
-
-// ====================================================== assets page ====
-function renderAsset() {
-  $("sl-asset")._sync(); $("sl-asset-strat")._sync();
-  const a = DATA.assets[state.asset];
-  let block = a[state.assetStrat];
-  if (!block) {
-    $("a-title").textContent = `${state.asset} — no ${DATA.strategies[state.assetStrat]} data (needs hourly bars; MCX futures are daily-only)`;
-    for (const id of ["a-cagr","a-dd","a-bh-cagr","a-bh-dd","a-trades","a-pf"]) $(id).textContent = "—";
-    $("a-eq").innerHTML = ""; $("a-uw").innerHTML = ""; $("a-chart").innerHTML = "";
-    $("a-table").innerHTML = "";
-    return;
-  }
-  const st = block.stats, acc = block.account;
-  $("a-cagr").textContent = acc ? cagrText(acc.cagr) : MISSING;
-  $("a-cagr").className = "v" + (acc ? cagrClass(acc.cagr) : "");
-  $("a-years").textContent = a.bh.years + " yrs of data";
-  $("a-dd").textContent = acc ? acc.maxdd.toFixed(1) + "%" : "—";
-  $("a-dd-d").textContent = acc ? "longest underwater " + acc.uw_long + " yrs" : "";
-  $("a-bh-cagr").textContent = pct1(a.bh.cagr) + "/yr";
-  $("a-bh-dd").textContent = a.bh.maxdd.toFixed(1) + "%";
-  $("a-bh-uw").textContent = "underwater up to " + a.bh.uw + " yrs";
-  $("a-trades").textContent = st.trades;
-  $("a-win").textContent = st.trades ? (st.win_rate * 100).toFixed(0) + "% winners" : "";
-  $("a-pf").textContent = st.pf ?? "—";
-  $("a-title").textContent = `${state.asset} — account equity`;
-
-  if (acc) {
-    const bench = benchFromCloses(a.closes, acc.curve.d[0], acc.curve.d.at(-1), 100000);
-    lineChart($("a-eq"), 760, 260, [
-      { d: bench.d, v: bench.v, color: "var(--bench)", width: 1.5, opacity: 0.85, name: "Buy & hold" },
-      { d: acc.curve.d, v: acc.curve.eq, color: "var(--equity)", width: 2.2, name: "Account", endDot: true },
-    ], { log: false, money: true, hover: { dd: acc.curve } });
-    underwaterChart($("a-uw"), 360, 260, acc.curve);
-  } else { $("a-eq").innerHTML = ""; $("a-uw").innerHTML = ""; }
-  metricsTable($("a-metrics"),
-               Object.keys(DATA.strategies).map(k => [DATA.strategies[k], (a[k] || {}).stats]),
-               "Strategy");
-  priceChart($("a-chart"), 1140, 280, a.closes, block.trades);
-  tradesTable($("a-table"), block.trades);
-}
-
-
-
-// ======================================================= chart kit ====
-const M = { l: 56, r: 12, t: 10, b: 20 };
-
-function benchFromCloses(closes, start, end, capital) {
-  const i0 = closes.d.findIndex(d => d >= start);
-  if (i0 < 0) return null;
-  const base = closes.c[i0], d = [], v = [];
-  for (let i = i0; i < closes.d.length && closes.d[i] <= end; i++) {
-    d.push(closes.d[i]); v.push(capital * closes.c[i] / base);
-  }
-  return { d, v };
-}
-function seriesDD(vs) {
-  let peak = -1e18, worst = 0;
-  for (const v of vs) { peak = Math.max(peak, v); worst = Math.min(worst, 100 * (v - peak) / peak); }
-  return worst;
-}
-function scales(d0, d1, w, h, lo, hi, log) {
-  const t0 = Date.parse(d0), t1 = Date.parse(d1);
-  const x = d => M.l + (Date.parse(d) - t0) / (t1 - t0 || 1) * (w - M.l - M.r);
-  const y = log
-    ? v => M.t + (1 - (Math.log(Math.max(v, 1e-9)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo) || 1)) * (h - M.t - M.b)
-    : v => M.t + (1 - (v - lo) / (hi - lo || 1)) * (h - M.t - M.b);
-  return { x, y, t0, t1 };
-}
-function yearTicks(t0, t1, max) {
-  const out = [], y0 = new Date(t0).getFullYear() + 1, y1 = new Date(t1).getFullYear();
-  const step = Math.max(1, Math.ceil((y1 - y0) / (max || 8)));
-  for (let y = y0; y <= y1; y += step) out.push(y);
-  return out;
-}
-const path = pts => pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join("");
-
-function lineChart(svg, w, h, series, opts) {
-  const all = series.flatMap(s => s.v);
+function chart(curve, keys, opts = {}) {
+  const w = 900, h = opts.h || 200, pad = 34;
+  const n = curve.eq.length;
+  if (!n) return `<div class="empty">no curve</div>`;
+  const all = keys.flatMap(k => curve[k] || []);
   let lo = Math.min(...all), hi = Math.max(...all);
-  if (opts.log) lo = Math.max(lo, 1);
-  hi *= 1.03; lo *= opts.log ? 0.9 : 0.97;
-  const d0 = series.at(-1).d[0], d1 = series.at(-1).d.at(-1);
-  const s = scales(d0, d1, w, h, lo, hi, opts.log);
+  if (opts.zero) lo = Math.min(lo, 0);
+  if (hi === lo) hi = lo + 1;
+  const x = i => pad + i * (w - pad - 8) / Math.max(n - 1, 1);
+  const y = v => h - 18 - (v - lo) * (h - 30) / (hi - lo);
   let g = "";
-  for (const v of (opts.log ? logTicks(lo, hi) : linTicks(lo, hi))) {
-    const yy = s.y(v);
-    if (yy < M.t - 1 || yy > h - M.b) continue;
-    g += `<line x1="${M.l}" x2="${w - M.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
-         `<text x="${M.l - 6}" y="${yy + 3.5}" text-anchor="end">${opts.money ? shortInr(v) : v}</text>`;
+  for (let t = 0; t <= 3; t++) {
+    const v = lo + (hi - lo) * t / 3;
+    g += `<line class="gridline" x1="${pad}" x2="${w}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>` +
+         `<text class="axis" x="0" y="${(y(v) + 3).toFixed(1)}">${opts.fmt ? opts.fmt(v) : Math.round(v)}</text>`;
   }
-  for (const yr of yearTicks(s.t0, s.t1))
-    g += `<text x="${s.x(yr + "-01-01")}" y="${h - 6}" text-anchor="middle">${yr}</text>`;
-  g += `<line x1="${M.l}" x2="${w - M.r}" y1="${h - M.b}" y2="${h - M.b}" stroke="var(--baseline)"/>`;
-  for (const ser of series) {
-    g += `<path d="${path(ser.d.map((d, i) => [s.x(d), s.y(ser.v[i])]))}" fill="none" stroke="${ser.color}" stroke-width="${ser.width}" opacity="${ser.opacity ?? 1}"/>`;
-    if (ser.endDot)
-      g += `<circle cx="${s.x(ser.d.at(-1))}" cy="${s.y(ser.v.at(-1))}" r="3.5" fill="${ser.color}" stroke="var(--surface)" stroke-width="2"/>`;
-  }
-  if (opts.hover) {
-    g += `<rect class="hit" x="${M.l}" y="${M.t}" width="${w - M.l - M.r}" height="${h - M.t - M.b}" fill="transparent"/>` +
-         `<g class="cross" style="display:none"><line y1="${M.t}" y2="${h - M.b}" stroke="var(--baseline)" stroke-dasharray="3 3"/>` +
-         series.map(ser => `<circle r="4" fill="${ser.color}" stroke="var(--surface)" stroke-width="2"/>`).join("") + `</g>`;
-    svg.innerHTML = g;
-    attachHover(svg, w, series, s, opts.hover.dd);
-  } else svg.innerHTML = g;
-}
-
-function attachHover(svg, vw, series, s, ddCurve) {
-  const hit = svg.querySelector(".hit"), cross = svg.querySelector(".cross"), tip = $("tip");
-  const main = series.at(-1);
-  hit.addEventListener("mousemove", ev => {
-    const box = svg.getBoundingClientRect();
-    const px = (ev.clientX - box.left) / box.width * vw;
-    const t = s.t0 + (px - M.l) / (vw - M.l - M.r) * (s.t1 - s.t0);
-    let i = main.d.findIndex(d => Date.parse(d) >= t);
-    if (i < 0) i = main.d.length - 1;
-    const day = main.d[i], xx = s.x(day);
-    const [lineEl, ...dots] = cross.children;
-    lineEl.setAttribute("x1", xx); lineEl.setAttribute("x2", xx);
-    const rows = [];
-    series.forEach((ser, k) => {
-      let j = ser.d.findIndex(x => x >= day);
-      if (j < 0) j = ser.d.length - 1;
-      dots[k].setAttribute("cx", xx); dots[k].setAttribute("cy", s.y(ser.v[j]));
-      rows.push(`<div class="row"><span>${ser.name}</span><b>${inr(ser.v[j])}</b></div>`);
-    });
-    if (ddCurve) rows.push(`<div class="row"><span>Below peak</span><b>${ddCurve.dd[i].toFixed(1)}%</b></div>`);
-    cross.style.display = "";
-    tip.style.display = "block";
-    tip.innerHTML = `<div class="d">${day}</div>` + rows.reverse().join("");
-    tip.style.left = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8) + "px";
-    tip.style.top = (ev.clientY + 14) + "px";
+  let paths = "";
+  keys.forEach((k, i) => {
+    const arr = curve[k]; if (!arr) return;
+    paths += line(arr.map((v, j) => [x(j), y(v)]), w, h, opts.colors[i], i === 0 && opts.fill);
   });
-  hit.addEventListener("mouseleave", () => { cross.style.display = "none"; tip.style.display = "none"; });
+  const ticks = [0, Math.floor(n / 2), n - 1].map(i =>
+    `<text class="axis" x="${x(i).toFixed(1)}" y="${h - 3}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}">${(curve.d && curve.d[i] || "").slice(0, 7)}</text>`).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" height="${h}">${g}${paths}${ticks}</svg>`;
 }
 
-function underwaterChart(svg, w, h, curve) {
-  const lo = Math.min(...curve.dd, -5);
-  const s = scales(curve.d[0], curve.d.at(-1), w, h, lo * 1.08, 0, false);
-  let g = "";
-  for (const v of linTicksPlain(lo, 0)) {
-    const yy = s.y(v);
-    g += `<line x1="${M.l}" x2="${w - M.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
-         `<text x="${M.l - 6}" y="${yy + 3.5}" text-anchor="end">${v}%</text>`;
-  }
-  for (const yr of yearTicks(s.t0, s.t1, w < 500 ? 4 : 8))
-    g += `<text x="${s.x(yr + "-01-01")}" y="${h - 6}" text-anchor="middle">${yr}</text>`;
-  const pts = curve.d.map((d, i) => [s.x(d), s.y(curve.dd[i])]);
-  g += `<path d="${path(pts)}L${s.x(curve.d.at(-1)).toFixed(1)} ${s.y(0).toFixed(1)}L${M.l} ${s.y(0).toFixed(1)}Z" fill="var(--dd)" opacity="0.16"/>`;
-  g += `<path d="${path(pts)}" fill="none" stroke="var(--dd)" stroke-width="1.7"/>`;
-  g += `<line x1="${M.l}" x2="${w - M.r}" y1="${s.y(0)}" y2="${s.y(0)}" stroke="var(--baseline)"/>`;
-  svg.innerHTML = g;
+function waterfallBlock(skey, v) {
+  const wf = (DATA.waterfall || {})[
+    `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}`];
+  if (!wf) return "";
+  const steps = [["Rule on paper", wf.perfect, "var(--ink-3)"],
+                 ["Trading costs", wf.costs, "var(--down)"],
+                 ["Size cap", wf.cap, wf.cap >= 0 ? "var(--up)" : "var(--down)"],
+                 ["Their interaction", wf.interaction,
+                  (wf.interaction ?? 0) >= 0 ? "var(--up)" : "var(--down)"],
+                 ["What you keep", wf.net, "var(--accent)"]];
+  const span = Math.max(...steps.map(s => Math.abs(s[1] ?? 0)), 1);
+  return `<div class="card"><h3>Where the return goes</h3>
+    <p class="sub">CAGR points, perfect fills down to tradeable</p><div class="wf">` +
+    steps.map(([k, val, col]) => `<div class="wf-row"><span>${k}</span>
+      <div class="wf-bar"><div class="wf-fill" style="background:${col};
+        left:${val < 0 ? 50 - 50 * Math.abs(val) / span : 50}%;
+        width:${50 * Math.abs(val ?? 0) / span}%"></div></div>
+      <span class="num" style="text-align:right;font-family:var(--mono)">${val == null ? "—" : (val > 0 ? "+" : "") + val.toFixed(1)}</span></div>`).join("") +
+    `</div><p class="note">The two middle steps do not add up to the last: a size cap changes
+     which signals you can afford, so it interacts with costs instead of stacking on them.
+     A positive size-cap bar means the limit <em>helped</em> — it forced the account to
+     spread across more names.</p></div>`;
 }
 
-function priceChart(svg, w, h, closes, trades) {
-  const lo = Math.max(Math.min(...closes.c), 0.01), hi = Math.max(...closes.c);
-  const s = scales(closes.d[0], closes.d.at(-1), w, h, lo * 0.9, hi * 1.05, true);
-  let g = "";
-  for (const v of logTicks(lo * 0.9, hi * 1.05)) {
-    const yy = s.y(v);
-    if (yy < M.t - 1 || yy > h - M.b) continue;
-    g += `<line x1="${M.l}" x2="${w - M.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>` +
-         `<text x="${M.l - 6}" y="${yy + 3.5}" text-anchor="end">${shortInr(v)}</text>`;
-  }
-  for (const yr of yearTicks(s.t0, s.t1, 12))
-    g += `<text x="${s.x(yr + "-01-01")}" y="${h - 6}" text-anchor="middle">${yr}</text>`;
-  g += `<path d="${path(closes.d.map((d, i) => [s.x(d), s.y(closes.c[i])]))}" fill="none" stroke="var(--ink-2)" stroke-width="1.2" opacity="0.75"/>`;
-  const clamp = d => Math.min(Math.max(Date.parse(d), s.t0), s.t1);
-  for (const t of trades) {
-    const xe = M.l + (clamp(t.e) - s.t0) / (s.t1 - s.t0) * (w - M.l - M.r);
-    const xx = M.l + (clamp(t.x) - s.t0) / (s.t1 - s.t0) * (w - M.l - M.r);
-    const ye = s.y(t.ep), yx = s.y(t.xp);
-    g += `<path d="M${xe} ${ye - 9}l4.5 8h-9z" fill="var(--good)"><title>buy ${t.e} @ ${t.ep}</title></path>`;
-    g += `<path d="M${xx} ${yx + 9}l4.5 -8h-9z" fill="var(--dd)"><title>sell ${t.x} @ ${t.xp} (${t.why}, net ${t.net})</title></path>`;
-  }
-  svg.innerHTML = g;
+function renderDetail() {
+  const body = $("det-body");
+  const row = rows().find(r => r.id === S.sel) || rows()[0];
+  if (!row) { body.innerHTML = `<div class="card"><div class="empty">Nothing to show —
+    pick a row on Compare.</div></div>`; return; }
+  S.sel = row.id;
+  const r = row.r, c = r.curve;
+  const bh = DATA.nifty ? null : null;
+  const stat = (k, v, d, cls = "", hero = false) =>
+    `<div class="stat${hero ? " hero" : ""}"><div class="k">${k}</div>
+     <div class="v ${cls}">${v}</div><div class="d">${d || ""}</div></div>`;
+  body.innerHTML = `
+    <div class="card" style="margin-bottom:var(--gap)">
+      <h3>${row.family} <span class="pill">${row.setting}</span></h3>
+      <p class="sub">${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])} ·
+        ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}</p>
+    </div>
+    <div class="stats">
+      ${stat("MAR", num(r.mar), "return ÷ worst dip", "", true)}
+      ${stat("CAGR", cagrText(r), "compounded yearly", r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up")}
+      ${stat("Worst dip", pct(r.maxdd), "peak to trough", "down")}
+      ${stat("Ulcer", num(r.ulcer, 1), "depth × duration")}
+      ${stat("Final", inr(r.final), "from " + inr(DATA.capitals[S.cap]))}
+      ${stat("Trades", (r.taken ?? 0).toLocaleString("en-IN"),
+             (r.signals ?? 0).toLocaleString("en-IN") + " signals offered")}
+      ${stat("Captured", r.signals ? Math.round(100 * r.taken / r.signals) + "%" : "—",
+             (r.skipped_cash ?? 0).toLocaleString("en-IN") + " unaffordable")}
+      ${stat("Fully invested", r.full_pct == null ? "—" : Math.round(r.full_pct) + "%",
+             "of days under 5% cash")}
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>The account</h3><p class="sub">equity, and how much of it was spare</p>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--equity)"></i>equity</span>
+          <span><i class="swatch" style="background:var(--cash)"></i>cash in hand</span>
+        </div>
+        ${chart(c, ["eq", "cash"], { colors: ["var(--equity)", "var(--cash)"],
+                                     fill: true, zero: true, fmt: v => inr(v) })}
+        <p class="note">Where the gold line hugs the floor, every rupee is committed and a
+          new signal cannot be taken however good it looks.</p>
+      </div>
+      <div class="card">
+        <h3>Below the peak</h3><p class="sub">how far under water, day by day</p>
+        ${chart(c, ["dd"], { colors: ["var(--down)"], fill: true,
+                             fmt: v => v.toFixed(0) + "%" })}
+        <p class="note">${(r.episodes || []).length} spells below a previous peak.
+          The longest lasted ${r.uw_long ?? "—"} years; the account is
+          ${r.uw_now ? r.uw_now + " years" : "not"} under water where the data ends.</p>
+      </div>
+    </div>
+    <div style="margin-top:var(--gap)">${waterfallBlock(row.skey, row.v)}</div>`;
 }
 
-function barChart(svg, rows, color, fmt, height) {
-  const w = 360, h = height || 120, lp = 44, rp = 48, bh = 18, gap = (h - rows.length * bh) / (rows.length + 1);
-  // null = wiped out (drawn full-length, in the loss colour, labelled "Wiped");
-  // undefined = nothing computed (no bar at all, labelled "—"). Neither is 0.
-  const real = rows.filter(r => typeof r.value === "number");
-  const maxAbs = Math.max(...real.map(r => Math.abs(r.value)), 0.001);
-  let g = "";
-  rows.forEach((r, i) => {
-    const y = gap + i * (bh + gap);
-    const wiped = isWiped(r.value), absent = isAbsent(r.value);
-    const bw = absent ? 0 : wiped ? (w - lp - rp) : Math.abs(r.value) / maxAbs * (w - lp - rp);
-    g += `<text x="${lp - 6}" y="${y + bh / 2 + 3.5}" text-anchor="end">${r.label}</text>`;
-    const fill = wiped ? "var(--dd)" : typeof color === "function" ? color(r) : color;
-    if (!absent)
-      g += `<rect x="${lp}" y="${y}" width="${Math.max(bw, 1.5)}" height="${bh}" rx="4" fill="${fill}" opacity="${r.on ? 1 : 0.35}"/>`;
-    const text = wiped ? WIPED : absent ? MISSING : fmt(r.value);
-    g += `<text x="${lp + Math.max(bw, 1.5) + 6}" y="${y + bh / 2 + 3.5}" style="fill:var(--ink-2);font-weight:${r.on ? 700 : 400}">${text}</text>`;
+function renderStocks() {
+  const pick = $("stk-pick");
+  if (!pick.options.length) {
+    for (const s of Object.keys(DATA.stocks).sort()) {
+      const o = document.createElement("option");
+      o.value = o.textContent = s;
+      if (DATA.stocks[s].assigned) o.textContent = s + "  ·  assigned";
+      pick.appendChild(o);
+    }
+    pick.addEventListener("change", () => { S.stock = pick.value; render(); });
+  }
+  S.stock = S.stock || (DATA.assigned || [])[0] || Object.keys(DATA.stocks)[0];
+  pick.value = S.stock;
+  const e = DATA.stocks[S.stock] || {};
+  const cells = Object.entries(DATA.strategies).map(([k, label]) => {
+    const st = e[k] && e[k].stats;
+    if (!st) return `<div class="card"><h3>${label}</h3>
+      <div class="empty">no trades on this stock</div></div>`;
+    return `<div class="card"><h3>${label}</h3>
+      <div class="stats" style="margin:10px 0 0">
+        <div class="stat"><div class="k">Trades</div><div class="v">${st.trades ?? "—"}</div></div>
+        <div class="stat"><div class="k">Win rate</div><div class="v">${winPct(st.win_rate)}</div></div>
+        <div class="stat"><div class="k">Net</div><div class="v ${(st.net ?? 0) >= 0 ? "up" : "down"}">${inr(st.net)}</div></div>
+      </div></div>`;
+  }).join("");
+  $("stk-sub").textContent = `${Object.keys(DATA.stocks).length} stocks · trade-level, a fixed book per trade`;
+  $("stk-body").innerHTML = `<div class="grid2">${cells}</div>`;
+}
+
+/* ── shell ────────────────────────────────────────────────────────────── */
+const VIEWS = [["compare", "Compare"], ["detail", "Detail"], ["stocks", "Stocks"]];
+
+function render() {
+  $("scenario")._sync();
+  for (const b of $("nav").children) b.classList.toggle("on", b.dataset.v === S.view);
+  for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
+  if (S.view === "compare") renderCompare();
+  if (S.view === "detail") renderDetail();
+  if (S.view === "stocks") renderStocks();
+}
+
+function init() {
+  S.year = DATA.start_default || DATA.start_years[DATA.start_years.length - 1];
+  $("built").textContent = DATA.built + "  ·  " + DATA.universe_size + " stocks";
+  buildScenario();
+  for (const [k, label] of VIEWS) {
+    const b = document.createElement("button");
+    b.textContent = label; b.dataset.v = k;
+    b.addEventListener("click", () => { S.view = k; render(); });
+    $("nav").appendChild(b);
+  }
+  render();
+}
+
+fetch("/api/dashboard").then(r => { if (!r.ok) throw new Error("no data"); return r.json(); })
+  .then(d => { DATA = hydrate(d); init(); })
+  .catch(err => {
+    document.querySelector("main").innerHTML =
+      `<div class="card"><div class="empty">Could not load the data —
+       ${err.message}.<br>Build it with <code>python -m scripts.refresh</code>.</div></div>`;
   });
-  svg.innerHTML = g;
-}
 
-function shortInr(v) {
-  if (v >= 1e7) return (v / 1e7).toFixed(1).replace(/\.0$/, "") + "cr";
-  if (v >= 1e5) return (v / 1e5).toFixed(1).replace(/\.0$/, "") + "L";
-  if (v >= 1e3) return Math.round(v / 1e3) + "k";
-  return v >= 100 ? Math.round(v) : v;
-}
-function niceStep(raw) {
-  const mag = Math.pow(10, Math.floor(Math.log10(Math.abs(raw) || 1)));
-  const n = raw / mag;
-  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
-}
-function linTicks(lo, hi) {
-  const step = niceStep((hi - lo) / 5), out = [];
-  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(v);
-  return out;
-}
-function linTicksPlain(lo, hi) {
-  const step = niceStep((hi - lo) / 4), out = [];
-  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(Math.round(v));
-  return out;
-}
-function logTicks(lo, hi) {
-  const out = [];
-  for (let m = Math.pow(10, Math.floor(Math.log10(Math.max(lo, 1e-9)))); m <= hi; m *= 10)
-    for (const k of [1, 2, 5]) { const v = m * k; if (v >= lo && v <= hi) out.push(v); }
-  return out;
-}
+/* Is what we are showing still the universe being traded? Asked separately: the
+   answer depends on the CURRENT config, not on the snapshot, and the snapshot is
+   far too big to re-read for two fields. */
+fetch("/api/status").then(r => r.json()).then(s => {
+  if (!s || !s.stale) return;
+  const el = $("stale");
+  el.innerHTML = "<b>These results are out of date.</b> " +
+    (s.message || "").replace(/(python -m [\w.]+)/g, "<code>$1</code>");
+  el.classList.add("on");
+}).catch(() => {});
 </script>
-</body>
-</html>
