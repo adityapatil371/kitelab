@@ -57,8 +57,32 @@ from .backtest import charges
 
 EMA_LENGTH = 20
 ADX_LENGTH = 14
-ADX_FLOOR = 25.0
 PIVOT_SPAN = 5
+
+# TWO READINGS OF THE SAME SETUP.
+#
+# "raschke" is the original from Street Smarts, and the default. "class" is the
+# spreadsheet's paraphrase, which differs in three ways that all turned out to
+# matter -- measured over 40 stocks and 172,307 daily bars:
+#
+#   ADX floor      30 in the original, 25 in the sheet. 18% of bars against 27%.
+#   ADX rising     the original wants the trend STRENGTHENING; the sheet says
+#                  "spike", which is the same thing, and the first reading here
+#                  implemented neither. Adding it cuts qualifying bars 9,669 -> 986.
+#   the touch      the original needs price only to REACH the 20 EMA; the first
+#                  reading here also demanded the bar close back above it, which
+#                  threw away 46% of the pullbacks Raschke would take. The close
+#                  is not the confirmation -- breaking the pullback bar's high is,
+#                  and that was already the entry trigger. It was confirming twice.
+#
+# And the original takes the FIRST pullback after ADX qualifies, not every touch
+# for as long as the trend runs. That is why the first reading traded so often
+# and so badly.
+RULES = {
+    "raschke": {"floor": 30.0, "rising": True,  "close_above": False, "first_only": True},
+    "class":   {"floor": 25.0, "rising": False, "close_above": True,  "first_only": False},
+}
+ADX_FLOOR = RULES["raschke"]["floor"]
 TARGET_FRACTION = 0.5      # how much comes off at the previous swing high
 
 # How long a setup stays live waiting for its high to break. The rules do not say
@@ -68,13 +92,42 @@ TARGET_FRACTION = 0.5      # how much comes off at the previous swing high
 TRIGGER_WINDOW = 10
 
 
-def setups(day: pd.DataFrame) -> pd.DataFrame:
+def _rising_pivots(frame: pd.DataFrame, pivots: list[int], col: str,
+                   span: int) -> np.ndarray:
+    """At each bar: are the last TWO CONFIRMED pivots rising?
+
+    This is the chart reading of a trend -- higher lows for support, higher highs
+    for resistance -- which is what a trend line drawn between two swing points
+    encodes. Only pivots already confirmed by the bar are used: a pivot needs
+    `span` bars on each side, so one drawn "at" a swing could not have been known
+    until later, and using it would be reading the future.
+    """
+    vals = frame[col].to_numpy()
+    out = np.zeros(len(frame), dtype=bool)
+    seen: list[int] = []
+    j = 0
+    for i in range(len(frame)):
+        while j < len(pivots) and pivots[j] + span <= i:
+            seen.append(pivots[j]); j += 1
+        if len(seen) >= 2:
+            out[i] = vals[seen[-1]] > vals[seen[-2]]
+    return out
+
+
+def setups(day: pd.DataFrame, rules: str = "raschke",
+           trend: str = "di", span: int = PIVOT_SPAN) -> pd.DataFrame:
     """Daily bars plus every column the rules are judged on.
 
-    touch   the candle's range contains the 20 EMA -- it came back to the line
-    up      and it closed back above it, so the pullback was rejected
-    trend   ADX >= 25 (the move is real) AND +DI > -DI (it is an uptrend)
+    trend   ADX clears the floor, is rising if the reading asks for it, and
+            +DI > -DI so the trend is UP -- ADX alone reads a crash as high as
+            a rally.
+    touch   price reached the 20 EMA. Under "class" it must also close back
+            above it.
+    signal  both, and under "raschke" only the FIRST touch after the trend
+            qualifies -- Raschke's setup is the first pullback in a strong
+            trend, not every pullback while it lasts.
     """
+    cfg = RULES[rules]
     out = day.copy().reset_index(drop=True)
     ema = indicators.ema(out["close"], EMA_LENGTH)
     adx, plus_di, minus_di = indicators.adx(out["high"], out["low"], out["close"],
@@ -83,9 +136,67 @@ def setups(day: pd.DataFrame) -> pd.DataFrame:
     out["adx"] = adx
     out["plus_di"] = plus_di
     out["minus_di"] = minus_di
-    out["trend"] = (adx >= ADX_FLOOR) & (plus_di > minus_di)
-    out["touch"] = (out["low"] <= ema) & (out["close"] > ema)
-    out["signal"] = out["trend"] & out["touch"]
+
+    strong = adx >= cfg["floor"]
+    if cfg["rising"]:
+        # NOT adx.diff() > 0. Bar-to-bar direction flickers -- ADX ticks up and
+        # down constantly inside a strong trend -- so the condition flips every
+        # few bars and "the first pullback after it qualifies" fires on nearly
+        # every dip. What Raschke means by a RISING ADX is the crossing: the
+        # moment it clears the floor on its way up, which happens rarely and
+        # marks one trend episode. Held until ADX drops back below the floor.
+        crossed = strong & ~strong.shift(1, fill_value=False)
+        episode = crossed.cumsum().where(strong)          # NaN once ADX lapses
+        out["episode"] = episode
+    # WHAT COUNTS AS AN UPTREND. Rule 5 leaves this to the eye, and the class
+    # spreadsheet cannot settle it -- it was marked before the uptrend rule
+    # existed, which is why it contains downtrend trades. So the readings are
+    # offered and the results decide.
+    #
+    #   di        +DI > -DI, the two lines on the ADX panel itself
+    #   hl        higher lows -- what a rising trend line through swing lows says
+    #   hh        higher highs
+    #   hhhl      both, the textbook definition of an uptrend
+    if trend == "di":
+        up = (plus_di > minus_di).to_numpy()
+    else:
+        hl = _rising_pivots(out, levels.pivot_lows(out, span), "low", span)
+        hh = _rising_pivots(out, levels.pivot_highs(out, span), "high", span)
+        up = {"hl": hl, "hh": hh, "hhhl": hh & hl}[trend]
+    out["trend"] = strong & pd.Series(up, index=out.index)
+    touch = out["low"] <= ema
+    if cfg["close_above"]:
+        touch = touch & (out["close"] > ema)
+    out["touch"] = touch
+    signal = out["trend"] & out["touch"]
+
+    if cfg["first_only"]:
+        # Arm on the RISING EDGE of the trend condition -- the bar where ADX
+        # first clears the floor while climbing -- and disarm after the touch it
+        # produces. Arming on every trend bar instead re-arms the moment after
+        # firing, so a long trend fires on nearly every dip and "first pullback"
+        # means nothing: it left 762 trades where the strict reading leaves far
+        # fewer. The trend must lapse and re-qualify before the rule looks again.
+        # One trade per ADX episode: arm when ADX crosses the floor in an
+        # uptrend, fire on the first touch of the EMA after that, then stay quiet
+        # until ADX has lapsed below the floor and crossed it again.
+        ep = out["episode"].to_numpy()
+        # `up`, not a fresh +DI test: this path ignored the chosen trend reading
+        # and hardcoded the DI one, so every reading gave byte-identical results
+        # and the comparison said nothing.
+        up_now = up
+        tch = out["touch"].to_numpy()
+        keep = np.zeros(len(out), dtype=bool)
+        used = set()
+        for i in range(len(out)):
+            e = ep[i]
+            if e != e:                      # NaN: ADX below the floor
+                continue
+            if tch[i] and up_now[i] and e not in used:
+                keep[i] = True
+                used.add(e)
+        signal = pd.Series(keep, index=out.index)
+    out["signal"] = signal
     return out
 
 
@@ -97,13 +208,17 @@ def _confirmed(pivots: list[int], span: int, before: int) -> int | None:
 
 
 def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
-             adx_floor: float = ADX_FLOOR, wait: int = TRIGGER_WINDOW) -> list[dict]:
+             adx_floor: float = ADX_FLOOR, wait: int = TRIGGER_WINDOW,
+             rules: str = "raschke", trend: str = "di") -> list[dict]:
     """Closed trades, oldest first.
 
-    stop="signal_low"  the signal candle's low -- what the class marks (default)
+    rules="raschke"    the original: ADX 30 and rising, first pullback only,
+                       and the pullback bar need not close above the line
+    rules="class"      the spreadsheet's paraphrase
+    stop="signal_low"  the signal candle's low -- the standing rule here
     stop="pivot"       the last confirmed multi-bar swing low, for comparison
     """
-    frame = setups(frames.daily(symbol))
+    frame = setups(frames.daily(symbol), rules, trend, span)
     if len(frame) < 3 * span + EMA_LENGTH:
         return []
     high = frame["high"].to_numpy(float)
