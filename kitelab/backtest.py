@@ -63,6 +63,38 @@ BAND = 0.02
 # These trades hold overnight, so delivery rates apply, not intraday.
 BROKERAGE = 0.0
 STT_RATE = 0.001           # 0.1% on buy and on sell
+
+# STT HAS NOT ALWAYS BEEN 0.1%, AND THIS BACKTEST RUNS FROM 2006.
+#
+# Applying one rate across twenty years understates cost in whichever years the
+# rate was higher. The schedule below is the mechanism for fixing that: entries
+# are (effective_from, rate), newest last, and stt_rate_on() picks the one in
+# force. It currently holds a single entry, so behaviour is unchanged.
+#
+# WHAT NEEDS CHECKING BEFORE ADDING TO IT. Delivery-equity STT is believed to
+# have been 0.125% per side before falling to 0.100% around June 2013, but that
+# is from recollection, not from a source, and it is not worth changing every
+# published number on a half-memory. (The rate changes widely reported for
+# 1 October 2024 were on FUTURES AND OPTIONS, which this project does not trade.)
+#
+# The cost of getting it wrong is bounded and known: 30% of the class stack's
+# trades close before June 2013, on Rs4.4 crore of turnover, so the extra
+# 0.025% per side would come to about Rs10,900 -- 1.2% of gross profit, against
+# an all-in cost load of 12.3%. Worth correcting, not worth guessing.
+#
+# To enable, verify the rate and date, then add: (pd.Timestamp("2013-06-01"), 0.001)
+# after an earlier (pd.Timestamp("2004-10-01"), 0.00125) entry.
+STT_SCHEDULE: list[tuple] = [(pd.Timestamp("1900-01-01"), STT_RATE)]
+
+
+def stt_rate_on(stamp) -> float:
+    """The delivery STT rate in force on a given date."""
+    when = pd.Timestamp(stamp)
+    rate = STT_SCHEDULE[0][1]
+    for effective_from, value in STT_SCHEDULE:
+        if when >= effective_from:
+            rate = value
+    return rate
 NSE_TXN_RATE = 0.0000307   # 0.00307%
 SEBI_RATE = 0.000001       # Rs 10 per crore
 GST_RATE = 0.18            # on brokerage + SEBI + transaction charges
