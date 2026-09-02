@@ -467,6 +467,42 @@ def main() -> None:
     bar.close()
     execution(False, False)
 
+    # WHERE THE RETURN WENT.
+    #
+    # The four fill modes already hold the answer and nobody had subtracted
+    # them. Perfect fills is the rule on paper; costs-only charges brokerage,
+    # STT and the rest; cap-only limits an order to a share of the stock's own
+    # traded value; realistic does both. The differences say which lever costs
+    # what, in CAGR points, instead of leaving "the numbers got worse" as a
+    # feeling.
+    #
+    # Read as a waterfall: perfect -> costs -> cap -> both. The two middle steps
+    # do not add up to the last one, and that is real, not an error: a size cap
+    # changes WHICH signals are affordable, so it interacts with costs rather
+    # than stacking on them. The gap is reported as `interaction`.
+    waterfall = {}
+    for (skey, band) in sets["0"]:
+        for ukey in universes:
+            for risk in RISKS:
+                for capital in CAPITALS:
+                    def cell(fkey):
+                        k = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
+                             f"|{capital}|{fkey}|{START_DEFAULT}")
+                        got = grid.get(k)
+                        return got["cagr"] if got else None
+                    perfect, costs, cap, both = (cell("0"), cell("2"),
+                                                 cell("3"), cell("1"))
+                    if perfect is None or both is None:
+                        continue
+                    step_costs = None if costs is None else round(costs - perfect, 2)
+                    step_cap = None if cap is None else round(cap - perfect, 2)
+                    inter = (None if None in (step_costs, step_cap)
+                             else round((both - perfect) - step_costs - step_cap, 2))
+                    waterfall[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}"] = {
+                        "perfect": perfect, "costs": step_costs,
+                        "cap": step_cap, "interaction": inter, "net": both}
+    print(f"  cost waterfall: {len(waterfall):,} cells", flush=True)
+
     tradestats = {}
     for fkey, _flabel in FILL_MODES:
         for (skey, band), signals in sets[fkey].items():
@@ -743,7 +779,7 @@ def main() -> None:
         "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
         "assigned": list(ASSIGNED),
         "basket_members": sorted(median_basket),
-        "grid": grid, "tradestats": tradestats, "scaleout": scaleout,
+        "grid": grid, "waterfall": waterfall, "tradestats": tradestats, "scaleout": scaleout,
         "scaleout_r": scaleout_r, "scale_multiples": SCALE_MULTIPLES,
         "stocks": stocks, "assets": assets,
         "timeframes": tf, "basket10": basket10, "nifty": close_series(nifty),
