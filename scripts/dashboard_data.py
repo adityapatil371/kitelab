@@ -170,10 +170,13 @@ def curve_payload(curve, cash_curve=None):
         if i % step and i != len(curve) - 1:
             continue
         days.append(day.strftime("%Y-%m-%d"))
-        eq.append(round(equity))
-        dd.append(round(100 * (equity - peak) / peak, 1))
+        # float()/int() around round(): equity comes off a numpy array, and
+        # round() on a numpy scalar returns a numpy scalar, which is where the
+        # 4.3 million values to_native had to convert were coming from.
+        eq.append(int(round(float(equity))))
+        dd.append(round(100 * (float(equity) - float(peak)) / float(peak), 1))
         if cash_at:
-            cash.append(round(max(cash_at.get(day, 0.0), 0.0)))
+            cash.append(int(round(float(max(cash_at.get(day, 0.0), 0.0)))))
     key = tuple(days)
     cal = _CALENDARS.setdefault(key, len(_CALENDARS))
     out = {"c": cal, "eq": eq, "dd": dd}
@@ -185,21 +188,27 @@ def curve_payload(curve, cash_curve=None):
 def run_payload(r):
     longest, current = underwater_stats(r["curve"])
     eps = [{"peak": str(e["peak_day"].date()), "trough": str(e["trough_day"].date()),
-            "depth": round(e["depth_pct"], 1),
+            "depth": round(float(e["depth_pct"]), 1),
             "recovered": str(e["recovered"].date()) if e["recovered"] is not None else None,
             "years": round(e["days"] / 365.25, 1)} for e in episodes(r["curve"])]
     # cagr is null when the account was wiped out -- the rate is undefined, and the
     # 0.0 this used to emit read as "broke even" on 157 of these 3,072 cells.
     # The page renders null as "Wiped", and a MISSING key as an em dash.
-    return {"cagr": None if r["cagr_pct"] is None else round(r["cagr_pct"], 1),
-            "wiped": r["wiped"], "final": round(r["final"]),
-            "ret": round(r["return_pct"]), "maxdd": round(r["max_drawdown_pct"], 1),
+    # float()/int() throughout: these come off numpy arrays, and round() on a
+    # numpy scalar stays numpy -- see to_native() for why that matters.
+    keep = lambda v: None if v is None else float(v)
+    return {"cagr": None if r["cagr_pct"] is None else round(float(r["cagr_pct"]), 1),
+            "wiped": bool(r["wiped"]), "final": int(round(float(r["final"]))),
+            "ret": int(round(float(r["return_pct"]))),
+            "maxdd": round(float(r["max_drawdown_pct"]), 1),
             "uw_long": round(longest / 365.25, 1), "uw_now": round(current / 365.25, 1),
             "taken": len(r["taken"]), "signals": r["signals"],
+            # return against pain -- the compare page sorts on mar by default
+            "mar": keep(r.get("mar")), "ulcer": keep(r.get("ulcer")),
             # how much of the account is waiting rather than working
             "skipped_cash": r["skipped_cash"],
-            "median_cash": r.get("median_cash_pct"),
-            "full_pct": r.get("fully_invested_pct"),
+            "median_cash": keep(r.get("median_cash_pct")),
+            "full_pct": keep(r.get("fully_invested_pct")),
             "episodes": eps,
             "curve": curve_payload(r["curve"], r.get("cash_curve"))}
 
