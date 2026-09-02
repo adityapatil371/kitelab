@@ -39,9 +39,7 @@ h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.01em}
 aside{width:var(--rail);flex:0 0 var(--rail);height:100vh;overflow-y:auto;
       border-right:1px solid var(--line);background:var(--card);
       padding:16px 14px;display:flex;flex-direction:column;gap:16px}
-.brand h1{font-size:17px}
-.built{color:var(--ink-3);font-size:var(--fs-xs);font-family:var(--mono);
-       margin-top:3px;display:block;line-height:1.4}
+aside h1{font-size:30px;letter-spacing:-.025em;line-height:1}
 nav{display:flex;flex-direction:column;gap:2px}
 nav button{border:0;background:none;font:inherit;font-size:var(--fs);
            color:var(--ink-2);padding:8px 11px;cursor:pointer;text-align:left;
@@ -128,10 +126,7 @@ svg{display:block;width:100%;overflow:visible}
 </style>
 
 <aside>
-  <div class="brand">
-    <h1>Kitelab</h1>
-    <span class="built" id="built"></span>
-  </div>
+  <h1>Kitelab</h1>
   <nav id="nav"></nav>
   <div class="scenario" id="scenario"></div>
 </aside>
@@ -509,7 +504,6 @@ function render() {
 
 function init() {
   S.year = DATA.start_default || DATA.start_years[DATA.start_years.length - 1];
-  $("built").textContent = DATA.built + "  ·  " + DATA.universe_size + " stocks";
   buildScenario();
   for (const [k, label] of VIEWS) {
     const b = document.createElement("button");
