@@ -241,15 +241,45 @@ function segment(label, options, get, set) {
   return f;
 }
 
+/* THE HOLDOUT IS NARROW ON PURPOSE, so the controls must narrow with it.
+   Only the settings in DATA.holdout_axes were computed for those universes;
+   every other combination is a MISSING cell. Left selectable, the page would
+   answer a real question with a wall of em dashes and look broken. Worse, the
+   width itself is the hazard: the point of committing to one risk, one capital
+   and one start year in advance is that there is no menu of results to pick a
+   favourite from afterwards. Greying them out is the rule made visible. */
+const isHoldout = () => (DATA.holdout_universes || []).includes(S.uni);
+const axis = (name, all) => {
+  if (!isHoldout()) return all.map((v, i) => i);
+  const allowed = (DATA.holdout_axes || {})[name] || [];
+  const keep = all.map((v, i) => i).filter(i => allowed.includes(all[i]));
+  return keep.length ? keep : all.map((v, i) => i);
+};
+/* Snap to a computed setting when switching INTO the holdout, so the first
+   thing shown is a real number rather than a blank the reader has to fix. */
+function clampScenario() {
+  if (!isHoldout()) return;
+  const ok = (name, all, cur) => {
+    const keep = axis(name, all);
+    return keep.includes(cur) ? cur : keep[keep.length - 1];
+  };
+  S.cap = ok("capitals", DATA.capitals, S.cap);
+  S.risk = ok("risks", DATA.risks, S.risk);
+  const years = (DATA.holdout_axes || {}).start_years || DATA.start_years;
+  if (!years.includes(S.year)) S.year = years[years.length - 1];
+}
+
 function buildScenario() {
   const box = $("scenario"); box.innerHTML = "";
   const add = el => { box.appendChild(el); return el; };
+  const capKeep = axis("capitals", DATA.capitals);
+  const riskKeep = axis("risks", DATA.risks);
   const fields = [
     add(segment("Universe", Object.entries(DATA.universes),
-                () => S.uni, v => S.uni = v)),
-    add(segment("Capital", DATA.capitals.map((c, i) => [i, inr(c)]),
+                () => S.uni, v => { S.uni = v; clampScenario(); })),
+    add(segment("Capital", capKeep.map(i => [i, inr(DATA.capitals[i])]),
                 () => S.cap, v => S.cap = +v)),
-    add(segment("Risk per trade", DATA.risks.map((r, i) => [i, r + "%"]),
+    add(segment("Risk per trade", riskKeep.map(i => [i, DATA.risks[i] + "%"]),
                 () => S.risk, v => S.risk = +v)),
     add(segment("Fills", DATA.fills.map(([k, l]) => [k, l.replace(" fills", "")]),
                 () => S.fill, v => S.fill = v)),
@@ -257,7 +287,9 @@ function buildScenario() {
   const yf = document.createElement("div"); yf.className = "field";
   yf.innerHTML = "<span>Started trading in</span>";
   const sel = document.createElement("select");
-  for (const y of DATA.start_years) {
+  const years = isHoldout() ? ((DATA.holdout_axes || {}).start_years
+                               || DATA.start_years) : DATA.start_years;
+  for (const y of years) {
     const o = document.createElement("option"); o.value = o.textContent = y;
     sel.appendChild(o);
   }
@@ -533,7 +565,17 @@ function renderStocks() {
 /* ── shell ────────────────────────────────────────────────────────────── */
 const VIEWS = [["compare", "Compare"], ["detail", "Detail"], ["stocks", "Stocks"]];
 
+/* The scenario controls are built once, but the holdout offers fewer settings
+   than the in-sample side -- so crossing that boundary has to REBUILD them, not
+   just re-tick them. Tracked rather than rebuilt every render: rebuilding drops
+   focus and makes the segmented buttons flicker on every sort click. */
+let builtForHoldout = null;
+
 function render() {
+  if (builtForHoldout !== isHoldout()) {
+    builtForHoldout = isHoldout();
+    buildScenario();
+  }
   $("scenario")._sync();
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.v === S.view);
   for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
@@ -544,6 +586,7 @@ function render() {
 
 function init() {
   S.year = DATA.start_default || DATA.start_years[DATA.start_years.length - 1];
+  builtForHoldout = isHoldout();
   buildScenario();
   for (const [k, label] of VIEWS) {
     const b = document.createElement("button");

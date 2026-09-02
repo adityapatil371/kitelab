@@ -103,8 +103,12 @@ def main() -> None:
 
     keep = working_set()
     cfg = config.load()
-    print(f"\n  universe   {len(cfg.all_symbols)} stocks "
-          f"(+{len(keep) - len(cfg.all_symbols)} class assets)")
+    # Broken out since the holdout landed: it is most of the working set and
+    # lumping it in with "class assets" made the line read as 400 assets.
+    unseen = cfg.out_of_sample
+    extras = len(keep) - len(cfg.all_symbols) - len(unseen)
+    print(f"\n  universe   {len(cfg.all_symbols)} stocks in-sample "
+          f"+ {len(unseen)} holdout (+{extras} class assets)")
     print(f"  raw        {DATA}")
     print(f"  clean      {CLEAN}")
 

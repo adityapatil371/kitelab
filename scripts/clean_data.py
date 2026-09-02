@@ -173,12 +173,16 @@ def write_if_changed(frame: pd.DataFrame, target) -> bool:
 def working_set() -> set[str]:
     """Every symbol the project needs a price file for.
 
-    Three groups, and the third is easy to forget: the tradeable universe, the
-    six class assets, and the five assigned stocks -- one of which (HYUNDAI) is
-    NOT in the universe, because it failed the quality gate but is still charted.
-    Leaving it out deleted its cleaned files and broke the dashboard rebuild.
+    Four groups, and the last two are easy to forget: the tradeable universe,
+    the six class assets, the five assigned stocks -- one of which (HYUNDAI) is
+    NOT in the universe, because it failed the quality gate but is still charted;
+    leaving it out deleted its cleaned files and broke the dashboard rebuild --
+    and the holdout, which is not in all_symbols by design and would otherwise
+    never be cleaned at all. Everything the analysis side reads comes from CLEAN,
+    so a symbol missing here is a symbol no backtest can see.
     """
-    return (set(config.load().all_symbols) | set(ASSETS)
+    cfg = config.load()
+    return (set(cfg.all_symbols) | set(cfg.out_of_sample) | set(ASSETS)
             | set(config.CLASS_ASSIGNED))
 
 

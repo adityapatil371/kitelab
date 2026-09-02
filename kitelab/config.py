@@ -251,6 +251,7 @@ class Config:
     symbols: list[str]
     extended: list[str]
     holdout: list[str]
+    unseen: list[str]
     exchange: str
     start: str
     intraday_start: str
@@ -270,7 +271,7 @@ class Config:
     @property
     def excluded(self) -> dict[str, str]:
         """Symbols dropped from every universe, and why. See EXCLUDED."""
-        listed = {*self.symbols, *self.extended, *self.holdout}
+        listed = {*self.symbols, *self.extended, *self.holdout, *self.unseen}
         return {s: why for s, why in EXCLUDED.items() if s in listed}
 
     @property
@@ -302,9 +303,21 @@ class Config:
 
     @property
     def out_of_sample(self) -> list[str]:
-        """Stocks no parameter has ever seen."""
-        inside = set(self.in_sample)
-        return [s for s in self.holdout if s not in EXCLUDED and s not in inside]
+        """Stocks no parameter has ever seen.
+
+        NOT `holdout`. That list was drawn on 2026-08-23 and folded into
+        all_symbols the same day, so every parameter since has been chosen with
+        it in view -- it is in-sample and has been all along. The name is kept
+        because config.local.toml still uses it and renaming a key silently
+        empties a universe.
+
+        `unseen` is the real one: the 399 that passed screen_universe on
+        2026-09-02 and have never been looked at. Anything already inside the
+        in-sample set is dropped, so the two can never overlap however the
+        config is edited.
+        """
+        inside = set(self.in_sample) | set(self.holdout)
+        return [s for s in self.unseen if s not in EXCLUDED and s not in inside]
 
     @property
     def all_symbols(self) -> list[str]:
@@ -378,6 +391,7 @@ def load() -> Config:
         symbols=universe.get("symbols", []),
         extended=universe.get("extended", []),
         holdout=universe.get("holdout", []),
+        unseen=universe.get("unseen", []),
         exchange=universe.get("exchange", "NSE"),
         start=backfill.get("start", "2015-01-01"),
         intraday_start=backfill.get("intraday_start",
