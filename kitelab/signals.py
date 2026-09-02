@@ -40,8 +40,18 @@ _WARNED: set[str] = set()
 
 # Modules whose contents decide what a trade IS. A change here invalidates every
 # cache, which is exactly what happened with each engine fix on 2026-08-31.
+#
+# EVERY producer must be listed, or the guarantee is worthless for the ones that
+# are not. holygrail.py was missing until 2026-09-02, and it cost a whole set of
+# published numbers: the rules were rewritten at 16:33 and the dashboard built at
+# 15:32 kept serving trades from the superseded code, with refresh reporting
+# "already current" because the digest it compared could not see the file. The
+# three additions below are the rest of that hole -- slippage.py sets the fill
+# price baked into every cached trade, and timeframes.py decides which bars a
+# multi-timeframe rule is even looking at.
 _CODE = ["backtest.py", "strategies.py", "darvas.py", "trailing.py", "frames.py",
-         "sizing.py", "indicators.py", "levels.py"]
+         "sizing.py", "indicators.py", "levels.py",
+         "holygrail.py", "slippage.py", "timeframes.py"]
 
 
 def _digest(parts) -> str:
