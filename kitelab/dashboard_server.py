@@ -133,6 +133,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        # Never cache. Both files change under the browser -- the page whenever
+        # the layout is edited, the data on every rebuild -- and the failure is
+        # silent and confusing: a cached PAGE against fresh DATA (or the reverse)
+        # renders blank, because the two are only ever in step by version. There
+        # is no bandwidth argument for caching either; this serves localhost.
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
