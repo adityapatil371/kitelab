@@ -26,9 +26,25 @@ VARIANTS = [
     ("WDH", "W/D/H", "weekly + daily stacks, traded on HOURLY closes, stop = entry hour's low"),
 ]
 
+# One higher timeframe instead of two, and not always the adjacent one. M/D and
+# Q/W SKIP a level: the question is whether the intermediate frame carries its
+# own weight or is just standing between two that matter.
+PAIRS = [
+    ("WD", "W/D", "weekly over DAILY closes"),
+    ("MD", "M/D", "monthly over DAILY closes, skipping the weekly"),
+    ("MW", "M/W", "monthly over WEEKLY closes"),
+    ("QW", "Q/W", "quarterly over WEEKLY closes, skipping the monthly"),
+]
+
 
 def _stack_frames(symbol: str, variant: str):
-    """Return (base bars, [higher-TF bar frames]) for one variant."""
+    """Return (base bars, [higher-TF bar frames]) for one variant.
+
+    The three-frame variants are the class stacks. The PAIRS added on
+    2026-09-02 ask what a single higher timeframe is worth, and whether it has
+    to be the adjacent one: M/D skips the weekly entirely, Q/W skips the
+    monthly. stack_signal loops over `highers`, so one is as valid as two.
+    """
     day = frames.daily(symbol)
     if variant == "QMW":
         return frames.weekly(day), [frames.monthly(day), frames.quarterly(day)]
@@ -37,6 +53,15 @@ def _stack_frames(symbol: str, variant: str):
     if variant == "WDH":
         hour = frames.load(symbol, "1h")
         return hour, [day, frames.weekly(day)]
+    # pairs: one higher timeframe, one trading timeframe
+    if variant == "WD":                       # weekly over daily
+        return day, [frames.weekly(day)]
+    if variant == "MD":                       # monthly over daily, skipping weekly
+        return day, [frames.monthly(day)]
+    if variant == "MW":                       # monthly over weekly
+        return frames.weekly(day), [frames.monthly(day)]
+    if variant == "QW":                       # quarterly over weekly, skipping monthly
+        return frames.weekly(day), [frames.quarterly(day)]
     raise ValueError(variant)
 
 

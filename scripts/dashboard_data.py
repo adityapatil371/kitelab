@@ -41,6 +41,7 @@ from kitelab import (backtest, config, darvas, dashboard_server, frames, holygra
                      portfolio, signals, sizing, slippage, strategies)
 from kitelab.progress import Bar
 from kitelab.curves import bh_stats, episodes, underwater_stats
+from kitelab import timeframes
 from kitelab.timeframes import (VARIANTS as TF_VARIANTS, simulate_variant,
                                 summarise as tf_summarise, window_start)
 
@@ -99,8 +100,18 @@ BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
 # traded, which is what the class is studying. The old label was wrong and the
 # module docstring has always said so.
 STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "e1": "EMA · daily only", "eath": "EMA · near the high",
+                   "pair": "EMA · one higher TF", "e1": "EMA · daily only",
+                   "eath": "EMA · near the high",
                    "dv": "Turtle channel", "hg": "Holy Grail · ADX"}
+
+# HOW MANY HIGHER TIMEFRAMES DOES THE RULE NEED, AND WHICH?
+#
+# The class stacks use two (M/W/D, Q/M/W). These use one, and not always the
+# adjacent one -- M/D skips the weekly, Q/W skips the monthly. Together with
+# "daily only" that is a ladder from zero higher timeframes to two, which is the
+# question item 2 is actually asking.
+PAIR_TAGS = [k for k, _, _ in timeframes.PAIRS]
+PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
 
 # Two questions asked on 2026-09-02, each answered by ONE variant at the class's
 # own 2% band rather than a fresh band sweep -- the question is the filter, not
@@ -145,8 +156,8 @@ DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
 DARVAS_DEFAULT = "20-10"
 
 # The one setting each strategy shows on the per-stock page.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "e1": "daily", "eath": "near-high",
-           "dv": DARVAS_DEFAULT, "hg": "swing"}
+PRIMARY = {"ema": 0.02, "qmw": 0.02, "pair": "WD", "e1": "daily",
+           "eath": "near-high", "dv": DARVAS_DEFAULT, "hg": "swing"}
 
 
 def tag(band) -> str:
@@ -436,6 +447,9 @@ def main() -> None:
                 f"{stem}_{entry_len}_{exit_len}_all",
                 lambda s, a=entry_len, b=exit_len, g=gated:
                     darvas.simulate(s, a, b, weekly=g))
+    for pair_key in PAIR_TAGS:
+        base[("pair", pair_key)] = cached_signals(
+            f"EMA_{pair_key}_all", variant_builder(pair_key, SOLO_BAND))
     base[("e1", "daily")] = cached_signals(
         "EMA_daily_only_all",
         lambda s: backtest.simulate(s, band=SOLO_BAND, stack="daily"))
@@ -755,6 +769,8 @@ def main() -> None:
                         "hg": lambda so=None: holygrail.simulate(symbol),
                         "e1": lambda so=None: backtest.simulate(
                             symbol, band=SOLO_BAND, stack="daily"),
+                        "pair": lambda so=None: variant_builder(
+                            PRIMARY["pair"], SOLO_BAND)(symbol),
                         "eath": lambda so=None: backtest.simulate(
                             symbol, band=SOLO_BAND, ath_band=ATH_BAND)}
             # (per-stock pages show the gated 20/10; the 1TF control lives in the
@@ -868,6 +884,7 @@ def main() -> None:
         "risks": RISKS, "capitals": CAPITALS,
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
         "hg_tags": HG_TAGS,
+        "pair_tags": PAIR_TAGS, "pair_labels": PAIR_LABEL,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
         "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,

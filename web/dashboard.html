@@ -258,6 +258,7 @@ function buildScenario() {
 const variantsOf = skey =>
   skey === "dv" ? (DATA.darvas_windows || []) :
   skey === "hg" ? (DATA.hg_tags || []).filter(t => t !== "tight") :
+  skey === "pair" ? (DATA.pair_tags || []) :
   skey === "e1" ? ["daily"] :
   skey === "eath" ? ["near-high"] :
   (DATA.bands || []);
@@ -267,6 +268,7 @@ const settingLabel = (skey, v) =>
       ? String(v).replace(" 1TF", "") + " · daily only"
       : String(v) + " · + weekly") :
   skey === "hg" ? "stop at swing low" :
+  skey === "pair" ? (DATA.pair_labels || {})[v] || v :
   skey === "e1" ? "no higher timeframe" :
   skey === "eath" ? "within 10% of the high" :
   (v * 100).toFixed(0) + "% band";
