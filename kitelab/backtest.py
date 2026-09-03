@@ -124,11 +124,22 @@ INTRADAY_STAMP_RATE = 0.00003      # 0.003%, buy side only
 FLAT_FEE_RATE: float | None = None
 
 
-def charges(buy_value: float, sell_value: float, intraday: bool = False) -> float:
+def charges(buy_value: float, sell_value: float, intraday: bool = False,
+            fee_rate: float | None = None) -> float:
     """Round-trip cost. Intraday is roughly half of delivery, mostly because STT drops
-    from 0.1% on both sides to 0.025% on the sell side alone."""
-    if FLAT_FEE_RATE is not None:
-        return FLAT_FEE_RATE * (buy_value + sell_value)
+    from 0.1% on both sides to 0.025% on the sell side alone.
+
+    `fee_rate` overrides the equity schedule for ONE call, which is what lets a
+    single account hold instruments with different cost models -- Bitcoin at an
+    exchange fee, MCX futures at another, NSE equities on the Zerodha schedule.
+    It was a module global until 2026-09-03, so the whole grid had to run under
+    one setting and non-equity instruments needed a separate code path with
+    their own hardcoded account. The global still works and still means "every
+    call in this process", which is how the fetch-side scripts use it.
+    """
+    rate = FLAT_FEE_RATE if fee_rate is None else fee_rate
+    if rate is not None:
+        return rate * (buy_value + sell_value)
     turnover = buy_value + sell_value
     transaction = NSE_TXN_RATE * turnover
     sebi = SEBI_RATE * turnover

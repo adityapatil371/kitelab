@@ -36,7 +36,24 @@ from kitelab.config import DATA
 BINANCE = "https://api.binance.com/api/v3/klines"
 BTC_SYMBOL = "BITCOIN"
 INDICES = ["NIFTY 50", "NIFTY BANK"]
-COMMODITIES = ["GOLD", "SILVER", "CRUDEOIL"]
+# THE MINI CONTRACTS ARE THE POINT, not an afterthought.
+#
+# This list held only the big contracts until 2026-09-03, and that quietly
+# decided what the whole project could conclude about commodities: one lot of
+# 1 kg GOLD needs about Rs9.8 lakh of margin, so every account this workbench
+# simulates was refused every trade, and the refusal looked like a finding about
+# gold rather than about which contract had been downloaded. GOLDM is a tenth
+# the size -- roughly Rs98,000 -- and is what a retail account actually trades.
+#
+# Specs for all of these live in kitelab.contracts, already, unverified.
+# GOLDTEN is deliberately absent: it launched 2025-04-01, so a continuous series
+# back to 2010 would be stitched out of other contracts and would look like a
+# fifteen-year history of something that existed for one. Same reason SILVER100
+# (launched 2026-06-01) is not here. Add either only with a start date that
+# matches its launch.
+COMMODITIES = ["GOLD", "GOLDM",
+               "SILVER", "SILVERM", "SILVERMIC",
+               "CRUDEOIL", "CRUDEOILM"]
 
 
 # ---------------------------------------------------------------------------

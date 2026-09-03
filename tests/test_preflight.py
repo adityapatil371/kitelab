@@ -13,13 +13,13 @@ from scripts import preflight
 class PageKeys(unittest.TestCase):
     def test_reads_keys_the_page_actually_uses(self):
         keys = preflight._page_keys()
-        for expected in ("grid", "universes", "strategies", "pools", "priorities"):
+        for expected in ("grid", "universes", "strategies", "priorities", "fills"):
             self.assertIn(expected, keys)
 
-    def test_pool_year_survives_appearing_in_a_comment_too(self):
-        """It is named in a comment AND used in poolYears(). Line-based comment
-        skipping dropped it; stripping comments first does not."""
-        self.assertIn("pool_year", preflight._page_keys())
+    def test_a_key_named_in_both_a_comment_and_the_code_still_counts(self):
+        """priority_default appears in a comment AND in keyFor(). Line-based
+        comment skipping dropped such keys; stripping comments first does not."""
+        self.assertIn("priority_default", preflight._page_keys())
 
     def test_a_key_named_only_in_a_comment_is_not_counted(self):
         """holdout_universes survives only in prose explaining that the holdout

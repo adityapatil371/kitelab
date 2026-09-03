@@ -45,7 +45,14 @@ function mk(id) {
     id, innerHTML: "", textContent: "", value: "", className: "",
     dataset: {}, options: [], children: [], style: {},
     classList: { toggle() {}, add() {}, remove() {}, contains: () => false },
-    appendChild(c) { this.children.push(c); if (this.tag === "select") this.options.push(c); },
+    /* Record options by the CHILD's tag, not the parent's. getElementById
+       cannot know the element it is handing back is a <select>, so keying on
+       the parent meant every picker built through it reported zero options --
+       and a check that read options.length silently passed on an empty one. */
+    appendChild(c) {
+      this.children.push(c);
+      if (this.tag === "select" || c.tag === "option") this.options.push(c);
+    },
     addEventListener() {}, querySelector: () => mk(), remove() {},
     setAttribute() {},
     // the table API renderCompare drives
@@ -80,10 +87,10 @@ const bad = m => { fail.push(m); console.log("  FAIL " + m); };
 
 console.log("\n== payload ==");
 console.log(`  universes: ${Object.keys(DATA.universes).join(", ")}`);
-console.log(`  pools:     ${(DATA.pools || []).map(p => p == null ? "all" : p).join(", ")}`);
+console.log(`  priorities: ${(DATA.priorities || []).join(", ")}`);
 console.log(`  hg_tags:   ${(DATA.hg_tags || []).join(", ")}`);
 console.log(`  grid cells: ${Object.keys(DATA.grid).length}`);
-console.log(`  breadth keys: ${Object.keys(DATA.breadth || {}).join(", ")}`);
+console.log(`  fills:      ${(DATA.fills || []).map(f => f[0]).join(", ")}`);
 
 console.log("\n== views render ==");
 for (const [v] of VIEWS) {
@@ -95,13 +102,13 @@ for (const [v] of VIEWS) {
     // The stub does not serialise those, so counting rows is the only honest
     // check -- measuring innerHTML would report 0 chars for a table that
     // rendered perfectly, which is what it did for `assets` until 2026-09-03.
-    const byTable = { compare: "cmp", assets: "ast" };
+    const byTable = { compare: "cmp" };
     if (byTable[v]) {
       const n = ((els[byTable[v]] || {})._body || { rows: [] }).rows.length;
       n > 0 ? ok(`${v} rendered ${n} rows`) : bad(`${v} rendered only ${n} rows`);
       continue;
     }
-    const body = { breadth: "brd-body", stocks: "stk-body" }[v];
+    const body = { assets: "ast-body", stocks: "stk-body" }[v];
     const html = (els[body] || {}).innerHTML || "";
     html.length > 200 ? ok(`${v} rendered (${html.length} chars)`)
                       : bad(`${v} produced only ${html.length} chars`);
@@ -126,54 +133,129 @@ for (const r of hgRows) console.log(`       ${r.v.padEnd(7)} MAR ${r.mar}  CAGR 
    axis that was published but never computed would look like a rule that simply
    made no trades -- which is exactly how MAR was sorted on for a day while it
    was absent from the payload. */
-console.log("\n== scanning-pool axis ==");
+console.log("\n== signal-priority axis ==");
 S.uni = "all";
-for (const pool of (DATA.pools || [null])) {
-  S.pool = pool;
-  if (pool != null && DATA.pool_year != null) S.year = DATA.pool_year;
+for (const prio of (DATA.priorities || [DATA.priority_default])) {
+  S.prio = prio;
   render();
   const got = rows().filter(r => r.mar !== null && r.mar !== undefined);
-  const label = pool == null ? "all" : String(pool);
-  got.length > 0 ? ok(`pool ${label.padEnd(4)}: ${got.length} rows with a MAR`)
-                 : bad(`pool ${label.padEnd(4)}: NO rows resolved -- axis published but not computed`);
-  if (pool != null && got.length) {
-    const w = got.filter(r => r.r && r.r.pool_wiped !== undefined).length;
-    const blown = got.filter(r => r.r && r.r.pool_wiped > 0).length;
-    w === got.length ? ok(`       all ${w} report pool_wiped`)
-                     : bad(`       only ${w}/${got.length} report pool_wiped`);
-    console.log(`       ${blown} variant(s) had at least one basket destroyed`);
-  }
+  got.length > 0 ? ok(`priority ${prio.padEnd(10)}: ${got.length} rows with a MAR`)
+                 : bad(`priority ${prio.padEnd(10)}: NO rows resolved -- axis published but not computed`);
 }
-S.pool = null;
+S.prio = null; S.year = DATA.start_default;
 
-console.log("\n== assets view (non-equity) ==");
-S.view = "assets"; render();
+/* EVERY OFFERED FILL MODE MUST RESOLVE. The payload used to publish all four
+   while only "realistic" was gridded, so choosing one of the other three gave a
+   table of em dashes -- indistinguishable from a rule that took no trades. */
+console.log("\n== fill modes ==");
+for (const [f, label] of (DATA.fills || [])) {
+  S.fill = f; render();
+  const got = rows().filter(r => r.mar !== null && r.mar !== undefined);
+  got.length > 0 ? ok(`${label}: ${got.length} rows`)
+                 : bad(`${label}: offered but not gridded -- renders blank`);
+}
+S.fill = DATA.fills[0][0];
+
+/* THE START YEAR MUST BE FREE. Every year is gridded at the default priority;
+   only a non-default priority pins it. A year that silently resolves to nothing
+   is what makes the selector look broken. */
+console.log("\n== start years ==");
+for (const y of DATA.start_years) {
+  S.year = y; render();
+  const got = rows().filter(r => r.mar !== null && r.mar !== undefined);
+  got.length > 0 ? ok(`year ${y}: ${got.length} rows`)
+                 : bad(`year ${y}: offered but not gridded`);
+}
+S.year = DATA.start_default;
+
+/* THE NON-EQUITY INSTRUMENTS ARE UNIVERSES NOW, not a page. Each must resolve
+   in the grid like any other universe, and each must carry a buy-and-hold
+   benchmark -- on one instrument that is the only comparison that means
+   anything. A universe published but not gridded renders as blank rows. */
+console.log("\n== non-equity instruments as universes ==");
+for (const sym of Object.keys(DATA.assets || {})) {
+  S.uni = sym; S.year = DATA.start_default; S.prio = null; render();
+  /* TWO DIFFERENT THINGS, and conflating them cost a false failure. A cell that
+     was never COMPUTED is a broken axis. A cell that exists but holds no trades
+     is the account correctly refusing what it cannot afford -- one lot of MCX
+     gold is ~Rs1.6 crore of metal at ~Rs9.8 lakh margin, so a Rs2,00,000 account
+     takes none, and that is the honest answer rather than a fault. */
+  const cells = Object.keys(DATA.grid).filter(k => k.split("|")[2] === sym);
+  const got = rows().filter(r => r.mar !== null && r.mar !== undefined);
+  const bh = (DATA.assets || {})[sym];
+  cells.length > 0 ? ok(`${sym.padEnd(11)} ${cells.length} cells computed, ${got.length} with trades`)
+                   : bad(`${sym.padEnd(11)} universe offered but NOT COMPUTED`);
+  if (cells.length && got.length === 0)
+    console.log(`       none affordable at this scenario -- expected where one lot exceeds the account`);
+  bh && bh.bh ? console.log(`       buy & hold ${bh.bh.cagr}%/yr, fee ${bh.fee_pct}%/side`)
+              : bad(`${sym}: no buy-and-hold benchmark`);
+  /* PRIORITY MUST BE ABSENT HERE, NOT MERELY INERT. One instrument never has
+     two signals competing, so every ordering returns the same number. Gridding
+     them anyway cost four duplicate cells per real one; offering them on the
+     page invited "the ordering does not matter" from a universe that cannot
+     ask the question. Only the default may be present. */
+  const gridded = new Set(Object.keys(DATA.grid)
+    .filter(k => k.split("|")[2] === sym).map(k => k.split("|")[7]));
+  gridded.size === 1 && gridded.has(DATA.priority_default)
+    ? ok(`${sym.padEnd(11)} one priority only (the rest would be duplicates)`)
+    : bad(`${sym}: ${gridded.size} priorities gridded on a single instrument`);
+}
+S.uni = "all";
+
+/* And the control itself must be gone from the page there. */
+console.log("\n== priority control is hidden on single-name universes ==");
+for (const sym of (DATA.single_name || [])) {
+  S.uni = sym; render();
+  const labels = Object.values(els).map(e => e.textContent || "").join(" ");
+  labels.includes("Signal priority")
+    ? bad(`${sym}: priority control still offered`)
+    : ok(`${sym.padEnd(11)} control hidden`);
+}
+S.uni = "all";
+
+
+/* THE DETAIL DROPDOWN MUST BE POPULATED AND MUST SWITCH. A select that renders
+   with no options, or one whose change does not move the view, looks identical
+   to a working one until someone tries it. */
+console.log("\n== detail strategy picker ==");
+S.view = "detail"; S.uni = "all"; S.sel = null; render();
 {
-  const names = Object.keys(DATA.assets || {});
-  names.length ? ok(`${names.length} instruments: ${names.join(", ")}`)
-               : bad("no non-equity instruments in the payload");
-  const fams = Object.keys(DATA.strategies);
-  for (const nm of names) {
-    const row = DATA.assets[nm] || {};
-    const got = fams.filter(f => row[f] && row[f].account).length;
-    console.log(`       ${nm.padEnd(11)} ${got}/${fams.length} strategies ran`);
-  }
+  const pick = els["det-pick"] || { options: [] };
+  const n = pick.options.length;
+  n > 1 ? ok(`picker offers ${n} strategies`)
+        : bad(`picker offers ${n} options`);
+  const first = S.sel;
+  const other = pick.options.map(o => o.value).find(v => v !== first);
+  if (other) {
+    S.sel = other; render();
+    S.sel === other ? ok(`switching to ${other} holds`)
+                    : bad(`switching to ${other} reverted to ${S.sel}`);
+    const body = (els["det-body"] || {}).innerHTML || "";
+    body.length > 200 ? ok("detail re-rendered for the new pick")
+                      : bad("detail body did not re-render");
+  } else bad("only one strategy in the picker");
 }
+S.sel = null; S.view = "compare";
 
-console.log("\n== breadth view ==");
-S.uni = "all"; S.view = "breadth"; render();
-const brd = els["brd-body"].innerHTML;
-const sub = els["brd-sub"].textContent;
-for (const [k, r] of Object.entries(DATA.breadth || {})) {
-  const sizes = r.map(x => x.size);
-  console.log(`  ${k.padEnd(6)} ${r.length} sizes ${sizes[0]}..${sizes[sizes.length-1]}  median ${r.map(x=>x.median).join("/")}`);
+/* NOTHING MAY RENDER AS "undefined" OR "NaN". These do not throw, they print --
+   a missing field arrives on the page as the word undefined and reads like data.
+   Checked across every view rather than one, which is where it used to live. */
+console.log("\n== no undefined/NaN in any view ==");
+for (const [v] of VIEWS) {
+  S.view = v;
+  try { render(); } catch (e) { bad(`${v} threw: ${e.message}`); continue; }
+  let bads = 0, where = [];
+  for (const [id, el] of Object.entries(els)) {
+    const html = el.innerHTML || "";
+    const hits = (html.match(/\bundefined\b|\bNaN\b/g) || []).length;
+    if (!hits) continue;
+    bads += hits;
+    const at = html.search(/\bundefined\b|\bNaN\b/);
+    where.push(`#${id}: ...${html.slice(Math.max(0, at - 45), at + 25).replace(/\s+/g, " ")}...`);
+  }
+  bads === 0 ? ok(`${v}: clean`)
+             : bad(`${v}: ${bads} undefined/NaN -- ${where[0]}`);
 }
-/Stocks/.test(brd) ? ok("table header present") : bad("no table header");
-/About \d+ stocks|No smaller basket|does not make money/.test(brd)
-  ? ok("headline present") : bad("no headline: " + brd.slice(0, 160));
-sub.length > 20 ? ok(`subtitle: ${sub}`) : bad("no subtitle");
-(brd.match(/<tr>/g) || []).length >= 5 ? ok(`${(brd.match(/<tr>/g)||[]).length} rows`) : bad("too few rows");
-/undefined|NaN/.test(brd) ? bad("breadth markup contains undefined/NaN") : ok("no undefined/NaN in markup");
 
 console.log(fail.length ? `\n${fail.length} FAILURE(S)\n` : "\nall checks passed\n");
 process.exit(fail.length ? 1 : 0);

@@ -11,15 +11,16 @@ Everything is combinable with everything:
                 (kitelab.registry) x universe (all 500 and three liquidity
                 buckets, sizes counted from config, never hardcoded)
                 x risk x scanning pool x signal priority x start year
-    stocks      every stock in the universe: weekly closes + trades + stats
     assets      the six non-equity instruments -- Bitcoin, the two indices and
                 three MCX commodities -- run through the SAME registry as the
                 equities, so a newly added strategy is tested on them too
 
-Everything here is displayed. Sections that the page did not read were removed
-on 2026-09-03: scaleout, scaleout_r, tradestats, timeframes and nifty were
-computed on every build and rendered nowhere, the scale-out sweep alone costing
-about 64 seconds of a seven-minute build.
+Everything here is displayed. Sections the page did not read were removed on
+2026-09-03: scaleout, scaleout_r, tradestats, timeframes and nifty were computed
+every build and rendered nowhere. `stocks` went the same day for a different
+reason -- it WAS displayed, but it was 31.3 MB of a 32.8 MB payload, 96% of the
+file, to answer a question about one stock at a time that the comparison this
+workbench exists for does not ask.
 
 Conventions: EMA stacks use the class rule (stops checked at closes only);
 Breakout keeps intrabar stops (its buy-stop entry is inherently intrabar).
@@ -30,16 +31,11 @@ import bisect
 import json
 import os
 import re
-# Module level, not inside main(): the breadth sweep needs it too, and it used to
-# ride in on a local import belonging to the 10-stock Monte Carlo. Removing that
-# block on 2026-09-02 took the import with it and the sweep fell over 20 minutes
-# into a rebuild.
-import random
 
 import numpy as np
 import pandas as pd
 
-from kitelab import (backtest, config, dashboard_server, frames,
+from kitelab import (backtest, config, contracts, dashboard_server, frames,
                      portfolio, signals, sizing, slippage, strategies)
 from kitelab.progress import Bar
 from kitelab.curves import (bh_stats, calmar, episodes, exposure_pct,
@@ -178,52 +174,45 @@ CAPITALS = [200_000]
 # reporting which rule is better -- it is reporting how well each rule's signal
 # frequency happens to fit one account size. This axis puts that choice in front
 # of the reader instead of burying it in the default.
-POOL_SIZES = [15, 30, 50, 100, 250]        # plus None, meaning the whole universe
-POOL_DRAWS = {15: 12, 30: 10, 50: 8, 100: 6, 250: 4}
-
 # WHICH SIGNAL WINS THE CASH -- see portfolio.PRIORITIES for what each means and
 # why none of them may look at how a trade turned out. Swept only at the whole
 # universe and START_DEFAULT: "does the ordering rule matter" is asked once, and
 # crossing it with the pool sweep would multiply the slowest stage in the build.
 PRIORITIES = portfolio.PRIORITIES
 PRIORITY_DEFAULT = "liquidity"
-# Fixed, so a rebuild reproduces the same baskets -- and, far more important, so
-# EVERY STRATEGY IS DEALT THE SAME HANDS. Draw per strategy and the compare table
-# would be measuring which rule drew the luckier stocks. See _baskets.
-# Shared with the breadth sweep -- see BREADTH_SIZES for why one seed matters.
-BASKET_SEED = 20260831
-
-
-def _draw_baskets(pool: list[str], size: int, draws: int) -> list[list[str]]:
-    """`draws` random baskets of `size` names, deterministic and SHARED.
-
-    Deterministic twice over. Across strategies, so the compare table measures
-    rules rather than which rule drew the better stocks. And across VIEWS: the
-    generator is seeded per size, so asking for 12 baskets of 15 yields the first
-    12 of the 30 that breadth asks for. Two views, one set of hands.
-    """
-    if size >= len(pool):
-        return [sorted(pool)]
-    rng = random.Random(BASKET_SEED + size)
-    return [rng.sample(sorted(pool), size) for _ in range(draws)]
-
-
-# ONE SAMPLER FOR BOTH VIEWS.
+# EXCLUDED, with the measurement that justifies it -- the same discipline
+# config.EXCLUDED applies to equities. Found 2026-09-03 when these became
+# universes and their buy-and-hold benchmarks were checked:
 #
-# Breadth and the compare page's pool axis both ask "what happens when only N
-# stocks are scanned", and each used to draw from its own seed -- so Breadth at
-# 15 names and Compare at pool 15 answered the same question over DIFFERENT
-# stocks, and disagreed for a reason the page never gave. They share
-# _draw_baskets and BASKET_SEED now, and POOL_SIZES is a subset of
-# BREADTH_SIZES, so wherever the two name the same size they are looking at the
-# same baskets: the pool axis simply reads fewer of them, its draw count being a
-# PREFIX of breadth's, which the shared generator guarantees.
-BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150, 250]
-BREADTH_DRAWS = {5: 30, 10: 30, 15: 30, 20: 30, 30: 20, 50: 20, 75: 10, 100: 10,
-                 150: 10, 250: 10}
-ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
-          ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
-          ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005)]
+#   SILVER    A 1000x SEAM on 2026-08-26: close 244,127 -> 240.4 in one session.
+#             The contract specification changes mid-series, so the file is two
+#             different instruments end to end and its whole-history buy-and-hold
+#             reads -26% a year. Not a price move and not repairable by scaling
+#             one side, because which side is which is not recorded.
+#   CRUDEOIL  Settled at Rs1.00 on 2020-04-20, the day WTI went negative and MCX
+#             floored the price. REAL, not a data error -- and that is why it
+#             cannot simply be cleaned away. Any position open through it shows
+#             -99.9% and then a 1,324x bounce, which destroys every R multiple,
+#             drawdown and CAGR that crosses the date.
+#
+# Both can come back: silver once the series is spliced on a recorded ratio,
+# crude once the settlement day is handled explicitly rather than traded.
+#   NIFTY 50    SPOT INDEX, not a futures contract, and no modelling fixes that.
+#   NIFTY BANK  scripts.fetch_assets pulled these as Kite INDEX candles. An index
+#               is a number, not an instrument: it has no lot size because there
+#               is nothing to buy. Trading it means NIFTY futures, which are a
+#               different series with their own basis and roll, or options, which
+#               are a different problem entirely. Adding lot sizes here would put
+#               a precise number on something that cannot be purchased. They come
+#               back when the NFO futures series is fetched -- that needs a Kite
+#               login, so it is a job for scripts.fetch_assets, not a patch here.
+ASSET_EXCLUDED = {
+    "SILVER": "1000x contract seam 2026-08-26 (244,127 -> 240.4 in one session)",
+    "CRUDEOIL": "Rs1.00 settlement 2020-04-20 (real; -99.9% then 1,324x)",
+    "NIFTY 50": "spot index, not a tradeable contract -- needs the NFO futures series",
+    "NIFTY BANK": "spot index, not a tradeable contract -- needs the NFO futures series",
+}
+ASSETS = [("BITCOIN", "30m", 0.0010), ("GOLD", "1d", 0.0005)]
 STEP = 10
 BANDS = registry.BANDS
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
@@ -657,79 +646,25 @@ def main() -> None:
 
     grid = {}
 
-    # THE SAME HANDS FOR EVERY STRATEGY.
-    #
-    # Baskets are drawn once per (universe, size) and reused by every rule, so a
-    # difference in the compare table is a difference between RULES. Draw them
-    # inside the strategy loop instead and the table silently becomes a report of
-    # which rule was dealt the better stocks -- the deck would stop cancelling,
-    # which is the one property that kept these comparisons worth having when the
-    # universe itself turned out to be biased.
-    basket_cache: dict = {}
-
-    def _baskets(ukey, members, size):
-        hit = basket_cache.get((ukey, size))
-        if hit is None:
-            hit = _draw_baskets(list(members), size, POOL_DRAWS[size])
-            basket_cache[(ukey, size)] = hit
-        return hit
-
-    def _pooled(window, ukey, members, size, capital, risk, priority):
-        """One cell at a finite scanning pool: the MIDDLE draw, not the best.
-
-        The payload comes from a single real run rather than from per-metric
-        medians, so its CAGR, drawdown and MAR describe one account that actually
-        existed. A median CAGR paired with a median drawdown from a different
-        draw is a portfolio nobody ran.
-
-        `pool_worst` rides along because it answers "but I do not know WHICH 15
-        stocks". The median says what a typical basket did; the worst says what
-        the unlucky one did, and on a small account that is the number deciding
-        whether a rule is tradeable at all.
-        """
-        runs = []
-        for basket in _baskets(ukey, members, size):
-            keep = set(basket)
-            sub_trades = [t for t in window if t["symbol"] in keep]
-            if sub_trades:
-                runs.append(portfolio.run(sub_trades, capital, risk, priority))
-        if not runs:
-            return None
-        # A WIPED BASKET IS THE WORST OUTCOME, NOT A MISSING ONE. portfolio.run
-        # reports cagr_pct as None when the account is destroyed, because the
-        # rate is undefined -- and the first version of this filtered those out,
-        # so the median was taken over the survivors and `pool_worst` named the
-        # worst basket THAT LIVED. Both flattered, and pool_worst worst of all:
-        # it is the number a reader leans on precisely because they cannot
-        # choose their stocks. Wiped draws now sort below every loss, exactly as
-        # the breadth sweep has always done, and their count is published.
-        wiped = [r for r in runs if r.get("cagr_pct") is None]
-        rated = sorted((r for r in runs if r.get("cagr_pct") is not None),
-                       key=lambda r: r["cagr_pct"])
-        ordered = wiped + rated
-        out = run_payload(ordered[len(ordered) // 2])
-        out["pool_draws"] = len(ordered)
-        out["pool_wiped"] = len(wiped)
-        # None means "the worst basket was destroyed", which no number says.
-        out["pool_worst"] = None if wiped else round(rated[0]["cagr_pct"], 2)
-        out["pool_best"] = round(rated[-1]["cagr_pct"], 2) if rated else None
-        return out
-
-    def fill_grid(bar, source, unis, risks, capitals, years, pools):
+    def fill_grid(bar, source, unis, risks, capitals, years):
         """One pass of the grid, over every universe at every setting.
 
-        The pool axis is swept only at START_DEFAULT. Pool size crossed with
-        start year is a second-order interaction -- how a rule's cash starvation
-        differed between 2012 and 2022 -- and gridding it would multiply the
-        build by the number of start years to answer a question no view asks.
+        The scanning-pool axis was removed on 2026-09-03. It and the Breadth
+        sweep were one measurement wearing two names, and what it found -- that
+        a small account cannot fund what a wide scan offers -- is now on every
+        row of the table as `skipped_cash` and `exposure`, which say it without
+        a sweep. Signal priority is what remains, because that is the choice a
+        trader actually makes when the cash runs out.
         """
         for fkey in GRID_FILLS:
             execution(*FILL_SPEC[fkey])
-            for (skey, band), signals in source[fkey].items():
+            # `trades`, not `signals`: the latter is the module imported above,
+            # and shadowing it here made kitelab.signals unreachable for the
+            # whole body of the grid loop.
+            for (skey, band), trades in source[fkey].items():
                 for ukey, (ulabel, members) in unis.items():
-                    pool_members = members if members is not None else cfg.merged
-                    subset = (signals if members is None
-                              else [t for t in signals if t["symbol"] in members])
+                    subset = (trades if members is None
+                              else [t for t in trades if t["symbol"] in members])
                     # Sorted once; each start year is a suffix of the one before, so
                     # the slice is a bisect rather than a fresh filter per year.
                     subset = sorted(subset, key=lambda t: t["entry_ts"])
@@ -737,42 +672,43 @@ def main() -> None:
                     for year in years:
                         cut = bisect.bisect_left(stamps, pd.Timestamp(f"{year}-01-01"))
                         window = subset[cut:]
-                        sizes = pools if year == START_DEFAULT else [None]
-                        for size in sizes:
-                            # The priority sweep is asked once, over the whole
-                            # universe at the default year. Everywhere else runs
-                            # the standing rule, so those cells stay comparable
-                            # with every number published before today.
-                            prios = (PRIORITIES
-                                     if size is None and year == START_DEFAULT
-                                     else [PRIORITY_DEFAULT])
-                            for prio in prios:
-                                for risk in risks:
-                                    for capital in capitals:
-                                        key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
-                                               f"|{capital}|{fkey}|{year}"
-                                               f"|{size if size else 'all'}|{prio}")
-                                        if not window:
-                                            grid[key] = None
-                                            bar.step()
-                                            continue
-                                        if size is None:
-                                            grid[key] = run_payload(portfolio.run(
-                                                window, capital, risk / 100, prio))
-                                        else:
-                                            grid[key] = _pooled(
-                                                window, ukey, pool_members, size,
-                                                capital, risk / 100, prio)
+                        # EVERY PRIORITY AT EVERY START YEAR -- except where
+                        # priority cannot mean anything.
+                        #
+                        # Signal priority decides which signal wins the cash
+                        # when the account cannot fund them all. A universe of
+                        # ONE instrument never has two candidates at once (the
+                        # account holds one position per symbol), so all five
+                        # orderings produce byte-identical results. Sweeping
+                        # them there computed four duplicate cells for every
+                        # real one -- 40% of the grid -- and put a control on
+                        # the page that could not change its own answer.
+                        #
+                        # Detected from the universe rather than a list of
+                        # instrument names, so it stays true if single-name
+                        # universes are ever added for equities too.
+                        single = members is not None and len(members) == 1
+                        for prio in ([PRIORITY_DEFAULT] if single else PRIORITIES):
+                            for risk in risks:
+                                for capital in capitals:
+                                    key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
+                                           f"|{capital}|{fkey}|{year}|{prio}")
+                                    if not window:
+                                        grid[key] = None
                                         bar.step()
+                                        continue
+                                    grid[key] = run_payload(portfolio.run(
+                                        window, capital, risk / 100, prio))
+                                    bar.step()
 
-    # Cells per (variant, universe, risk, capital): one per start year over the
-    # whole universe, plus the pool sweep at START_DEFAULT.
-    pool_axis = POOL_SIZES + [None]
-    per_combo = len(START_YEARS) + len(POOL_SIZES) + len(PRIORITIES) - 1
+    # Cells per (variant, universe, risk, capital): every start year crossed
+    # with every signal priority, so no control pins another. Single-instrument
+    # universes get one priority only -- see fill_grid for why.
+    per_combo = len(START_YEARS) * len(PRIORITIES)
     total = (len(GRID_FILLS) * len(sets[GRID_FILLS[0]]) * len(universes)
              * len(RISKS) * len(CAPITALS) * per_combo)
     bar = Bar(total, "grid")
-    fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS, pool_axis)
+    fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS)
     bar.close()
 
     execution(False, False)
@@ -806,8 +742,7 @@ def main() -> None:
                     for capital in CAPITALS:
                         def cell(fkey):
                             k = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
-                                 f"|{capital}|{fkey}|{START_DEFAULT}"
-                                 f"|all|{PRIORITY_DEFAULT}")
+                                 f"|{capital}|{fkey}|{START_DEFAULT}|{PRIORITY_DEFAULT}")
                             got = grid.get(k)
                             return got["cagr"] if got else None
                         perfect, costs, cap, both = (cell("0"), cell("2"),
@@ -823,159 +758,135 @@ def main() -> None:
                             "cap": step_cap, "interaction": inter, "net": both}
         print(f"  cost waterfall: {len(waterfall):,} cells", flush=True)
 
-    print("  breadth sweep:", flush=True)
-    breadth = {}
-    for skey in STRATEGY_LABELS:
-        signals = base.get((skey, PRIMARY[skey]))
-        if not signals:
+    # ---- the non-equity instruments, as universes of their own -------------
+    #
+    # These were a separate page with a separate code path until 2026-09-03:
+    # one hardcoded account each, at Rs1,00,000 and 1% risk over all history,
+    # so none of the axes the compare table offers -- start year, risk, signal
+    # priority -- reached them. Two paths computing the same thing differently
+    # is what produced the two-samplers bug earlier the same day.
+    #
+    # They are universes now, and what made that possible is that the fee rate
+    # and whole-versus-fractional units moved onto the TRADE. They were module
+    # globals, so the grid could only run under one setting at a time, which is
+    # precisely why they needed their own account.
+    #
+    # THE SPREAD MODEL IS NOT APPLIED TO THEM. slippage is calibrated on NSE
+    # equity turnover; asking it about Bitcoin would return a number with no
+    # meaning behind it. Their flat exchange fee already covers the round trip,
+    # so they are gridded from unslipped trades under the same fill key.
+    print("  non-equity instruments:", flush=True)
+    # An unverified contract spec must not reach the dashboard quietly: every
+    # lot size and margin in kitelab.contracts is hand-entered from a published
+    # note, not derived from anything the project holds.
+    held = {a[0] for a in ASSETS}
+    unverified = [c for c in contracts.unverified_multipliers() if c in held]
+    if unverified:
+        print(f"    WARNING: multiplier UNVERIFIED for {', '.join(unverified)}",
+              flush=True)
+    # A SERIES OLDER THAN ITS CONTRACT is not a long history, it is a different
+    # instrument wearing the same name. GOLDTEN launched 2025-04-01 and
+    # SILVER100 2026-06-01; a vendor serving either back to 2010 is synthesising
+    # it, and nothing downstream could tell.
+    for symbol in sorted(held):
+        spec = contracts.get(symbol)
+        if spec is None or spec.launched is None:
             continue
-        by_sym = {}
-        for t in signals:
-            by_sym.setdefault(t["symbol"], []).append(t)
-        pool = sorted(cfg.merged)
-        sizes = [n for n in BREADTH_SIZES if n < len(pool)] + [len(pool)]
-        rows = []
-        for size in sizes:
-            draws = _draw_baskets(pool, size, BREADTH_DRAWS.get(size, 10))
-            cagrs, dds, held, starved = [], [], [], []
-            for basket in draws:
-                subset = [t for sym in basket for t in by_sym.get(sym, [])]
-                if not subset:
-                    continue
-                # 2,00,000: the middle of CAPITALS. It used to be 2,50,000,
-                # which stopped being one of the offered account sizes when the
-                # small accounts were dropped -- so this page was reporting a
-                # reference account you could not select anywhere else.
-                r = portfolio.run(subset, 200_000, 0.01)
-                cagrs.append(r["cagr_pct"])
-                dds.append(r["max_drawdown_pct"])
-                held.append(r["max_concurrent"])
-                starved.append(100 * r["skipped_cash"] / max(r["signals"], 1))
-            if not cagrs:
-                continue
-            # Wiped baskets (no CAGR) sort to the BOTTOM, not to 0.0. A quantile that
-            # lands on one is reported as null, and the count is published so the page
-            # can say how many of the draws were destroyed rather than hiding them
-            # among the flat results.
-            ordered = sorted(cagrs, key=lambda c: (c is not None, c))
-            n_wiped = sum(1 for c in cagrs if c is None)
-            def pick(q, ordered=ordered):
-                v = ordered[min(len(ordered) - 1, int(q * len(ordered)))]
-                return None if v is None else round(v, 1)
-            rows.append({"size": size, "draws": len(ordered), "wiped": n_wiped,
-                         "median": pick(0.5), "p10": pick(0.1), "p90": pick(0.9),
-                         "worst": None if ordered[0] is None else round(ordered[0], 1),
-                         "best": None if ordered[-1] is None else round(ordered[-1], 1),
-                         "dd": round(sorted(dds)[len(dds) // 2], 1),
-                         "held": round(sorted(held)[len(held) // 2], 1),
-                         "starved": round(sorted(starved)[len(starved) // 2], 1)})
-        breadth[skey] = rows
-        print(f"    {skey} done", flush=True)
-
-    print("  per-stock detail:", flush=True)
-    by_symbol = {k: {} for k in STRATEGY_LABELS}
-    for (skey, band), signals in base.items():
-        if band != PRIMARY[skey]:
+        try:
+            first = frames.daily(symbol)["ts"].iloc[0]
+        except (SystemExit, IndexError):
             continue
-        for t in signals:
-            by_symbol[skey].setdefault(t["symbol"], []).append(t)
-    stocks = {}
-    stock_bar = Bar(len(cfg.merged), "per-stock")
-    for index, symbol in enumerate(sorted(cfg.merged), 1):
-        stock_bar.step()
+        if spec.predates_launch(first):
+            print(f"    WARNING: {symbol} data starts {str(first)[:10]} but the "
+                  f"contract launched {spec.launched} -- the earlier bars are "
+                  f"not this instrument", flush=True)
+    asset_base: dict = {}
+    assets = {}
+    for symbol, _entry_tf, fee in ASSETS:
         try:
             daily = frames.daily(symbol)
         except SystemExit:
+            print(f"    {symbol}: no data, skipped", flush=True)
             continue
-        entry = {"closes": close_series(daily), "assigned": symbol in set(ASSIGNED)}
-        for skey in STRATEGY_LABELS:
-            tr = by_symbol[skey].get(symbol, [])
-            tr = positions(tr)
-            entry[skey] = {"stats": trade_stats(tr), "trades": slim_trades(tr)}
-        stocks[symbol] = entry
-    stock_bar.close()
-
-    print("  assets detail:", flush=True)
-    assets = {}
-    # The middle field was the breakout entry timeframe; ATH Breakout is no
-    # longer computed, so it is unused. (It used to say scripts/scaleout_test.py
-    # still read it -- that file does not exist and has not for some time.)
-    for symbol, _entry_tf, fee in ASSETS:
+        bh = bh_stats(daily)
+        assets[symbol] = {"bh": {"cagr": round(bh["cagr"], 1),
+                                 "maxdd": round(bh["maxdd"], 1),
+                                 "uw": round(bh["longest_uw"] / 365.25, 1),
+                                 "years": round(bh["years"], 1)},
+                          "fee_pct": round(100 * fee, 3)}
         backtest.FLAT_FEE_RATE = fee
         sizing.FRACTIONAL = True
         try:
-            daily = frames.daily(symbol)
-            bh = bh_stats(daily)
-            entry = {"closes": close_series(daily),
-                     "bh": {"cagr": round(bh["cagr"], 1), "maxdd": round(bh["maxdd"], 1),
-                            "uw": round(bh["longest_uw"] / 365.25, 1),
-                            "years": round(bh["years"], 1)}}
-            # FROM THE REGISTRY, not a hand-written dict. This list used to name
-            # its seven families literally, which meant a newly added strategy
-            # was compared against the others on 500 NSE stocks and then quietly
-            # never tested on Bitcoin, gold or the indices at all -- the same
-            # class of omission as the hand-kept cache-stamp list, and just as
-            # silent. Each family runs at its primary variant, matching the
-            # breadth sweep, so these results sit beside those.
-            #
-            # ONE RESULT MOVES, DELIBERATELY. The old dict called
-            # holygrail.simulate(symbol) bare, and that function's default stop
-            # is "signal_low" -- the CANDLE reading. Every other view uses
-            # PRIMARY["hg"], which is "swing". So this page was quietly showing a
-            # different Holy Grail from the one beside it. It now shows the same
-            # one. Neither reading is the winner (see HANDOVER section 5); being
-            # consistent about which is on screen is the point.
-            builders = {}
-            for fam in registry.families():
-                strat = registry.find(fam, registry.primary(fam))
-                if strat is not None:
-                    builders[fam] = strat.build
-            # (per-stock pages show the gated 20/10; the 1TF control lives in the
-            #  grid, where it can be compared across every setting at once)
-            for skey, build in builders.items():
+            for st in registry.REGISTRY:
                 try:
-                    trades = build(symbol)
+                    trades = st.build(symbol)
                 except (SystemExit, FileNotFoundError):
-                    entry[skey] = None
-                    continue
-                r = portfolio.run(trades, 100_000, 0.01) if trades else None
-                trades = positions(trades)
-                entry[skey] = {"stats": trade_stats(trades), "trades": slim_trades(trades),
-                               "account": run_payload(r) if r else None}
-            assets[symbol] = entry
+                    trades = []
+                # Stamped per trade so the account can price and size this
+                # instrument by its own rules even in a mixed run. A contract
+                # spec means futures: whole lots, funded by margin. Without one
+                # the instrument is bought outright, which is right for spot
+                # Bitcoin and wrong for everything on MCX.
+                spec = contracts.get(symbol)
+                for t in trades:
+                    t["fee_rate"] = fee
+                    if spec is None:
+                        t["fractional"] = True
+                    else:
+                        t["multiplier"] = spec.multiplier
+                        # DATED, not constant. Crude's minimum initial margin
+                        # ran ~9% in 2016 and 33% after the Aug 2024 revision;
+                        # one figure across the sample would let the account
+                        # hold late positions the exchange would have refused.
+                        t["margin_pct"] = spec.margin_at(t["entry_ts"])
+                asset_base.setdefault((st.key, st.variant), []).extend(trades)
         finally:
             backtest.FLAT_FEE_RATE = None
             sizing.FRACTIONAL = False
         print(f"    {symbol} done", flush=True)
+
+    if assets:
+        asset_universes = {sym: (sym, {sym}) for sym in assets}
+        asset_sets = {fkey: asset_base for fkey in FILL_SPEC}
+        # One priority each: every one of these is a single instrument.
+        a_total = (len(GRID_FILLS) * len(asset_base) * len(asset_universes)
+                   * len(RISKS) * len(CAPITALS) * len(START_YEARS))
+        a_bar = Bar(a_total, "assets")
+        fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS, START_YEARS)
+        a_bar.close()
+        universes.update({k: (v[0], v[1]) for k, v in asset_universes.items()})
 
     payload = {
         # IST, and labelled: the build machine may be on any clock.
         "built": config.now_local().strftime("%Y-%m-%d %H:%M IST"),
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
-        "universe_size": len(cfg.merged),
         "risks": RISKS, "capitals": CAPITALS,
         # The scanning pool: how many names the rule is run over. null is the
         # whole universe. Only computed at start_default -- the page must clamp
         # its year selector when a finite pool is chosen, because every other
         # combination is a missing cell, not a zero.
-        "pools": POOL_SIZES + [None],
-        "pool_year": START_DEFAULT,
         # Which signal wins the cash when the account cannot fund them all. Only
-        # computed at the whole universe and pool_year, so the page clamps both
-        # when a non-default priority is chosen.
+        # Every priority is gridded at every start year, so neither control
+        # constrains the other and the page needs no clamp.
         "priorities": PRIORITIES, "priority_default": PRIORITY_DEFAULT,
+        # Universes holding a single instrument, where signal priority cannot
+        # mean anything: nothing competes for the cash, so the page disables
+        # the control rather than offering five settings with one answer.
+        "single_name": sorted(k for k, v in universes.items()
+                              if v[1] is not None and len(v[1]) == 1),
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
         "hg_tags": HG_TAGS,
         "pair_tags": PAIR_TAGS, "pair_labels": PAIR_LABEL,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
         "darvas_windows": DARVAS_TAGS,
-        "breadth": breadth,
-        "fills": FILL_MODES,
-        "assigned": list(ASSIGNED),
+        # Only what was actually gridded. Publishing all four let the page
+        # offer three modes that resolve to nothing, and a missing cell renders
+        # as an em dash -- indistinguishable from a rule that took no trades.
+        "fills": [m for m in FILL_MODES if m[0] in GRID_FILLS],
         "grid": grid, "waterfall": waterfall,
-        "stocks": stocks, "assets": assets,
+        "assets": assets,
     }
     # THE CURVES DO NOT TRAVEL WITH THE NUMBERS.
     #

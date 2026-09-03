@@ -322,8 +322,20 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
             if pos["exit_ts"] > upto:
                 continue
             proceeds = pos["shares"] * pos["exit_price"]
-            cost = charges(pos["shares"] * pos["entry_price"], proceeds, pos["same_session"])
-            cash += proceeds - cost
+            # fee_rate rides on the TRADE, so one account can hold instruments
+            # with different cost models. Absent (every NSE equity) it is None
+            # and the full Zerodha schedule applies.
+            cost = charges(pos["shares"] * pos["entry_price"], proceeds,
+                           pos["same_session"], pos.get("fee_rate"))
+            held = pos.get("margin_held")
+            if held is None:
+                cash += proceeds - cost
+            else:
+                # A futures position was never bought outright: the margin comes
+                # back and the move is settled in cash. Debiting the full value
+                # on entry and crediting it on exit would give the same profit
+                # while pretending the account had held ten times its capital.
+                cash += held + (proceeds - pos["shares"] * pos["entry_price"]) - cost
             pos["net"] = proceeds - pos["shares"] * pos["entry_price"] - cost
             taken.append(pos)
             del open_by_symbol[symbol]
@@ -344,7 +356,44 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
         per_share_risk = trade["entry_price"] - trade["stop"]
         if per_share_risk <= 0:
             continue
-        if sizing.FRACTIONAL:
+        # Whole units or fractions is a property of the INSTRUMENT, not of the
+        # run: Bitcoin trades in fractions and a share does not, and an account
+        # may hold both. Falls back to the module global, which is how the
+        # single-instrument scripts still drive it.
+        # A FUTURES CONTRACT IS NOT A SHARE. It trades in lots of a fixed size
+        # and is funded by margin, not by its full value -- see kitelab.contracts
+        # for both numbers and for why they are assumptions rather than data.
+        # `multiplier` converts one lot into the units the price is quoted in.
+        # Absent (every equity, and spot Bitcoin) this whole branch is skipped
+        # and nothing about the existing behaviour changes.
+        mult = trade.get("multiplier")
+        margin_pct = trade.get("margin_pct")
+        if mult:
+            lot_value = trade["entry_price"] * mult
+            lot_margin = lot_value * margin_pct
+            risk_per_lot = per_share_risk * mult
+            by_risk = math.floor(equity * risk_pct / risk_per_lot) if risk_per_lot else 0
+            by_cash = math.floor(cash / lot_margin) if lot_margin else 0
+            lots = min(by_risk, by_cash)
+            if lots < 1:
+                # One lot is indivisible: an account that cannot fund a single
+                # one does not get a smaller position, it gets no trade.
+                if by_risk < 1:
+                    skipped_size += 1
+                else:
+                    skipped_cash += 1
+                continue
+            shares = lots * mult
+            cash -= lots * lot_margin
+            open_by_symbol[trade["symbol"]] = dict(
+                trade, shares=shares, entry_price=trade["entry_price"],
+                exit_price=trade["exit_price"], margin_held=lots * lot_margin)
+            taken_by_year[year] = taken_by_year.get(year, 0) + 1
+            max_concurrent = max(max_concurrent, len(open_by_symbol))
+            continue
+
+        fractional = trade.get("fractional", sizing.FRACTIONAL)
+        if fractional:
             by_risk = equity * risk_pct / per_share_risk
             by_cash = cash / trade["entry_price"]
             shares = round(min(by_risk, by_cash), 6)
@@ -352,7 +401,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
             by_risk = math.floor(equity * risk_pct / per_share_risk)
             by_cash = math.floor(cash / trade["entry_price"])
             shares = min(by_risk, by_cash)
-        if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
+        if shares <= 0 or (not fractional and shares < 1):
             if by_risk < 1:
                 skipped_size += 1      # 1% of equity cannot cover even one share's risk
             else:
@@ -374,7 +423,8 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
         # MAX_COST_FRACTION of the position. At the 2026 rates that bites at
         # roughly Rs5,400.
         value = shares * trade["entry_price"]
-        if value > 0 and charges(value, value, False) > MAX_COST_FRACTION * value:
+        if (value > 0 and charges(value, value, False, trade.get("fee_rate"))
+                > MAX_COST_FRACTION * value):
             skipped_tiny += 1
             continue
 
@@ -384,8 +434,8 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
         allowed = slippage.capped_shares(trade["symbol"], trade["entry_ts"],
                                          trade["entry_price"], shares)
         if allowed < shares:
-            shares = allowed if sizing.FRACTIONAL else math.floor(allowed)
-            if shares < 1 and not sizing.FRACTIONAL:
+            shares = allowed if fractional else math.floor(allowed)
+            if shares < 1 and not fractional:
                 skipped_liquidity += 1
                 continue
 

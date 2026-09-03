@@ -76,6 +76,10 @@ main{flex:1;height:100vh;overflow:auto;padding:18px 20px}
       padding:16px;position:relative}
 .card > h3{font-size:var(--fs);margin-bottom:2px}
 .card > .sub{color:var(--ink-3);font-size:var(--fs-sm);margin-bottom:11px}
+.formulas{margin:0 0 11px;font-size:var(--fs-sm);color:var(--ink-3)}
+.formulas summary{cursor:pointer;color:var(--ink-2)}
+.formulas div{margin:7px 0 0;line-height:1.5}
+.formulas b{color:var(--ink-1)}
 .export{position:absolute;top:var(--gap);right:var(--gap);font:inherit;
   font-size:var(--fs-sm);padding:5px 11px;border:1px solid var(--line);
   border-radius:6px;background:var(--bg-2);color:var(--ink-2);cursor:pointer}
@@ -142,6 +146,9 @@ svg{display:block;width:100%;overflow:visible}
     <div class="card">
       <h3>Every rule, the same conditions</h3>
       <p class="sub" id="cmp-sub"></p>
+      <p class="note" id="cmp-inst" hidden></p>
+      <details class="formulas"><summary>How every column is calculated</summary>
+        <div id="cmp-formulas"></div></details>
       <button id="cmp-export" class="export">Export to Excel</button>
       <div class="tablewrap"><table id="cmp"></table></div>
       <p class="note">Sorted by <b>MAR</b> &mdash; return divided by the worst drawdown &mdash;
@@ -154,40 +161,15 @@ svg{display:block;width:100%;overflow:visible}
   </div>
 
   <div class="view" id="v-detail">
+    <div class="card" style="margin-bottom:var(--gap)">
+      <div class="field" style="max-width:440px;margin:0">
+        <span>Strategy</span>
+        <select id="det-pick"></select>
+      </div>
+    </div>
     <div id="det-body"></div>
   </div>
 
-  <div class="view" id="v-breadth">
-    <div class="card">
-      <h3>How many stocks does the rule need?</h3>
-      <p class="sub" id="brd-sub"></p>
-      <div class="field" style="margin-bottom:14px;max-width:280px">
-        <span>Rule</span>
-        <select id="brd-pick"></select>
-      </div>
-      <div id="brd-body"></div>
-    </div>
-  </div>
-
-  <div class="view" id="v-assets">
-    <div class="card">
-      <h3>Off the equity market</h3>
-      <p class="sub" id="ast-sub"></p>
-      <div style="overflow-x:auto"><table id="ast"></table></div>
-    </div>
-  </div>
-
-  <div class="view" id="v-stocks">
-    <div class="card">
-      <h3>One stock at a time</h3>
-      <p class="sub" id="stk-sub"></p>
-      <div class="field" style="margin-bottom:14px;max-width:280px">
-        <span>Stock</span>
-        <select id="stk-pick"></select>
-      </div>
-      <div id="stk-body"></div>
-    </div>
-  </div>
 </main>
 
 <script>
@@ -249,23 +231,17 @@ const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 /* pool: how many names are SCANNED, null meaning the whole universe. Not how
    many are held -- the account never holds more than about ten of them. */
 const S = { uni: "all", cap: 0, risk: 1, fill: "1", year: null, view: "compare",
-            pool: null, prio: null, sel: null, sort: "mar", desc: true,
-            stock: null, brd: null };
+            prio: null, sel: null, sort: "mar", desc: true, stock: null };
 
-/* The priority sweep is computed only over the WHOLE universe at pool_year, so
-   a non-default priority pins both. Same reasoning as poolYears: offering a
-   combination that was never computed shows a blank row, and a blank row reads
-   as "this rule made no trades" rather than "this cell does not exist". */
-const isPrio = () => S.prio != null && S.prio !== DATA.priority_default;
+/* NOTHING PINS THE START YEAR ANY MORE. Until 2026-09-03 the extra priority
+   rules were computed only at one year, so picking any ordering but the default
+   silently locked the year selector to 2018 -- a control that looked broken
+   rather than restricted. Every priority is now gridded at every start year. */
 
-/* A finite pool is only computed at DATA.pool_year (see fill_grid): pool size
-   crossed with start year is a second-order interaction nothing displays. So
-   choosing a pool pins the year, and the year selector says so rather than
-   offering combinations that resolve to a missing cell. */
-const poolYears = () =>
-  (S.pool == null && !isPrio()) ? DATA.start_years : [DATA.pool_year];
-const poolSizes = () =>
-  isPrio() ? [null] : (DATA.pools || [null]);
+const yearsAvailable = () => DATA.start_years;
+
+/* A universe holding one instrument. Signal priority is meaningless there. */
+const singleName = () => (DATA.single_name || []).includes(S.uni);
 
 function segment(label, options, get, set) {
   const f = document.createElement("div"); f.className = "field";
@@ -291,10 +267,10 @@ function segment(label, options, get, set) {
    the scenario to be clamped. Dead code that looks live is worse than none.
 
    What remains needing a clamp is real: a finite scanning pool and a non-default
-   signal priority are computed only at DATA.pool_year, so switching universe
-   must still pull the year back to something that exists. */
+   every priority is gridded at every start year, so nothing needs pulling
+   back -- the clamp is kept only because a future axis may reintroduce one. */
 function clampScenario() {
-  const years = poolYears();
+  const years = yearsAvailable();
   if (!years.includes(S.year)) S.year = years[years.length - 1];
 }
 
@@ -305,46 +281,36 @@ function buildScenario() {
   const riskKeep = DATA.risks.map((v, i) => i);
   const fields = [
     add(segment("Universe", Object.entries(DATA.universes),
-                () => S.uni, v => { S.uni = v; clampScenario(); })),
+                () => S.uni, v => { S.uni = v; clampScenario();
+                                    if (singleName()) S.prio = null;
+                                    buildScenario(); })),
     add(segment("Capital", capKeep.map(i => [i, inr(DATA.capitals[i])]),
                 () => S.cap, v => S.cap = +v)),
     add(segment("Risk per trade", riskKeep.map(i => [i, DATA.risks[i] + "%"]),
                 () => S.risk, v => S.risk = +v)),
-    add(segment("Fills", DATA.fills.map(([k, l]) => [k, l.replace(" fills", "")]),
-                () => S.fill, v => S.fill = v)),
-    /* THE SCANNING POOL. Over the whole universe the class EMA stack skips ~52%
-       of its own signals for want of cash and peaks near 30 names; the Turtle
-       skips ~35% and keeps climbing. So the ranking below is not "which rule is
-       better" until this is fixed -- it is partly which rule's signal frequency
-       fits the account. Every rule is dealt the SAME baskets at each size. */
-    add(segment("Stocks scanned",
-                poolSizes().map(v => [v == null ? "all" : v,
-                                      v == null ? "All" : String(v)]),
-                () => S.pool == null ? "all" : S.pool,
-                v => { S.pool = (v === "all" ? null : +v);
-                       if (!poolYears().includes(S.year)) S.year = DATA.pool_year;
-                       buildScenario(); })),
     /* WHICH SIGNAL WINS THE CASH. Scanning is free and the whole market is
        watched, so a small account sees more signals than it can fund -- 52% of
        the EMA stack's are skipped over 500 stocks. This picks who gets the
        money, it is NOT part of any strategy, and re-ordering was measured at an
        8-10 CAGR point swing. "illiquid" is a control: if it scores like
        "liquidity" then that rule was never doing anything. */
-    add(segment("Signal priority",
-                (DATA.priorities || [DATA.priority_default]).map(k => [k, {
-                  liquidity: "Most liquid", illiquid: "Least liquid",
-                  wide: "Widest stop", tight: "Tightest stop", time: "Arbitrary",
-                }[k] || k]),
-                () => S.prio || DATA.priority_default,
-                v => { S.prio = v;
-                       if (isPrio()) S.pool = null;
-                       if (!poolYears().includes(S.year)) S.year = DATA.pool_year;
-                       buildScenario(); })),
+    /* Offered only where it can mean something. On a universe of ONE
+       instrument nothing ever competes for the cash -- the account holds one
+       position per symbol, so there is never a second candidate to order --
+       and all five settings return the identical number. Showing the control
+       there invites the reader to conclude the ordering does not matter, when
+       what it really shows is that this universe cannot ask the question. */
+    ...(singleName() ? [] : [
+      add(segment("Signal priority",
+                  (DATA.priorities || [DATA.priority_default])
+                    .map(k => [k, PRIO_LABEL[k] || k]),
+                  () => S.prio || DATA.priority_default,
+                  v => { S.prio = v; render(); }))]),
   ];
   const yf = document.createElement("div"); yf.className = "field";
   yf.innerHTML = "<span>Started trading in</span>";
   const sel = document.createElement("select");
-  const years = poolYears();
+  const years = yearsAvailable();
   for (const y of years) {
     const o = document.createElement("option"); o.value = o.textContent = y;
     sel.appendChild(o);
@@ -383,8 +349,7 @@ const settingLabel = (skey, v) =>
 
 const keyFor = (skey, v) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
-  `|${S.year}|${S.pool == null ? "all" : S.pool}` +
-  `|${S.prio || DATA.priority_default}`;
+  `|${S.year}|${S.prio || DATA.priority_default}`;
 
 function rows() {
   const out = [];
@@ -431,13 +396,6 @@ const EXPORT_COLS = [
   ["Sortino",   r => r.sortino],
   ["Invested %", r => r.exposure],
   ["Captured %", r => r.capture == null ? null : Math.round(r.capture)],
-  /* null pool_worst means a basket was DESTROYED, which no number states --
-     see _pooled in dashboard_data. "wiped" is the honest cell, and the count
-     rides beside it so a single blow-up is not read as a whole column of them. */
-  ["Worst draw CAGR %", r => !r.r ? null
-      : (r.r.pool_wiped ? "wiped" : r.r.pool_worst)],
-  ["Baskets wiped", r => r.r ? r.r.pool_wiped : null],
-  ["Draws",     r => r.r ? r.r.pool_draws : null],
 ];
 
 function csvCell(v) {
@@ -454,7 +412,6 @@ function exportCsv() {
     ["Risk %", DATA.risks[S.risk]],
     ["Fills", fillName()],
     ["Started", S.year],
-    ["Stocks scanned", S.pool == null ? "all" : S.pool],
     ["Signal priority", S.prio || DATA.priority_default],
     ["Built", DATA.built],
   ];
@@ -471,11 +428,30 @@ function exportCsv() {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `kitelab-compare-${S.uni}-${S.year}`
-    + `-pool${S.pool == null ? "all" : S.pool}`
     + `-${S.prio || DATA.priority_default}.csv`;
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(a.href);
 }
+
+/* THE FORMULA FOR EVERY COLUMN, shown on hover and printed in full beneath the
+   table. A ratio whose definition is not on screen is a number people either
+   trust blindly or argue about -- Sharpe alone has several conventions in
+   circulation, and MAR and Calmar are the same arithmetic under two names. All
+   of these read the DAILY mark-to-market curve unless stated. */
+const FORMULA = {
+  family:  "The rule. Registered in kitelab/registry.py.",
+  setting: "The variant within that rule -- band width, channel pair, or stop reading.",
+  cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
+  maxdd:   "Max drawdown = the lowest value of (equity / running peak - 1), in percent. Measured against the peak standing AT THE TIME, not the final one.",
+  mar:     "MAR = CAGR / |max drawdown|. Return per unit of worst pain.",
+  ulcer:   "Ulcer Index = sqrt(mean(drawdown^2)) across every day. Unlike max drawdown it counts how LONG you were underwater, not just how deep it got.",
+  sharpe:  "Sharpe = mean(daily return) / stdev(daily return) x sqrt(252). Population stdev; these are the realised returns, not a sample. Empty when volatility is zero.",
+  sortino: "Sortino = mean(daily return) / downside deviation x sqrt(252), where downside deviation = sqrt(sum(min(r,0)^2) / N) over ALL N days. Upside volatility is not risk.",
+  exposure:"Invested = share of days where cash < equity, i.e. money was at work. 99% means permanently fully committed.",
+  final:   "Closing account value.",
+  taken:   "Trades the account could actually fund. Compare with signals offered: the gap is cash starvation.",
+  capture: "Captured = trades taken / signals offered. The rest were refused for want of cash, an open position in the same stock, or a position too small to place.",
+};
 
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
@@ -520,6 +496,7 @@ function renderCompare() {
   for (const [key, label, , cls] of COLS) {
     const th = document.createElement("th");
     th.textContent = label; if (cls) th.className = cls;
+    if (FORMULA[key]) th.title = FORMULA[key];
     if (S.sort === key) th.classList.add("on");
     th.addEventListener("click", () => {
       if (S.sort === key) S.desc = !S.desc; else { S.sort = key; S.desc = true; }
@@ -531,7 +508,13 @@ function renderCompare() {
   if (!list.length) {
     const td = tb.insertRow().insertCell();
     td.colSpan = COLS.length + 1; td.className = "empty l";
-    td.textContent = "No results for this combination — try an earlier start year.";
+    /* An instrument whose lot exceeds the account is the commonest reason for
+       an empty table now, and "try an earlier year" would send the reader
+       looking in the wrong place entirely. */
+    td.textContent = (DATA.single_name || []).includes(S.uni)
+      ? "No trades — one lot of this contract costs more margin than the account holds. "
+        + "Raise the capital, or this instrument is not tradeable at this size."
+      : "No results for this combination — try an earlier start year.";
   }
   list.forEach((r, i) => {
     const tr = tb.insertRow();
@@ -547,11 +530,72 @@ function renderCompare() {
   });
   $("cmp-sub").textContent =
     `${list.length} variants · ${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])}` +
-    ` · ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}`;
+    ` · ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}` +
+    ` · ${prioName()} first`;
+
+  /* A SINGLE INSTRUMENT NEEDS A DIFFERENT BENCHMARK. Across 500 stocks the
+     comparison is rule against rule. On one instrument the question is whether
+     any rule beat simply owning it -- and on Bitcoin that is a very high bar
+     which almost nothing clears. The note also carries the two caveats that a
+     universe dropdown would otherwise hide: these carry their own exchange fee
+     rather than the equity schedule, and the account model is cash-equity, so
+     futures margin, lot sizes and rollover are not modelled at all. */
+  const inst = (DATA.assets || {})[S.uni];
+  const note = $("cmp-inst");
+  if (!inst) { note.innerHTML = ""; note.hidden = true; }
+  else {
+    note.hidden = false;
+    const beat = list.filter(r => r.cagr != null && r.cagr > inst.bh.cagr).length;
+    note.innerHTML =
+      `<b>Buy &amp; hold ${inst.bh.cagr}% a year</b>, worst dip ${inst.bh.maxdd}%, ` +
+      `over ${inst.bh.years} years &mdash; <b>${beat} of ${list.length}</b> rules beat it. ` +
+      `Costs are this instrument's own ${inst.fee_pct}% a side, not the equity schedule. ` +
+      `The account model is cash equity: for the indices and MCX contracts, margin, ` +
+      `lot sizes and rollover are not modelled, so treat these as a rule comparison ` +
+      `rather than a tradeable result. Signal priority is not offered here &mdash; ` +
+      `one instrument never has two signals competing for the cash, so every ` +
+      `ordering returns the same number.`;
+  }
+  /* Every formula, in full, under the table. Hover gives the same text on each
+     column header; this is here so it can be read without hunting for it. */
+  $("cmp-formulas").innerHTML = Object.entries(FORMULA)
+    .filter(([k]) => COLS.some(c => c[0] === k))
+    .map(([k, text]) => {
+      const col = COLS.find(c => c[0] === k);
+      return `<div><b>${col[1]}</b> &mdash; ${text}</div>`;
+    }).join("")
+    + `<div style="margin-top:12px"><b>Signal priority</b> &mdash; which signal
+       wins the cash when the account cannot fund them all. Not part of any
+       strategy; on these settings it decides about half the trades.</div>`
+    + Object.entries(PRIO_FORMULA)
+        .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${PRIO_LABEL[k]}</b> &mdash; ${t}</div>`)
+        .join("");
 }
 
 const fillName = () =>
-  (DATA.fills.find(([k]) => k === S.fill) || [null, "Perfect fills"])[1];
+  (DATA.fills.find(([k]) => k === S.fill) || [null, "Realistic fills"])[1];
+
+/* Which signal wins the cash. Named in the subtitle because on a starved
+   account it decides as much as the rule does, and a reader who does not know
+   which ordering produced the table cannot reproduce it. */
+const PRIO_LABEL = { liquidity: "Most liquid", illiquid: "Least liquid",
+                     wide: "Widest stop", tight: "Tightest stop",
+                     time: "No preference" };
+
+/* What each ordering means, in the same place as the column formulas. These are
+   not part of any strategy: they decide which signal gets the money when the
+   account cannot fund them all, which on these settings is about half of them. */
+const PRIO_FORMULA = {
+  liquidity: "Most liquid first, by trailing traded value as of the previous close. The standing rule: a trader facing three signals takes the one they can actually fill.",
+  illiquid:  "Least liquid first. A CONTROL, not a proposal -- if it scores like 'most liquid', that rule was never doing anything and the swing lives elsewhere.",
+  wide:      "Widest stop first, as a percentage of entry. For a fixed rupee risk, position value = risk / stop%, so a wide stop is a CHEAP position: this funds the most trades.",
+  tight:     "Tightest stop first. The mirror -- the best risk-reward geometry per trade, bought by tying up the most cash in each one.",
+  time:      "No ordering rule at all: signals are taken in timestamp order and same-day ties fall to whatever order the list happened to be in. The NULL case, and what every result before 2026-08-31 used. It is here as a baseline to beat, not a method.",
+};
+const prioName = () => {
+  const k = S.prio || DATA.priority_default;
+  return PRIO_LABEL[k] || k;
+};
 
 /* ── charts: SVG, no dependency, readable in view-source ──────────────── */
 function line(points, w, h, color, fill) {
@@ -615,10 +659,40 @@ function waterfallBlock(skey, v) {
 
 function renderDetail() {
   const body = $("det-body");
-  const row = rows().find(r => r.id === S.sel) || rows()[0];
+  /* A DROPDOWN, because Detail was reachable only by clicking a Compare row --
+     so changing which rule you were looking at meant going back, re-sorting and
+     hunting for it. Ordered the same way Compare is, so the list reads in the
+     order the reader last ranked it.
+
+     Rebuilt only when the SET of variants changes, not on every render:
+     rebuilding a select drops the open dropdown and loses focus mid-click. The
+     set is stable across most scenarios -- the 24 registered variants -- but a
+     universe missing some would otherwise leave stale options pointing at cells
+     that do not exist. */
+  const list = sortedRows();
+  const pick = $("det-pick");
+  const want = list.map(r => r.id).join(",");
+  if (pick._built !== want) {
+    pick.innerHTML = "";
+    pick.options.length = 0;
+    for (const r of list) {
+      const o = document.createElement("option");
+      o.value = r.id;
+      o.textContent = `${r.family} · ${r.setting}`;
+      pick.appendChild(o);
+    }
+    pick._built = want;
+    if (!pick._wired) {
+      pick.addEventListener("change", () => { S.sel = pick.value; render(); });
+      pick._wired = true;
+    }
+  }
+
+  const row = list.find(r => r.id === S.sel) || list[0];
   if (!row) { body.innerHTML = `<div class="card"><div class="empty">Nothing to show —
     pick a row on Compare.</div></div>`; return; }
   S.sel = row.id;
+  pick.value = S.sel;
   const r = row.r;
   const gridKey = keyFor(row.skey, row.v);
   /* The stats are in hand; the charts are a disk seek away. Draw what we have
@@ -683,196 +757,8 @@ function renderDetail() {
   });
 }
 
-/* ── assets: the same rules, off the equity market ────────────────────── */
-/* These were COMPUTED AND NEVER SHOWN until 2026-09-03 -- half a megabyte of
-   payload with no view to render it. The instruments are run through the same
-   kitelab.registry as the 500 stocks, at each family's primary setting, so a
-   newly added strategy is tested here too rather than silently only on NSE.
-
-   Costs are per instrument, not the equity model: crypto exchange fees, index
-   futures and MCX pay no STT and no demat charge (backtest.FLAT_FEE_RATE).
-   Buy-and-hold sits alongside, because on a single instrument it is the only
-   benchmark that means anything -- "beat the rule" is not the question, "beat
-   owning the thing" is. */
-function renderAssets() {
-  const data = DATA.assets || {};
-  const names = Object.keys(data);
-  const fams = Object.keys(DATA.strategies);
-  const t = $("ast"); t.innerHTML = "";
-  const hr = t.createTHead().insertRow();
-  for (const h of ["Instrument", "Buy & hold"].concat(fams.map(f => DATA.strategies[f]))) {
-    const th = document.createElement("th");
-    th.textContent = h; if (h === "Instrument") th.className = "l";
-    hr.appendChild(th);
-  }
-  const tb = t.createTBody();
-  if (!names.length) {
-    const td = tb.insertRow().insertCell();
-    td.colSpan = fams.length + 2; td.className = "empty l";
-    td.textContent = "No non-equity results in this build.";
-    return;
-  }
-  for (const name of names) {
-    const row = data[name] || {}, tr = tb.insertRow();
-    const c0 = tr.insertCell(); c0.className = "l"; c0.textContent = name;
-    const bh = tr.insertCell(); bh.className = "num";
-    bh.textContent = row.bh ? row.bh.cagr.toFixed(1) + "%" : "—";
-    if (row.bh) bh.classList.add(row.bh.cagr < 0 ? "down" : "up");
-    for (const f of fams) {
-      const cell = tr.insertCell(); cell.className = "num";
-      const acct = row[f] && row[f].account;
-      if (!acct) { cell.textContent = "—"; continue; }
-      /* A wiped account has no CAGR -- the rate is undefined, not zero. */
-      if (acct.wiped || acct.cagr == null) { cell.textContent = "wiped"; cell.className = "num down"; continue; }
-      cell.textContent = acct.cagr.toFixed(1) + "%";
-      cell.classList.add(acct.cagr < 0 ? "down" : "up");
-    }
-  }
-  $("ast-sub").textContent =
-    `${names.length} instruments · ₹1,00,000 at 1% risk · each rule at its default ` +
-    `setting · costs are per instrument, not the equity model`;
-}
-
-function renderStocks() {
-  const pick = $("stk-pick");
-  if (!pick.options.length) {
-    for (const s of Object.keys(DATA.stocks).sort()) {
-      const o = document.createElement("option");
-      o.value = o.textContent = s;
-      if (DATA.stocks[s].assigned) o.textContent = s + "  ·  assigned";
-      pick.appendChild(o);
-    }
-    pick.addEventListener("change", () => { S.stock = pick.value; render(); });
-  }
-  S.stock = S.stock || (DATA.assigned || [])[0] || Object.keys(DATA.stocks)[0];
-  pick.value = S.stock;
-  const e = DATA.stocks[S.stock] || {};
-  const cells = Object.entries(DATA.strategies).map(([k, label]) => {
-    const st = e[k] && e[k].stats;
-    if (!st) return `<div class="card"><h3>${label}</h3>
-      <div class="empty">no trades on this stock</div></div>`;
-    return `<div class="card"><h3>${label}</h3>
-      <div class="stats" style="margin:10px 0 0">
-        <div class="stat"><div class="k">Trades</div><div class="v">${st.trades ?? "—"}</div></div>
-        <div class="stat"><div class="k">Win rate</div><div class="v">${winPct(st.win_rate)}</div></div>
-        <div class="stat"><div class="k">Net</div><div class="v ${(st.net ?? 0) >= 0 ? "up" : "down"}">${inr(st.net)}</div></div>
-      </div></div>`;
-  }).join("");
-  $("stk-sub").textContent = `${Object.keys(DATA.stocks).length} stocks · trade-level, a fixed book per trade`;
-  $("stk-body").innerHTML = `<div class="grid2">${cells}</div>`;
-}
-
-/* ── breadth: the answer to "I cannot trade a hundred stocks" ─────────── */
-/* Read this page as a RANGE, not a number. Every row below the full universe is
-   many random baskets of that size, so the median is the middling draw and the
-   10th-90th spread is the luck. The old ten-stock panel published ONE draw and
-   called it a result; at ten names that draw could have been anywhere in a band
-   eight times its own width, and which draw you got decided which rule looked
-   best. That is the whole reason this view exists and that one is gone.
-
-   These rows do NOT follow the scenario controls. They are one fixed cell --
-   the whole universe, 2,00,000, 1% risk, each rule at its default setting
-   -- because the question is how WIDE a watchlist has to be, and answering it
-   at every capital and risk would be answering a different question five times. */
-function renderBreadth() {
-  const pick = $("brd-pick");
-  const have = Object.keys(DATA.breadth || {}).filter(k => (DATA.breadth[k] || []).length);
-  if (!have.length) {
-    $("brd-sub").textContent = "";
-    $("brd-body").innerHTML = '<div class="empty">No breadth sweep in this build.</div>';
-    return;
-  }
-  if (!pick.options.length) {
-    for (const k of have) {
-      const o = document.createElement("option");
-      o.value = k; o.textContent = DATA.strategies[k] || k;
-      pick.appendChild(o);
-    }
-    pick.addEventListener("change", () => { S.brd = pick.value; render(); });
-  }
-  S.brd = have.includes(S.brd) ? S.brd : have[0];
-  pick.value = S.brd;
-
-  const rows = DATA.breadth[S.brd];
-  const full = rows[rows.length - 1];
-  /* The bar is a SPAN, p10 to p90, drawn on one scale shared by every row so the
-     narrowing is visible as a shape rather than only as numbers. Negative
-     territory is shaded, because "the median is positive" and "a third of the
-     draws lost money" are both true of the same row. */
-  const vals = rows.flatMap(r => [r.p10, r.p90, r.median]).filter(v => v != null);
-  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
-  const at = v => 100 * (v - lo) / ((hi - lo) || 1);
-
-  const body = rows.map(r => {
-    const solo = r.draws === 1;
-    const bar = (r.p10 == null || r.p90 == null) ? "" :
-      `<div class="wf-bar"><div class="wf-fill" style="left:${at(r.p10)}%;
-         width:${Math.max(1, at(r.p90) - at(r.p10))}%;
-         background:${(r.median ?? 0) >= 0 ? "var(--up)" : "var(--down)"};
-         opacity:.35"></div>
-       ${r.median == null ? "" : `<div style="position:absolute;top:-2px;bottom:-2px;
-         left:${at(r.median)}%;width:2px;background:var(--ink)"></div>`}
-       <div style="position:absolute;top:0;bottom:0;left:${at(0)}%;width:1px;
-         background:var(--ink-3)"></div></div>`;
-    return `<tr>
-      <td class="num"><b>${r.size}</b></td>
-      <td class="num ${(r.median ?? 0) >= 0 ? "up" : "down"}">${pct(r.median)}</td>
-      <td style="width:34%">${bar}</td>
-      <td class="num">${solo ? "—" : pct(r.p10) + " to " + pct(r.p90)}</td>
-      <td class="num">${pct(r.worst)}</td>
-      <td class="num">${r.wiped ? r.wiped + " of " + r.draws : "—"}</td>
-      <td class="num">${pct(r.dd)}</td>
-      <td class="num">${num(r.held, 1)}</td>
-      <td class="num">${pct(r.starved, 0)}</td>
-    </tr>`;
-  }).join("");
-
-  /* The headline: the SMALLEST basket whose middling draw gets within a fifth of
-     what the whole watchlist returned. Answers the question actually asked --
-     how few names can be traded before the rule stops being the rule. */
-  const target = (full.median ?? 0) * 0.8;
-  const enough = rows.find(r => r.median != null && full.median != null
-                                && full.median > 0 && r.median >= target);
-  const headline = full.median == null || full.median <= 0
-    ? `The full ${full.size}-stock watchlist does not make money here, so there is
-       no basket size that reproduces it.`
-    : enough && enough.size < full.size
-      ? `<b>About ${enough.size} stocks.</b> That is the smallest basket whose middling
-         draw (${pct(enough.median)}) came within a fifth of the full
-         ${full.size}-stock watchlist (${pct(full.median)}). Below it the median
-         falls away and the spread widens.`
-      : `<b>No smaller basket reproduced it.</b> Every size tried fell more than a
-         fifth short of the full ${full.size}-stock watchlist (${pct(full.median)}),
-         so this rule needs the width it is given.`;
-
-  $("brd-sub").textContent =
-    `${DATA.universe_size || full.size} stocks · ₹2,00,000 at 1% risk · `
-    + `random baskets, ${rows[0].draws} draws at the smallest size`;
-  $("brd-body").innerHTML = `
-    <p class="note" style="margin:0 0 12px;color:var(--ink-2)">${headline}</p>
-    <div class="tablewrap"><table>
-      <thead><tr>
-        <th class="num">Stocks</th><th class="num">Median CAGR</th>
-        <th>10th &ndash; 90th percentile</th><th class="num">Range</th>
-        <th class="num">Worst draw</th><th class="num">Wiped</th>
-        <th class="num">Drawdown</th><th class="num">Held at once</th>
-        <th class="num">Cash&nbsp;starved</th>
-      </tr></thead><tbody>${body}</tbody>
-    </table></div>
-    <p class="note"><b>Median CAGR</b> is the middling basket of that size, not an
-      average &mdash; one lucky draw cannot lift it. <b>Worst draw</b> is the single
-      unluckiest basket, which is the outcome to plan around rather than the median.
-      <b>Held at once</b> is how many positions were open at the peak: if that number
-      is well below the basket size, the extra names are giving you choice rather
-      than more positions. <b>Cash starved</b> is the share of the rule's signals the
-      account had to turn away, and it is why a wider list keeps helping after the
-      account has run out of money &mdash; more names means more chances that the
-      signal you can afford is a good one.</p>`;
-}
-
 /* ── shell ────────────────────────────────────────────────────────────── */
-const VIEWS = [["compare", "Compare"], ["detail", "Detail"],
-               ["breadth", "Breadth"], ["assets", "Assets"], ["stocks", "Stocks"]];
+const VIEWS = [["compare", "Compare"], ["detail", "Detail"]];
 
 function render() {
   $("scenario")._sync();
@@ -880,9 +766,6 @@ function render() {
   for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
   if (S.view === "compare") renderCompare();
   if (S.view === "detail") renderDetail();
-  if (S.view === "breadth") renderBreadth();
-  if (S.view === "stocks") renderStocks();
-  if (S.view === "assets") renderAssets();
 }
 
 function init() {
