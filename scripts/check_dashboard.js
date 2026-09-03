@@ -80,7 +80,7 @@ const bad = m => { fail.push(m); console.log("  FAIL " + m); };
 
 console.log("\n== payload ==");
 console.log(`  universes: ${Object.keys(DATA.universes).join(", ")}`);
-console.log(`  holdout:   ${(DATA.holdout_universes || []).join(", ")}`);
+console.log(`  pools:     ${(DATA.pools || []).map(p => p == null ? "all" : p).join(", ")}`);
 console.log(`  hg_tags:   ${(DATA.hg_tags || []).join(", ")}`);
 console.log(`  grid cells: ${Object.keys(DATA.grid).length}`);
 console.log(`  breadth keys: ${Object.keys(DATA.breadth || {}).join(", ")}`);
@@ -91,9 +91,14 @@ for (const [v] of VIEWS) {
   try {
     render();
     if (v === "detail") { ok(`${v} rendered`); continue; }
-    if (v === "compare") {                 // built through the table API, not innerHTML
-      const n = ((els["cmp"] || {})._body || { rows: [] }).rows.length;
-      n > 5 ? ok(`compare rendered ${n} rows`) : bad(`compare rendered only ${n} rows`);
+    // Views built through the DOM table API rather than by assigning innerHTML.
+    // The stub does not serialise those, so counting rows is the only honest
+    // check -- measuring innerHTML would report 0 chars for a table that
+    // rendered perfectly, which is what it did for `assets` until 2026-09-03.
+    const byTable = { compare: "cmp", assets: "ast" };
+    if (byTable[v]) {
+      const n = ((els[byTable[v]] || {})._body || { rows: [] }).rows.length;
+      n > 0 ? ok(`${v} rendered ${n} rows`) : bad(`${v} rendered only ${n} rows`);
       continue;
     }
     const body = { breadth: "brd-body", stocks: "stk-body" }[v];
@@ -116,11 +121,43 @@ hgRows.length === 2 ? ok(`compare shows ${hgRows.length} Holy Grail rows`)
                     : bad(`compare shows ${hgRows.length} Holy Grail rows, expected 2`);
 for (const r of hgRows) console.log(`       ${r.v.padEnd(7)} MAR ${r.mar}  CAGR ${r.cagr}  taken ${r.taken}`);
 
-console.log("\n== holdout has both too ==");
-for (const u of DATA.holdout_universes || []) {
-  S.uni = u; render();
-  const n = rows().filter(r => r.skey === "hg").length;
-  n === 2 ? ok(`${u}: 2 Holy Grail rows`) : bad(`${u}: ${n} Holy Grail rows`);
+/* THE POOL AXIS MUST RESOLVE. Every size the page offers has to reach real grid
+   cells. A missing cell renders as a blank row, not an error, so without this an
+   axis that was published but never computed would look like a rule that simply
+   made no trades -- which is exactly how MAR was sorted on for a day while it
+   was absent from the payload. */
+console.log("\n== scanning-pool axis ==");
+S.uni = "all";
+for (const pool of (DATA.pools || [null])) {
+  S.pool = pool;
+  if (pool != null && DATA.pool_year != null) S.year = DATA.pool_year;
+  render();
+  const got = rows().filter(r => r.mar !== null && r.mar !== undefined);
+  const label = pool == null ? "all" : String(pool);
+  got.length > 0 ? ok(`pool ${label.padEnd(4)}: ${got.length} rows with a MAR`)
+                 : bad(`pool ${label.padEnd(4)}: NO rows resolved -- axis published but not computed`);
+  if (pool != null && got.length) {
+    const w = got.filter(r => r.r && r.r.pool_wiped !== undefined).length;
+    const blown = got.filter(r => r.r && r.r.pool_wiped > 0).length;
+    w === got.length ? ok(`       all ${w} report pool_wiped`)
+                     : bad(`       only ${w}/${got.length} report pool_wiped`);
+    console.log(`       ${blown} variant(s) had at least one basket destroyed`);
+  }
+}
+S.pool = null;
+
+console.log("\n== assets view (non-equity) ==");
+S.view = "assets"; render();
+{
+  const names = Object.keys(DATA.assets || {});
+  names.length ? ok(`${names.length} instruments: ${names.join(", ")}`)
+               : bad("no non-equity instruments in the payload");
+  const fams = Object.keys(DATA.strategies);
+  for (const nm of names) {
+    const row = DATA.assets[nm] || {};
+    const got = fams.filter(f => row[f] && row[f].account).length;
+    console.log(`       ${nm.padEnd(11)} ${got}/${fams.length} strategies ran`);
+  }
 }
 
 console.log("\n== breadth view ==");

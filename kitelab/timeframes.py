@@ -15,7 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import backtest, frames, indicators, report, sizing, slippage
+# `report` went with kitelab/report.py on 2026-09-03: the import was here,
+# never called, and was the only thing keeping 328 lines of openpyxl
+# workbook-writing -- and the openpyxl dependency itself -- in the project.
+from . import backtest, frames, indicators, sizing
 
 LENGTH = 20
 BAND = 0.02

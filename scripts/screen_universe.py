@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -175,7 +174,7 @@ def main() -> None:
         ap.error("choose --candidates or --rank")
 
     cfg = config.load()
-    held = set(cfg.all_symbols) | set(config.EXCLUDED)
+    held = set(cfg.merged) | set(config.EXCLUDED)
     eq, dump = ordinary_equities()
     print(f"\n  instruments dump: {dump.name}")
     print(f"  ordinary NSE equities: {len(eq):,}   already held: {len(held)}")
@@ -222,14 +221,14 @@ def main() -> None:
     for k, n in sorted(reasons.items(), key=lambda x: -x[1]):
         print(f"    {n:5,}  {k}")
 
-    need = max(0, args.target - len(cfg.all_symbols))
+    need = max(0, args.target - len(cfg.merged))
     by_bucket: dict[str, list] = {}
     for r in passed:
         by_bucket.setdefault(bucket_of(r["turnover"]), []).append(r)
     for v in by_bucket.values():
         v.sort(key=lambda r: -r["years"])      # history is the thing you cannot buy later
 
-    print(f"\n  survivors by liquidity bucket (universe {len(cfg.all_symbols)} "
+    print(f"\n  survivors by liquidity bucket (universe {len(cfg.merged)} "
           f"-> target {args.target}, so {need} to add):")
     for _, _, name in BUCKETS:
         print(f"    {name:<20s} {len(by_bucket.get(name, [])):5,}")

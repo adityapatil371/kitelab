@@ -44,7 +44,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = config.load()
-    members = {"in": cfg.in_sample, "out": cfg.out_of_sample, "all": cfg.all_symbols}[args.universe]
+    members = {"in": cfg.in_sample, "out": cfg.out_of_sample, "all": cfg.merged}[args.universe]
     builders = {"Breakout": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
                 "EMA": backtest.simulate}
 

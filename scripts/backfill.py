@@ -48,7 +48,7 @@ def main() -> None:
             raise SystemExit(f"{args.symbols_file} has no symbols in it.")
         cfg = replace(cfg, symbols=names)
     elif args.all:
-        cfg = replace(cfg, symbols=cfg.all_symbols)
+        cfg = replace(cfg, symbols=cfg.merged)
     if args.limit:
         cfg = replace(cfg, symbols=cfg.symbols[:args.limit])
 

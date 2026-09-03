@@ -73,9 +73,13 @@ main{flex:1;height:100vh;overflow:auto;padding:18px 20px}
              background:var(--line-soft);padding:1px 5px;border-radius:4px}
 .view{display:none} .view.on{display:block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-      padding:16px}
+      padding:16px;position:relative}
 .card > h3{font-size:var(--fs);margin-bottom:2px}
 .card > .sub{color:var(--ink-3);font-size:var(--fs-sm);margin-bottom:11px}
+.export{position:absolute;top:var(--gap);right:var(--gap);font:inherit;
+  font-size:var(--fs-sm);padding:5px 11px;border:1px solid var(--line);
+  border-radius:6px;background:var(--bg-2);color:var(--ink-2);cursor:pointer}
+.export:hover{color:var(--ink-1);border-color:var(--ink-3)}
 .note{color:var(--ink-3);font-size:var(--fs-sm);line-height:1.55;margin-top:11px}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:var(--gap)}
 
@@ -138,6 +142,7 @@ svg{display:block;width:100%;overflow:visible}
     <div class="card">
       <h3>Every rule, the same conditions</h3>
       <p class="sub" id="cmp-sub"></p>
+      <button id="cmp-export" class="export">Export to Excel</button>
       <div class="tablewrap"><table id="cmp"></table></div>
       <p class="note">Sorted by <b>MAR</b> &mdash; return divided by the worst drawdown &mdash;
         because that is the comparison being made when two rows look alike. <b>Ulcer</b>
@@ -161,6 +166,14 @@ svg{display:block;width:100%;overflow:visible}
         <select id="brd-pick"></select>
       </div>
       <div id="brd-body"></div>
+    </div>
+  </div>
+
+  <div class="view" id="v-assets">
+    <div class="card">
+      <h3>Off the equity market</h3>
+      <p class="sub" id="ast-sub"></p>
+      <div style="overflow-x:auto"><table id="ast"></table></div>
     </div>
   </div>
 
@@ -233,8 +246,26 @@ const cagrText = r => r.wiped ? "wiped" : pct(r.cagr);
 const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 
 /* ── scenario: one row of controls, shared by every view ──────────────── */
-const S = { uni: "all", cap: 1, risk: 2, fill: "1", year: null, view: "compare",
-            sel: null, sort: "mar", desc: true, stock: null, brd: null };
+/* pool: how many names are SCANNED, null meaning the whole universe. Not how
+   many are held -- the account never holds more than about ten of them. */
+const S = { uni: "all", cap: 0, risk: 1, fill: "1", year: null, view: "compare",
+            pool: null, prio: null, sel: null, sort: "mar", desc: true,
+            stock: null, brd: null };
+
+/* The priority sweep is computed only over the WHOLE universe at pool_year, so
+   a non-default priority pins both. Same reasoning as poolYears: offering a
+   combination that was never computed shows a blank row, and a blank row reads
+   as "this rule made no trades" rather than "this cell does not exist". */
+const isPrio = () => S.prio != null && S.prio !== DATA.priority_default;
+
+/* A finite pool is only computed at DATA.pool_year (see fill_grid): pool size
+   crossed with start year is a second-order interaction nothing displays. So
+   choosing a pool pins the year, and the year selector says so rather than
+   offering combinations that resolve to a missing cell. */
+const poolYears = () =>
+  (S.pool == null && !isPrio()) ? DATA.start_years : [DATA.pool_year];
+const poolSizes = () =>
+  isPrio() ? [null] : (DATA.pools || [null]);
 
 function segment(label, options, get, set) {
   const f = document.createElement("div"); f.className = "field";
@@ -253,39 +284,25 @@ function segment(label, options, get, set) {
   return f;
 }
 
-/* THE HOLDOUT IS NARROW ON PURPOSE, so the controls must narrow with it.
-   Only the settings in DATA.holdout_axes were computed for those universes;
-   every other combination is a MISSING cell. Left selectable, the page would
-   answer a real question with a wall of em dashes and look broken. Worse, the
-   width itself is the hazard: the point of committing to one risk, one capital
-   and one start year in advance is that there is no menu of results to pick a
-   favourite from afterwards. Greying them out is the rule made visible. */
-const isHoldout = () => (DATA.holdout_universes || []).includes(S.uni);
-const axis = (name, all) => {
-  if (!isHoldout()) return all.map((v, i) => i);
-  const allowed = (DATA.holdout_axes || {})[name] || [];
-  const keep = all.map((v, i) => i).filter(i => allowed.includes(all[i]));
-  return keep.length ? keep : all.map((v, i) => i);
-};
-/* Snap to a computed setting when switching INTO the holdout, so the first
-   thing shown is a real number rather than a blank the reader has to fix. */
+/* THE HOLDOUT MACHINERY IS GONE (2026-09-03, config.Config.merged). isHoldout()
+   read DATA.holdout_universes, which the payload no longer carries, so it was
+   permanently false -- which made clampScenario() return on its first line every
+   time it was called, while the Universe selector went on calling it expecting
+   the scenario to be clamped. Dead code that looks live is worse than none.
+
+   What remains needing a clamp is real: a finite scanning pool and a non-default
+   signal priority are computed only at DATA.pool_year, so switching universe
+   must still pull the year back to something that exists. */
 function clampScenario() {
-  if (!isHoldout()) return;
-  const ok = (name, all, cur) => {
-    const keep = axis(name, all);
-    return keep.includes(cur) ? cur : keep[keep.length - 1];
-  };
-  S.cap = ok("capitals", DATA.capitals, S.cap);
-  S.risk = ok("risks", DATA.risks, S.risk);
-  const years = (DATA.holdout_axes || {}).start_years || DATA.start_years;
+  const years = poolYears();
   if (!years.includes(S.year)) S.year = years[years.length - 1];
 }
 
 function buildScenario() {
   const box = $("scenario"); box.innerHTML = "";
   const add = el => { box.appendChild(el); return el; };
-  const capKeep = axis("capitals", DATA.capitals);
-  const riskKeep = axis("risks", DATA.risks);
+  const capKeep = DATA.capitals.map((v, i) => i);
+  const riskKeep = DATA.risks.map((v, i) => i);
   const fields = [
     add(segment("Universe", Object.entries(DATA.universes),
                 () => S.uni, v => { S.uni = v; clampScenario(); })),
@@ -295,12 +312,39 @@ function buildScenario() {
                 () => S.risk, v => S.risk = +v)),
     add(segment("Fills", DATA.fills.map(([k, l]) => [k, l.replace(" fills", "")]),
                 () => S.fill, v => S.fill = v)),
+    /* THE SCANNING POOL. Over the whole universe the class EMA stack skips ~52%
+       of its own signals for want of cash and peaks near 30 names; the Turtle
+       skips ~35% and keeps climbing. So the ranking below is not "which rule is
+       better" until this is fixed -- it is partly which rule's signal frequency
+       fits the account. Every rule is dealt the SAME baskets at each size. */
+    add(segment("Stocks scanned",
+                poolSizes().map(v => [v == null ? "all" : v,
+                                      v == null ? "All" : String(v)]),
+                () => S.pool == null ? "all" : S.pool,
+                v => { S.pool = (v === "all" ? null : +v);
+                       if (!poolYears().includes(S.year)) S.year = DATA.pool_year;
+                       buildScenario(); })),
+    /* WHICH SIGNAL WINS THE CASH. Scanning is free and the whole market is
+       watched, so a small account sees more signals than it can fund -- 52% of
+       the EMA stack's are skipped over 500 stocks. This picks who gets the
+       money, it is NOT part of any strategy, and re-ordering was measured at an
+       8-10 CAGR point swing. "illiquid" is a control: if it scores like
+       "liquidity" then that rule was never doing anything. */
+    add(segment("Signal priority",
+                (DATA.priorities || [DATA.priority_default]).map(k => [k, {
+                  liquidity: "Most liquid", illiquid: "Least liquid",
+                  wide: "Widest stop", tight: "Tightest stop", time: "Arbitrary",
+                }[k] || k]),
+                () => S.prio || DATA.priority_default,
+                v => { S.prio = v;
+                       if (isPrio()) S.pool = null;
+                       if (!poolYears().includes(S.year)) S.year = DATA.pool_year;
+                       buildScenario(); })),
   ];
   const yf = document.createElement("div"); yf.className = "field";
   yf.innerHTML = "<span>Started trading in</span>";
   const sel = document.createElement("select");
-  const years = isHoldout() ? ((DATA.holdout_axes || {}).start_years
-                               || DATA.start_years) : DATA.start_years;
+  const years = poolYears();
   for (const y of years) {
     const o = document.createElement("option"); o.value = o.textContent = y;
     sel.appendChild(o);
@@ -338,7 +382,9 @@ const settingLabel = (skey, v) =>
   (v * 100).toFixed(0) + "% band";
 
 const keyFor = (skey, v) =>
-  `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}|${S.year}`;
+  `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
+  `|${S.year}|${S.pool == null ? "all" : S.pool}` +
+  `|${S.prio || DATA.priority_default}`;
 
 function rows() {
   const out = [];
@@ -350,10 +396,85 @@ function rows() {
                  setting: settingLabel(skey, v), r,
                  cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar: r.mar,
                  ulcer: r.ulcer, final: r.final, taken: r.taken,
+                 sharpe: r.sharpe, sortino: r.sortino, exposure: r.exposure,
                  capture: r.signals ? 100 * r.taken / r.signals : null,
                  full: r.full_pct, wiped: r.wiped });
     }
   return out;
+}
+
+/* ── export ───────────────────────────────────────────────────────────── */
+/* RAW VALUES, NOT THE FORMATTED ONES. The table prints "18.0%" and "Rs2.98 Cr"
+   because those read well; a spreadsheet needs 18.0 and 29800000 or every cell
+   arrives as text and nothing can be summed, sorted or charted. So the export
+   reads the underlying record rather than re-parsing what is on screen.
+
+   Every row also carries the full scenario -- universe, capital, risk, fill,
+   start year, scanning pool, signal priority. It makes each row self-describing,
+   so several exports can be pasted into one sheet and pivoted, which is the
+   thing a lone table of eight columns cannot do.
+
+   CSV rather than .xlsx deliberately: it opens in Excel on a double click, and
+   the dashboard server is standard library only -- no venv, no API keys, see
+   run_dashboard.sh. Writing a real workbook would mean openpyxl in the viewer
+   and would cost that property for a file Excel already reads. */
+const EXPORT_COLS = [
+  ["Strategy",  r => r.family],
+  ["Setting",   r => r.setting],
+  ["CAGR %",    r => r.wiped ? "wiped" : r.cagr],
+  ["Worst dip %", r => r.maxdd],
+  ["MAR",       r => r.mar],
+  ["Ulcer",     r => r.ulcer],
+  ["Final",     r => r.final],
+  ["Trades",    r => r.taken],
+  ["Sharpe",    r => r.sharpe],
+  ["Sortino",   r => r.sortino],
+  ["Invested %", r => r.exposure],
+  ["Captured %", r => r.capture == null ? null : Math.round(r.capture)],
+  /* null pool_worst means a basket was DESTROYED, which no number states --
+     see _pooled in dashboard_data. "wiped" is the honest cell, and the count
+     rides beside it so a single blow-up is not read as a whole column of them. */
+  ["Worst draw CAGR %", r => !r.r ? null
+      : (r.r.pool_wiped ? "wiped" : r.r.pool_worst)],
+  ["Baskets wiped", r => r.r ? r.r.pool_wiped : null],
+  ["Draws",     r => r.r ? r.r.pool_draws : null],
+];
+
+function csvCell(v) {
+  if (v === null || v === undefined) return "";
+  const t = String(v);
+  return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+
+function exportCsv() {
+  const list = sortedRows();
+  const scenario = [
+    ["Universe", DATA.universes[S.uni]],
+    ["Capital", DATA.capitals[S.cap]],
+    ["Risk %", DATA.risks[S.risk]],
+    ["Fills", fillName()],
+    ["Started", S.year],
+    ["Stocks scanned", S.pool == null ? "all" : S.pool],
+    ["Signal priority", S.prio || DATA.priority_default],
+    ["Built", DATA.built],
+  ];
+  const head = EXPORT_COLS.map(c => c[0]).concat(scenario.map(c => c[0]));
+  const lines = [head.map(csvCell).join(",")];
+  for (const r of list) {
+    lines.push(EXPORT_COLS.map(c => csvCell(c[1](r)))
+               .concat(scenario.map(c => csvCell(c[1]))).join(","));
+  }
+  /* BOM so Excel reads it as UTF-8 -- without it the rupee sign and the middle
+     dot in every strategy label arrive as mojibake. */
+  const blob = new Blob(["\uFEFF" + lines.join("\r\n")],
+                        { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `kitelab-compare-${S.uni}-${S.year}`
+    + `-pool${S.pool == null ? "all" : S.pool}`
+    + `-${S.prio || DATA.priority_default}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(a.href);
 }
 
 const COLS = [
@@ -363,12 +484,22 @@ const COLS = [
   ["maxdd",   "Worst dip",r => pct(r.maxdd)],
   ["mar",     "MAR",      r => num(r.mar)],
   ["ulcer",   "Ulcer",    r => num(r.ulcer, 1)],
+  /* Volatility, not just drawdown. Every other column here measures how deep
+     the hole got; these measure how bumpy the ride was, which is what separates
+     a rule that earned its return steadily from one that got lucky in a
+     quarter. Sharpe is null (an em dash) for a flat account, never 0. */
+  ["sharpe",  "Sharpe",   r => num(r.r && r.r.sharpe, 2)],
+  ["sortino", "Sortino",  r => num(r.r && r.r.sortino, 2)],
+  ["exposure","Invested", r => r.r && r.r.exposure == null ? "—"
+                               : Math.round(r.r.exposure) + "%"],
   ["final",   "Final",    r => inr(r.final)],
   ["taken",   "Trades",   r => r.taken == null ? "—" : r.taken.toLocaleString("en-IN")],
   ["capture", "Captured", r => r.capture == null ? "—" : Math.round(r.capture) + "%"],
 ];
 
-function renderCompare() {
+/* Shared by the table and the export, so the file holds the rows in the order
+   they were on screen. Two sorts would drift the moment either changed. */
+function sortedRows() {
   const list = rows();
   /* A wiped account sorts BELOW everything that merely lost money. As a null it
      would sort above, which is exactly backwards. */
@@ -377,6 +508,11 @@ function renderCompare() {
   list.sort((a, b) => typeof a[S.sort] === "string"
     ? a[S.sort].localeCompare(b[S.sort]) * (S.desc ? -1 : 1)
     : (val(b) - val(a)) * (S.desc ? 1 : -1));
+  return list;
+}
+
+function renderCompare() {
+  const list = sortedRows();
 
   const t = $("cmp"); t.innerHTML = "";
   const hr = t.createTHead().insertRow();
@@ -547,6 +683,56 @@ function renderDetail() {
   });
 }
 
+/* ── assets: the same rules, off the equity market ────────────────────── */
+/* These were COMPUTED AND NEVER SHOWN until 2026-09-03 -- half a megabyte of
+   payload with no view to render it. The instruments are run through the same
+   kitelab.registry as the 500 stocks, at each family's primary setting, so a
+   newly added strategy is tested here too rather than silently only on NSE.
+
+   Costs are per instrument, not the equity model: crypto exchange fees, index
+   futures and MCX pay no STT and no demat charge (backtest.FLAT_FEE_RATE).
+   Buy-and-hold sits alongside, because on a single instrument it is the only
+   benchmark that means anything -- "beat the rule" is not the question, "beat
+   owning the thing" is. */
+function renderAssets() {
+  const data = DATA.assets || {};
+  const names = Object.keys(data);
+  const fams = Object.keys(DATA.strategies);
+  const t = $("ast"); t.innerHTML = "";
+  const hr = t.createTHead().insertRow();
+  for (const h of ["Instrument", "Buy & hold"].concat(fams.map(f => DATA.strategies[f]))) {
+    const th = document.createElement("th");
+    th.textContent = h; if (h === "Instrument") th.className = "l";
+    hr.appendChild(th);
+  }
+  const tb = t.createTBody();
+  if (!names.length) {
+    const td = tb.insertRow().insertCell();
+    td.colSpan = fams.length + 2; td.className = "empty l";
+    td.textContent = "No non-equity results in this build.";
+    return;
+  }
+  for (const name of names) {
+    const row = data[name] || {}, tr = tb.insertRow();
+    const c0 = tr.insertCell(); c0.className = "l"; c0.textContent = name;
+    const bh = tr.insertCell(); bh.className = "num";
+    bh.textContent = row.bh ? row.bh.cagr.toFixed(1) + "%" : "—";
+    if (row.bh) bh.classList.add(row.bh.cagr < 0 ? "down" : "up");
+    for (const f of fams) {
+      const cell = tr.insertCell(); cell.className = "num";
+      const acct = row[f] && row[f].account;
+      if (!acct) { cell.textContent = "—"; continue; }
+      /* A wiped account has no CAGR -- the rate is undefined, not zero. */
+      if (acct.wiped || acct.cagr == null) { cell.textContent = "wiped"; cell.className = "num down"; continue; }
+      cell.textContent = acct.cagr.toFixed(1) + "%";
+      cell.classList.add(acct.cagr < 0 ? "down" : "up");
+    }
+  }
+  $("ast-sub").textContent =
+    `${names.length} instruments · ₹1,00,000 at 1% risk · each rule at its default ` +
+    `setting · costs are per instrument, not the equity model`;
+}
+
 function renderStocks() {
   const pick = $("stk-pick");
   if (!pick.options.length) {
@@ -585,7 +771,7 @@ function renderStocks() {
    best. That is the whole reason this view exists and that one is gone.
 
    These rows do NOT follow the scenario controls. They are one fixed cell --
-   the 101 in-sample stocks, 2,00,000, 1% risk, each rule at its default setting
+   the whole universe, 2,00,000, 1% risk, each rule at its default setting
    -- because the question is how WIDE a watchlist has to be, and answering it
    at every capital and risk would be answering a different question five times. */
 function renderBreadth() {
@@ -660,7 +846,7 @@ function renderBreadth() {
          so this rule needs the width it is given.`;
 
   $("brd-sub").textContent =
-    `${DATA.universe_size || full.size} in-sample stocks · ₹2,00,000 at 1% risk · `
+    `${DATA.universe_size || full.size} stocks · ₹2,00,000 at 1% risk · `
     + `random baskets, ${rows[0].draws} draws at the smallest size`;
   $("brd-body").innerHTML = `
     <p class="note" style="margin:0 0 12px;color:var(--ink-2)">${headline}</p>
@@ -686,19 +872,9 @@ function renderBreadth() {
 
 /* ── shell ────────────────────────────────────────────────────────────── */
 const VIEWS = [["compare", "Compare"], ["detail", "Detail"],
-               ["breadth", "Breadth"], ["stocks", "Stocks"]];
-
-/* The scenario controls are built once, but the holdout offers fewer settings
-   than the in-sample side -- so crossing that boundary has to REBUILD them, not
-   just re-tick them. Tracked rather than rebuilt every render: rebuilding drops
-   focus and makes the segmented buttons flicker on every sort click. */
-let builtForHoldout = null;
+               ["breadth", "Breadth"], ["assets", "Assets"], ["stocks", "Stocks"]];
 
 function render() {
-  if (builtForHoldout !== isHoldout()) {
-    builtForHoldout = isHoldout();
-    buildScenario();
-  }
   $("scenario")._sync();
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.v === S.view);
   for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
@@ -706,11 +882,11 @@ function render() {
   if (S.view === "detail") renderDetail();
   if (S.view === "breadth") renderBreadth();
   if (S.view === "stocks") renderStocks();
+  if (S.view === "assets") renderAssets();
 }
 
 function init() {
   S.year = DATA.start_default || DATA.start_years[DATA.start_years.length - 1];
-  builtForHoldout = isHoldout();
   buildScenario();
   for (const [k, label] of VIEWS) {
     const b = document.createElement("button");
@@ -722,7 +898,9 @@ function init() {
 }
 
 fetch("/api/dashboard").then(r => { if (!r.ok) throw new Error("no data"); return r.json(); })
-  .then(d => { DATA = hydrate(d); init(); })
+  .then(d => { DATA = hydrate(d); init();
+               const btn = $("cmp-export");
+               if (btn) btn.addEventListener("click", exportCsv); })
   .catch(err => {
     document.querySelector("main").innerHTML =
       `<div class="card"><div class="empty">Could not load the data —

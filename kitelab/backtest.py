@@ -6,8 +6,15 @@ Rules, as written in your spreadsheet plus the stop you specified:
             on the day that becomes true. Filled at that day's close ("buy on eod").
     stop    the low of the entry day.
     exit    whichever comes first --
-              * a later day trades at or below the stop  -> filled at the stop, or at
-                that day's open if it gapped straight through it
+              * a later day CLOSES at or below the stop -> filled at that close.
+                This is stop_on_close=True, the class convention and the
+                default (see simulate). Nothing inside the bar matters, so a
+                bar whose LOW pierced the stop but whose close recovered does
+                not exit. Measured 2026-09-03 with scripts.stops: about 10% of
+                winning trades did exactly that, and a trader holding a resting
+                stop order would not have had them. Pass stop_on_close=False
+                for the broker convention, where a touch fills at the stop and
+                a gap through it fills at the open.
               * the EMA stack breaks                     -> filled at that day's close
     re-entry only on a fresh signal. After an exit the stack must go false and turn
             true again; being stopped out while still above the EMAs is not a re-entry.
@@ -391,26 +398,6 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
         position = exit_index + 1
 
     return trades
-
-
-def recent_trades(symbol: str, count: int = 25, length: int = EMA_LENGTH,
-                  shares: int = SHARES) -> list[dict]:
-    """The most recent `count` closed trades, newest first, with running totals.
-
-    Cumulative columns run in presentation order (newest to oldest), matching how your
-    existing sheet is laid out.
-    """
-    selected = simulate(symbol, length, shares)[-count:][::-1]
-    cumulative_cost = cumulative_gross = cumulative_net = 0.0
-    for number, trade in enumerate(selected, start=1):
-        cumulative_cost += trade["cost_of_entry"]
-        cumulative_gross += trade["gross_profit"]
-        cumulative_net += trade["net_profit"]
-        trade["trade_no"] = number
-        trade["cum_cost"] = cumulative_cost
-        trade["cum_gross"] = cumulative_gross
-        trade["cum_net"] = cumulative_net
-    return selected
 
 
 def summarise(symbol: str, trades: list[dict]) -> dict:

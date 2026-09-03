@@ -53,7 +53,7 @@ def apply_deaths(trades: list[dict], deaths: dict[str, pd.Timestamp]) -> list[di
 
 
 def main() -> None:
-    trades = signals.require("EMA_all", config.load().all_symbols)
+    trades = signals.require("EMA_all", config.load().merged)
     symbols = sorted({t["symbol"] for t in trades})
     start = min(pd.Timestamp(t["entry_ts"]) for t in trades)
     end = max(pd.Timestamp(t["exit_ts"]) for t in trades)

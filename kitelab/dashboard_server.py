@@ -72,7 +72,7 @@ def status() -> dict:
     if not DATA_PATH.exists():
         return {"ok": False, "stale": False, "message": "No dashboard data yet."}
     try:
-        now = sorted(config.load().all_symbols)
+        now = sorted(config.load().merged)
     except SystemExit as exc:
         return {"ok": False, "stale": True,
                 "message": f"Cannot check whether these numbers are current: {exc}"}

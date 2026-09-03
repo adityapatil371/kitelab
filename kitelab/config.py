@@ -324,6 +324,45 @@ class Config:
         return self._dedupe(self.symbols, self.extended, self.holdout)
 
     @property
+    def merged(self) -> list[str]:
+        """Every screened stock, one universe. THIS is what results are quoted on.
+
+        Decided 2026-09-03, replacing the 101/399 in-sample/holdout split.
+
+        WHY THE SPLIT WENT. Train/test is a tool for FITTED models -- it catches a
+        model that memorised its training rows. These rules are not fitted that
+        way. Their shapes were taught in class before this repo read a single
+        candle: the 20 EMA, the M/W/D stack, ADX>25 into a pullback, Donchian
+        20-10 and 55-20. Holding 399 stocks back from a pre-specified rule buys
+        no validity, it only costs power -- and it cost a great deal, because
+        every in-sample number was then measured on 101 stocks that turned out
+        to be a list of winners. A wider deck fixes that directly.
+
+        WHAT WAS ACTUALLY FITTED HERE, which is a shorter list than the old
+        handover's "every parameter" and decides which control is needed: the 2%
+        band, the weekly gate added to the Turtle on 2026-09-01, and -- the real
+        one -- the choice of WHICH of 24 variants to headline. Everything else is
+        class-given or swept as a grid axis.
+
+        SO THE EXPOSURE IS MULTIPLE TESTING, NOT CONTAMINATION, and a holdout is
+        a blunt instrument against it: it spends 80% of the data to control for
+        something a bootstrap controls for on all of it. scripts.universe_bias
+        measured the exposure directly -- 13 different variants won across 25
+        fresh draws. The replacements are the tests traders actually run: a
+        trade bootstrap, regime splits, parameter plateaus, worst-draw baskets.
+        Every one of them is stronger on 500 stocks than on 101.
+
+        WHAT MERGING DOES NOT FIX, so that nothing here is read as a clean bill:
+        the 101 are still winners, now ~20% of the deck instead of 100%, so that
+        bias is diluted rather than gone -- on large caps it moves the median
+        buy-and-hold from +15.3% (101) to roughly +11.2% against the 399's
+        +9.7%. Survivorship is untouched and remains the largest known bias in
+        every number this project produces (~4.9pp/yr). Neither was a reason to
+        keep the split, and neither is repaired by dropping it.
+        """
+        return self._dedupe(self.symbols, self.extended, self.holdout, self.unseen)
+
+    @property
     def everything(self) -> list[str]:
         """Hand-drawn universe plus the wider list, de-duplicated, order preserved."""
         return self._dedupe(self.symbols, self.extended)

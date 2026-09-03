@@ -49,9 +49,25 @@ _WARNED: set[str] = set()
 # three additions below are the rest of that hole -- slippage.py sets the fill
 # price baked into every cached trade, and timeframes.py decides which bars a
 # multi-timeframe rule is even looking at.
-_CODE = ["backtest.py", "strategies.py", "darvas.py", "trailing.py", "frames.py",
-         "sizing.py", "indicators.py", "levels.py",
-         "holygrail.py", "slippage.py", "timeframes.py"]
+# SUPPORT modules: every producer reads through these, so a change to any of
+# them changes every trade, and no Strategy names them. The PRODUCERS are not
+# listed here -- kitelab.registry declares which module makes each strategy's
+# trades and _code_files() derives them, so a rule that is on the board is in
+# the stamp by construction. That is the whole fix for 2026-09-02: the hand-kept
+# list is gone, and with it the way to forget an entry.
+_SUPPORT = ["frames.py", "sizing.py", "indicators.py", "slippage.py",
+            "levels.py", "strategies.py", "trailing.py"]
+
+
+def _code_files() -> list[str]:
+    """Producer modules from the registry, plus the support modules above.
+
+    Imported inside the function, not at module scope: registry imports the
+    strategy modules, several of which import this one, and a module-level
+    import here would close that loop.
+    """
+    from . import registry
+    return sorted(set(registry.modules()) | set(_SUPPORT))
 
 
 def _digest(parts) -> str:
@@ -74,7 +90,7 @@ def stamp(symbols) -> dict:
                 data.append((p.name, st.st_size, st.st_mtime_ns))
     here = Path(__file__).resolve().parent
     code = [(n, here.joinpath(n).stat().st_mtime_ns)
-            for n in _CODE if here.joinpath(n).exists()]
+            for n in _code_files() if here.joinpath(n).exists()]
     return {"universe": _digest(symbols), "n_symbols": len(symbols),
             "data": _digest(data), "n_files": len(data), "code": _digest(code)}
 

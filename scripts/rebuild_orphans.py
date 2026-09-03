@@ -49,7 +49,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = config.load()
-    symbols = cfg.all_symbols
+    symbols = cfg.merged
     todo = builders(symbols)
 
     if args.check:

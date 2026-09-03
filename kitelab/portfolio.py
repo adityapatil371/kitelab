@@ -40,6 +40,66 @@ from . import frames, sizing, slippage
 #                  is what every result before 2026-08-31 did. Kept so those
 #                  numbers can still be reproduced, not because it is defensible.
 TIE_BREAK: str | None = "liquidity"
+
+# WHICH SIGNAL DO YOU TAKE WHEN YOU CANNOT AFFORD THEM ALL?
+#
+# Scanning is free -- a screener watches the whole market, which is what a real
+# trader does and what this project does. The consequence is that a small account
+# sees far more signals than it can fund: over 500 stocks at Rs2,00,000 the class
+# EMA stack skips 52% of its own for want of cash. So SOMETHING decides which are
+# taken, that something is not part of the strategy, and on these settings it is
+# deciding half the trades.
+#
+# It was a hardcoded constant until 2026-09-03. That is indefensible given the
+# note above: re-ordering was worth 17.9%-25.6% CAGR on the Turtle and
+# 8.3%-18.9% on the EMA stack -- a swing as large as the gap between the
+# strategies being compared. One rule, chosen once, never tested against another.
+#
+# EVERY RULE HERE USES ONLY WHAT WAS KNOWN AT ENTRY. The outcome fields on a
+# trade record -- exit_price, gross_profit, r_multiple, bars_held -- would rank
+# candidates by how they turned out, which is not a priority rule but a time
+# machine. Only entry_price, stop and trailing liquidity are consulted.
+#
+#   liquidity  most liquid first. The standing rule: a trader facing three
+#              breakouts takes the one they can actually fill, and it steers the
+#              account away from thin names where spread and impact bite.
+#   illiquid   least liquid first. A CONTROL, not a proposal -- if it scores like
+#              `liquidity` then the liquidity rule was never doing anything and
+#              the 8-10 point swing lives somewhere else.
+#   wide       widest stop first, as a percentage of entry. For a fixed rupee
+#              risk, position value is risk / stop%, so a wide stop is a CHEAP
+#              position: this funds the most trades and diversifies hardest.
+#   tight      tightest stop first. The mirror: the best risk-reward geometry per
+#              trade, bought by tying up the most cash in each one.
+#   time       timestamp only, ties left to list order. What every result before
+#              2026-08-31 did. Kept as the null rule, not because it is sane.
+PRIORITIES = ["liquidity", "illiquid", "wide", "tight", "time"]
+
+
+def _stop_pct(t) -> float:
+    """Stop distance as a fraction of entry. entry_price and stop are the only
+    two fields every producer sets, so this works for every strategy."""
+    entry = t["entry_price"]
+    return (entry - t["stop"]) / entry if entry else 0.0
+
+
+def _order(trades: list[dict], priority: str | None) -> list[dict]:
+    """Signals oldest first, ties broken by `priority`. Symbol last, always, so
+    the result is fully deterministic whatever the rule."""
+    if priority is None:
+        priority = TIE_BREAK
+    if priority in (None, "time"):
+        return sorted(trades, key=lambda t: t["entry_ts"])
+    keys = {
+        "liquidity": lambda t: -slippage.liquidity_at(t["symbol"], t["entry_ts"]),
+        "illiquid":  lambda t: slippage.liquidity_at(t["symbol"], t["entry_ts"]),
+        "wide":      lambda t: -_stop_pct(t),
+        "tight":     lambda t: _stop_pct(t),
+    }
+    if priority not in keys:
+        raise ValueError(f"unknown priority {priority!r}; expected one of {PRIORITIES}")
+    rank = keys[priority]
+    return sorted(trades, key=lambda t: (t["entry_ts"], rank(t), t["symbol"]))
 from .backtest import charges
 
 
@@ -208,7 +268,8 @@ def _fully_invested_pct(marked: dict) -> float | None:
     return round(100 * sum(1 for x in shares if x < 5) / len(shares), 1) if shares else None
 
 
-def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -> dict:
+def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
+        priority: str | None = None) -> dict:
     # Signals are offered oldest first, and TIES MATTER. Most sessions produce
     # several at once and a constrained account cannot take them all, so whichever
     # is offered first wins the cash. Sorting on the timestamp alone left that to
@@ -222,11 +283,9 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01) -
     # the previous close, and it steers the account away from the thin names where
     # spread and impact do their damage. Symbol name breaks any remaining tie so
     # the result is fully deterministic.
-    entries = (sorted(trades, key=lambda t: (t["entry_ts"],
-                                             -slippage.liquidity_at(t["symbol"], t["entry_ts"]),
-                                             t["symbol"]))
-               if TIE_BREAK == "liquidity"
-               else sorted(trades, key=lambda t: t["entry_ts"]))
+    # See PRIORITIES: which signal wins the cash is now a parameter, because on a
+    # cash-starved account it decides as much as the strategy does.
+    entries = _order(trades, priority)
     cash = capital
     peak = capital
     open_by_symbol: dict[str, dict] = {}

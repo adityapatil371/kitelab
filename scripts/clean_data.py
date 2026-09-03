@@ -177,12 +177,12 @@ def working_set() -> set[str]:
     the six class assets, the five assigned stocks -- one of which (HYUNDAI) is
     NOT in the universe, because it failed the quality gate but is still charted;
     leaving it out deleted its cleaned files and broke the dashboard rebuild --
-    and the holdout, which is not in all_symbols by design and would otherwise
+    and every screened name, which cfg.merged carries and would otherwise
     never be cleaned at all. Everything the analysis side reads comes from CLEAN,
     so a symbol missing here is a symbol no backtest can see.
     """
     cfg = config.load()
-    return (set(cfg.all_symbols) | set(cfg.out_of_sample) | set(ASSETS)
+    return (set(cfg.merged) | set(ASSETS)
             | set(config.CLASS_ASSIGNED))
 
 

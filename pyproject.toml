@@ -1,0 +1,24 @@
+# Packaging, added 2026-09-03. Minimal by intent: this is a workbench, not a
+# library anyone installs from an index, so there is no build backend config
+# beyond what an editable install needs and no console_scripts -- every entry
+# point is `python -m scripts.<name>`, which is how the docs describe them.
+[project]
+name = "kitelab"
+version = "0.3.0"
+description = "A local backtesting workbench for rules-based swing trading on NSE equities."
+requires-python = ">=3.11"
+dependencies = [
+    "kiteconnect>=5.2.1",
+    "pandas>=3.0.0",
+    "pyarrow>=25.0.0",
+]
+
+# pyflakes catches the one failure mode this project keeps hitting: a name that
+# resolves at import and blows up only when the line runs. A NameError inside
+# main() cost a whole rebuild on 2026-09-03; `python -m pyflakes kitelab scripts`
+# finds it in under a second.
+[project.optional-dependencies]
+dev = ["pyflakes"]
+
+[tool.setuptools]
+packages = ["kitelab", "scripts"]

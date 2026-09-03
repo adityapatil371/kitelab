@@ -7,22 +7,19 @@ python -m scripts.dashboard). The page is a pure viewer -- every control selects
 among these precomputed results, nothing is simulated in the browser.
 
 Everything is combinable with everything:
-    grid        one-account simulations for FOUR strategy stacks (EMA on
-                M/W/D and Q/M/W timeframes, plus the Darvas channel)
-                x universe (all / in-sample / holdout -- sizes are counted from
-                config, never hardcoded)
-                x risk (0.25-2%) x capital (50k-5L)
-    scaleout    the "sell half at +1R" scale-out idea, per strategy AND per
-                universe, columns matching the old Scale-Out Test sheet --
-                measured per trade (a two-part exit cannot be priced by the
-                one-account simulation)
+    grid        one-account simulations for every registered strategy
+                (kitelab.registry) x universe (all 500 and three liquidity
+                buckets, sizes counted from config, never hardcoded)
+                x risk x scanning pool x signal priority x start year
     stocks      every stock in the universe: weekly closes + trades + stats
-                for all four stacks
-    assets      the six class instruments: closes, per-stack trades/accounts,
-                scale-out variants, buy-and-hold comparison (W/D/H exists only
-                where hourly data does: BITCOIN and the two indices)
-    timeframes  the classic 5-assigned-stock gross comparison tables
-    nifty       NIFTY 50 overlay series
+    assets      the six non-equity instruments -- Bitcoin, the two indices and
+                three MCX commodities -- run through the SAME registry as the
+                equities, so a newly added strategy is tested on them too
+
+Everything here is displayed. Sections that the page did not read were removed
+on 2026-09-03: scaleout, scaleout_r, tradestats, timeframes and nifty were
+computed on every build and rendered nowhere, the scale-out sweep alone costing
+about 64 seconds of a seven-minute build.
 
 Conventions: EMA stacks use the class rule (stops checked at closes only);
 Breakout keeps intrabar stops (its buy-stop entry is inherently intrabar).
@@ -33,7 +30,6 @@ import bisect
 import json
 import os
 import re
-import pickle
 # Module level, not inside main(): the breadth sweep needs it too, and it used to
 # ride in on a local import belonging to the 10-stock Monte Carlo. Removing that
 # block on 2026-09-02 took the import with it and the sweep fell over 20 minutes
@@ -43,18 +39,21 @@ import random
 import numpy as np
 import pandas as pd
 
-from kitelab import (backtest, config, darvas, dashboard_server, frames, holygrail,
+from kitelab import (backtest, config, dashboard_server, frames,
                      portfolio, signals, sizing, slippage, strategies)
 from kitelab.progress import Bar
-from kitelab.curves import bh_stats, episodes, underwater_stats
-from kitelab import timeframes
-from kitelab.timeframes import (VARIANTS as TF_VARIANTS, simulate_variant,
-                                summarise as tf_summarise, window_start)
+from kitelab.curves import (bh_stats, calmar, episodes, exposure_pct,
+                            sharpe, sortino, underwater_stats)
+from kitelab import registry, timeframes
 
 ASSIGNED = config.CLASS_ASSIGNED
 
 OUT = config.CLEAN / "dashboard.json"
-RISKS = [0.25, 0.5, 1.0, 2.0]
+# 0.25% and 2% dropped 2026-09-03. Risk is the one lever already known to
+# REORDER the table, so more than one level earns its place -- but 0.5% and 1%
+# bracket that reordering, and the outer two only stretched the same finding
+# across twice the grid.
+RISKS = [0.5, 1.0]
 
 # "What if I had started in <year>?" Every account used to begin at the first
 # trade in the data -- 2006 for every strategy -- so a headline like Rs2.98 crore
@@ -118,10 +117,23 @@ FILL_MODES = [("0", "Perfect fills"),
               ("1", "Realistic fills (costs + cap)")]
 FILL_SPEC = {"0": (False, False), "2": (True, False),
              "3": (False, True), "1": (True, True)}       # key -> (costs, cap)
+
+# ONLY REALISTIC FILLS ARE GRIDDED, from 2026-09-03. The other three modes exist
+# to decompose ONE result into where its money went -- they are a diagnostic, not
+# a comparison, and the cost waterfall that read them is the only thing that ever
+# did. Gridding all four multiplied every cell by 4 to answer a question the
+# compare table does not ask. FILL_MODES is left whole so the waterfall can be
+# turned back on by widening this one list.
+GRID_FILLS = ["1"]
 REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnover
 
 # THE HOLDOUT RUNS NARROW, AND THAT IS THE POINT.
 #
+# HISTORICAL, kept for the reasoning rather than the numbers: the grid offered
+# 4 risks x 3 capitals x 5 start years when this was written. It is now 2 risks,
+# one capital and one gridded fill mode -- see RISKS, CAPITALS and GRID_FILLS,
+# each of which carries the measurement that shrank it. The argument below is
+# about the holdout, which was retired on 2026-09-03 (config.Config.merged).
 # The in-sample side offers 4 risks x 3 capitals x 5 start years because
 # browsing it is how the parameters were chosen. Offering the same width on the
 # 399 would hand back 1,380 results per fill mode to pick a favourite from --
@@ -137,27 +149,90 @@ REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnov
 # find a better one.
 #
 # Widening these later does not cost a rebuild. It costs the holdout.
-HOLDOUT_RISKS = [0.5, 1.0]
-HOLDOUT_CAPITALS = [200_000]
-HOLDOUT_YEARS = [2018]
+#
+# RETIRED 2026-09-03 along with the split itself. The narrow axes were the right
+# discipline for a holdout and are kept here as the record of one: the reason
+# they existed -- a wide grid over an untouched set is a menu to pick a
+# favourite from -- is now handled by not picking a favourite at all. See
+# config.Config.merged for why the split went, and scripts.bootstrap for what
+# replaced it.
 # Small accounts dropped 2026-09-01: below ~Rs1 lakh the size cap decides the
 # result more than the rule does, which made those columns a study of the cap.
-CAPITALS = [100_000, 200_000, 300_000]
+#
+# CUT TO ONE on 2026-09-03. The handover has said since 2026-09-01 that capital
+# barely moves the result: position size scales with equity, so more money buys
+# bigger positions rather than more of them, and the lever is the risk setting.
+# Three capitals cost 3x the grid to print the same ranking three times.
+CAPITALS = [200_000]
+
+# HOW MANY STOCKS ARE BEING SCANNED -- a different question from how many are
+# owned. Each cell runs the rule over a random sample of this many names from the
+# selected universe. The account still holds only what it can fund, which on
+# these settings is never more than about ten positions at once.
+#
+# WHY THIS IS AN AXIS AND NOT A FOOTNOTE. Over the full universe the class EMA
+# stack skips 52% of its own signals for want of cash, and its median return
+# PEAKS near 30 names then falls away; the Turtle skips 35% and climbs all the
+# way to the end of the list. So "which rule is better" has no answer until the
+# size of the scanning pool is fixed. A table computed over every name is not
+# reporting which rule is better -- it is reporting how well each rule's signal
+# frequency happens to fit one account size. This axis puts that choice in front
+# of the reader instead of burying it in the default.
+POOL_SIZES = [15, 30, 50, 100, 250]        # plus None, meaning the whole universe
+POOL_DRAWS = {15: 12, 30: 10, 50: 8, 100: 6, 250: 4}
+
+# WHICH SIGNAL WINS THE CASH -- see portfolio.PRIORITIES for what each means and
+# why none of them may look at how a trade turned out. Swept only at the whole
+# universe and START_DEFAULT: "does the ordering rule matter" is asked once, and
+# crossing it with the pool sweep would multiply the slowest stage in the build.
+PRIORITIES = portfolio.PRIORITIES
+PRIORITY_DEFAULT = "liquidity"
+# Fixed, so a rebuild reproduces the same baskets -- and, far more important, so
+# EVERY STRATEGY IS DEALT THE SAME HANDS. Draw per strategy and the compare table
+# would be measuring which rule drew the luckier stocks. See _baskets.
+# Shared with the breadth sweep -- see BREADTH_SIZES for why one seed matters.
+BASKET_SEED = 20260831
+
+
+def _draw_baskets(pool: list[str], size: int, draws: int) -> list[list[str]]:
+    """`draws` random baskets of `size` names, deterministic and SHARED.
+
+    Deterministic twice over. Across strategies, so the compare table measures
+    rules rather than which rule drew the better stocks. And across VIEWS: the
+    generator is seeded per size, so asking for 12 baskets of 15 yields the first
+    12 of the 30 that breadth asks for. Two views, one set of hands.
+    """
+    if size >= len(pool):
+        return [sorted(pool)]
+    rng = random.Random(BASKET_SEED + size)
+    return [rng.sample(sorted(pool), size) for _ in range(draws)]
+
+
+# ONE SAMPLER FOR BOTH VIEWS.
+#
+# Breadth and the compare page's pool axis both ask "what happens when only N
+# stocks are scanned", and each used to draw from its own seed -- so Breadth at
+# 15 names and Compare at pool 15 answered the same question over DIFFERENT
+# stocks, and disagreed for a reason the page never gave. They share
+# _draw_baskets and BASKET_SEED now, and POOL_SIZES is a subset of
+# BREADTH_SIZES, so wherever the two name the same size they are looking at the
+# same baskets: the pool axis simply reads fewer of them, its draw count being a
+# PREFIX of breadth's, which the shared generator guarantees.
+BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150, 250]
+BREADTH_DRAWS = {5: 30, 10: 30, 15: 30, 20: 30, 30: 20, 50: 20, 75: 10, 100: 10,
+                 150: 10, 250: 10}
 ASSETS = [("BITCOIN", "30m", 0.0010), ("NIFTY 50", "30m", 0.0005),
           ("NIFTY BANK", "30m", 0.0005), ("GOLD", "1d", 0.0005),
           ("SILVER", "1d", 0.0005), ("CRUDEOIL", "1d", 0.0005)]
 STEP = 10
-BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
+BANDS = registry.BANDS
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
 # computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
 # variant still work and still have scripts -- they are simply not on the board.
 # "Turtle", not "Darvas": the 20/10 and 55/20 channels are what the Turtles
 # traded, which is what the class is studying. The old label was wrong and the
 # module docstring has always said so.
-STRATEGY_LABELS = {"ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W",
-                   "pair": "EMA · one higher TF", "e1": "EMA · daily only",
-                   "eath": "EMA · near the high",
-                   "dv": "Turtle channel", "hg": "Holy Grail · ADX"}
+STRATEGY_LABELS = registry.families()
 
 # HOW MANY HIGHER TIMEFRAMES DOES THE RULE NEED, AND WHICH?
 #
@@ -176,8 +251,8 @@ PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
 #         says what monthly and weekly are actually worth.
 #   eath  the full M/W/D stack, but only buying within 10% of the running
 #         all-time high.
-SOLO_BAND = 0.02
-ATH_BAND = 0.10
+SOLO_BAND = registry.SOLO_BAND
+ATH_BAND = registry.ATH_BAND
 
 # The Holy Grail's band slot carries its STOP, because "SL will be swing low"
 # (rule 6) has two defensible readings and the choice is worth more than any
@@ -206,7 +281,7 @@ ATH_BAND = 0.10
 #
 # Structurally different trades from identical signals, and BOTH lose at account
 # level -- so showing both cannot be cherry-picking a winner. There isn't one.
-HG_VARIANTS = [("candle", "signal_low"), ("swing", "pivot")]
+HG_VARIANTS = registry.HG_VARIANTS
 HG_TAGS = [tag for tag, _ in HG_VARIANTS]
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as
@@ -216,21 +291,20 @@ HG_TAGS = [tag for tag, _ in HG_VARIANTS]
 # The two systems the Turtles actually traded: System 1 (20 in, 10 out) and
 # System 2 (55 in, 20 out). The other window pairs tried earlier were ours, not
 # theirs, and are dropped.
-DARVAS_WINDOWS = [(20, 10), (55, 20)]
+DARVAS_WINDOWS = registry.DARVAS_WINDOWS
 
 # Every window is computed BOTH ways, because that is the question being asked.
 # The class found that one timeframe took every breakout, including the ones
 # against the larger trend, and that those were where the losses were. The weekly
 # gate is the proposed fix; "1TF" is the control it has to beat. Testing the gate
 # at only one window would answer half the question.
-DARVAS_GATED = [True, False]
+DARVAS_GATED = registry.DARVAS_GATED
 DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
                for g in DARVAS_GATED for a, b in DARVAS_WINDOWS]
 DARVAS_DEFAULT = "20-10"
 
 # The one setting each strategy shows on the per-stock page.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "pair": "WD", "e1": "daily",
-           "eath": "near-high", "dv": DARVAS_DEFAULT, "hg": "swing"}
+PRIMARY = registry.PRIMARY
 
 
 def tag(band) -> str:
@@ -286,6 +360,11 @@ def curve_payload(curve, cash_curve=None):
     return out
 
 
+def _round(v, places=2):
+    """None stays None; numpy scalars become plain floats (see to_native)."""
+    return None if v is None else round(float(v), places)
+
+
 def run_payload(r):
     longest, current = underwater_stats(r["curve"])
     eps = [{"peak": str(e["peak_day"].date()), "trough": str(e["trough_day"].date()),
@@ -306,6 +385,15 @@ def run_payload(r):
             "taken": len(r["taken"]), "signals": r["signals"],
             # return against pain -- the compare page sorts on mar by default
             "mar": keep(r.get("mar")), "ulcer": keep(r.get("ulcer")),
+            # VOLATILITY, added 2026-09-03. Every metric above is a drawdown
+            # measure, so a rule that made its return in one lucky quarter and
+            # one that ground it out steadily scored identically. None where
+            # undefined (a flat account has no Sharpe), never 0.0, which would
+            # rank an undefined result alongside a merely mediocre one.
+            "sharpe": _round(sharpe(r["curve"])),
+            "sortino": _round(sortino(r["curve"])),
+            "calmar": _round(calmar(r["cagr_pct"], r["max_drawdown_pct"])),
+            "exposure": exposure_pct(r["curve"], r.get("cash_curve")),
             # how much of the account is waiting rather than working
             "skipped_cash": r["skipped_cash"],
             "median_cash": keep(r.get("median_cash_pct")),
@@ -322,7 +410,7 @@ def cached_signals(name: str, build, over=None) -> list[dict]:
     stamps each cache with the universe, the price files and the strategy code it was
     built from, and load() returns None when any of those has moved.
     """
-    universe = list(over) if over is not None else config.load().all_symbols
+    universe = list(over) if over is not None else config.load().merged
     hit = signals.load(name, universe)
     if hit is not None:
         return hit
@@ -337,20 +425,6 @@ def cached_signals(name: str, build, over=None) -> list[dict]:
     bar.close()
     signals.save(name, out, universe)
     return out
-
-
-def variant_builder(key: str, band: float = 0.02):
-    """simulate_variant trades, padded with the fields portfolio.run needs."""
-    def build(symbol):
-        out = []
-        for t in simulate_variant(symbol, key, band=band):
-            t = dict(t)
-            t["same_session"] = (pd.Timestamp(t["entry_ts"]).date()
-                                 == pd.Timestamp(t["exit_ts"]).date())
-            t["net_profit"] = t["gross_profit"] - t["charges"]
-            out.append(t)
-        return out
-    return build
 
 
 def capture_ratio(trades: list[dict]):
@@ -470,114 +544,71 @@ def close_series(daily: pd.DataFrame) -> dict:
     return {"d": d, "c": c}
 
 
-SCALE_VARIANTS = [("Keep full position (baseline)", None),
-                  ("Sell half at +1R", "half"),
-                  ("Sell half at +1R, stop to breakeven", "half_be")]
-
-# Where to bank the half, as a multiple of R (the risk taken: entry minus stop).
-# 1.0 is the rule as taught and reuses the original cache names.
-SCALE_MULTIPLES = [0.5, 1.0, 1.5, 2.0, 3.0]
-
-# "How many stocks does this rule need?" Random baskets at each size, one account
-# each. The answer is a deployment question, not a stock-picking one: a rule whose
-# stop sits far below entry buys small positions and needs many at once before the
-# money is working. DRAWS is smaller for big baskets -- they are slow to simulate
-# and barely vary.
-# The final size is the WHOLE universe, whatever that currently is -- one draw,
-# because there is only one way to pick all of them.
-BREADTH_SIZES = [5, 10, 15, 20, 30, 50, 75, 100, 150]
-BREADTH_DRAWS = {5: 30, 10: 30, 15: 30, 20: 30, 30: 20, 50: 20, 75: 10, 100: 10,
-                 150: 10}
-BREADTH_SEED = 20260831
-SCALE_RULES = [("half", "Sell half"), ("half_be", "Sell half, stop to breakeven")]
-
-
 # --------------------------------------------------------------- main ----
+
+def signal_lists(over=None, suffix="all", label="") -> dict:
+    """Every registered strategy, over one universe.
+
+    A loop over kitelab.registry rather than a hand-written list of 24 calls.
+    Adding a strategy is appending a Strategy there; it then appears here, in
+    the compare grid, in the breadth sweep and in scripts.bootstrap, measured on
+    the same stocks and the same account as everything already on the board.
+
+    `suffix` only names the cache. The stamp inside it records the universe, so
+    a cache built over one universe can never be served for a question about
+    another even if the names were to collide.
+    """
+    out = {}
+    for strat in registry.REGISTRY:
+        out[(strat.key, strat.variant)] = cached_signals(
+            f"{strat.cache}_{suffix}", strat.build, over)
+    print(f"    {label}{len(out)} strategies ready", flush=True)
+    return out
+
 
 def main() -> None:
     cfg = config.load()
 
-    def signal_lists(over=None, suffix="all", label="") -> dict:
-        """Every strategy variant, over one universe.
-
-        Factored out on 2026-09-02 so the holdout runs the SAME 23 definitions as
-        the in-sample side. Two copies of this list would be two strategies
-        wearing one name, and the comparison the holdout exists to make would be
-        measuring the drift between the copies.
-
-        `suffix` only names the cache. The stamp inside it records the universe,
-        so an in-sample cache can never be served for a holdout question even if
-        the names were to collide.
-        """
-        out = {}
-        for band in BANDS:
-            # band 2% keeps the old cache names. Named cache_tag, not tag: tag() is the
-            # module-level key formatter and a local of that name shadows it.
-            cache_tag = "" if band == 0.02 else f"_b{band*100:g}"
-            out[("ema", band)] = cached_signals(
-                f"EMA{cache_tag}_{suffix}",
-                lambda s, b=band: backtest.simulate(s, band=b), over)
-            out[("qmw", band)] = cached_signals(
-                f"QMW{cache_tag}_{suffix}", variant_builder("QMW", band), over)
-            print(f"    {label}band {band:.0%} ready", flush=True)
-        # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a trade
-        # list built before that date is a different strategy under the same label.
-        # The old caches are UNSTAMPED, which means load() would hand them back
-        # without complaint -- renaming is what forces the rebuild.
-        for gated in DARVAS_GATED:
-            for entry_len, exit_len in DARVAS_WINDOWS:
-                window_tag = f"{entry_len}-{exit_len}" + ("" if gated else " 1TF")
-                stem = f"Turtle_w{darvas.WEEKLY_LEN}" if gated else "Turtle_1tf"
-                out[("dv", window_tag)] = cached_signals(
-                    f"{stem}_{entry_len}_{exit_len}_{suffix}",
-                    lambda s, a=entry_len, b=exit_len, g=gated:
-                        darvas.simulate(s, a, b, weekly=g), over)
-        for pair_key in PAIR_TAGS:
-            out[("pair", pair_key)] = cached_signals(
-                f"EMA_{pair_key}_{suffix}", variant_builder(pair_key, SOLO_BAND), over)
-        out[("e1", "daily")] = cached_signals(
-            f"EMA_daily_only_{suffix}",
-            lambda s: backtest.simulate(s, band=SOLO_BAND, stack="daily"), over)
-        out[("eath", "near-high")] = cached_signals(
-            f"EMA_ath{ATH_BAND*100:g}_{suffix}",
-            lambda s: backtest.simulate(s, band=SOLO_BAND, ath_band=ATH_BAND), over)
-        print(f"    {label}ema variants ready", flush=True)
-        print(f"    {label}turtle windows ready", flush=True)
-        for hg_tag, hg_stop in HG_VARIANTS:
-            out[("hg", hg_tag)] = cached_signals(
-                f"HolyGrail_{hg_tag}_{suffix}",
-                lambda s, st=hg_stop: holygrail.simulate(s, stop=st), over)
-        print(f"    {label}holy grail ready", flush=True)
-        return out
-
     print("  signal lists (cached where possible):", flush=True)
-    base = signal_lists()
-    scale_lists = {
-        ("ema", "half"): cached_signals("EMA_half_all",
-                                        lambda s: backtest.simulate(s, scale_out="half")),
-        ("ema", "half_be"): cached_signals("EMA_halfbe_all",
-                                           lambda s: backtest.simulate(s, scale_out="half_be")),
-    }
+    base = signal_lists(cfg.merged)
 
     # Counted, not typed. Seven stocks were removed from the universe on
     # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
     # otherwise have quietly gone on saying it.
-    # In-sample and holdout splits dropped 2026-09-01. What is left is the two
-    # questions actually being asked: the whole universe, and the 10 stocks you
-    # would really hold. cfg.in_sample / cfg.out_of_sample still exist for
-    # scripts that want them.
+    # The 101/399 in-sample/holdout split was dropped on 2026-09-03 and every
+    # universe below is cut from the merged 500 (config.Config.merged, which
+    # carries the argument). cfg.in_sample / cfg.out_of_sample still exist, so
+    # scripts.universe_bias can still ask what the old split measured.
     # Liquidity buckets, so a rule can be judged on the stocks it would actually
     # be run on. Median daily traded value over each stock's whole history --
     # the same measure and the same cut points scripts.screen_universe uses to
     # admit a stock, so "mid" here means what it means there.
-    def buckets(symbols):
-        """(small, mid, large) by median daily traded value. Same cut points on
-        both sides of the split, or the holdout's buckets would not be
-        comparable with the in-sample ones they are meant to test."""
+    def buckets(symbols, asof=None):
+        """(small, mid, large) by median daily traded value AS OF `asof`.
+
+        THE asof IS THE POINT. Until 2026-09-03 this took the median over each
+        stock's WHOLE history, so a company that only became liquid in 2024 was
+        filed as a large cap for a backtest starting in 2006 -- the universe
+        definition reading the future while every indicator in the project was
+        scrupulous about not doing so. The same sin, one level up, and the
+        rigour elsewhere made it easy to miss.
+
+        Bars from `asof` onward are excluded, so membership uses only what the
+        tape had shown by then. Cut points are scripts.screen_universe's, so
+        "mid" means there what it means here.
+
+        WHAT IS STILL NOT FIXED, and it needs a refetch rather than a patch: the
+        ADMISSION gate in screen_universe also measures over full history, so
+        the 500 are stocks that turned out to be liquid. Membership is
+        point-in-time now; eligibility is not.
+        """
+        cut = pd.Timestamp(f"{asof}-01-01") if asof else None
         turn = {}
         for sym in symbols:
             try:
                 d = frames.daily(sym)
+                if cut is not None:
+                    d = d[d["ts"] < cut]
                 v = (d["close"] * d["volume"]).to_numpy(float)
                 v = v[v > 0]
                 if len(v):
@@ -588,7 +619,11 @@ def main() -> None:
                 {s for s, t in turn.items() if 5e7 <= t < 25e7},
                 {s for s, t in turn.items() if t >= 25e7})
 
-    small, mid, large = buckets(cfg.all_symbols)
+    # As of START_DEFAULT, the reference year every headline is quoted at. One
+    # classification rather than one per start year: the universe key is part of
+    # every grid key, so per-year buckets would multiply the grid and make two
+    # cells labelled "large" mean different sets of stocks.
+    small, mid, large = buckets(cfg.merged, asof=START_DEFAULT)
     print(f"  liquidity: {len(small)} small/micro, {len(mid)} mid, "
           f"{len(large)} large", flush=True)
     # The three liquidity buckets, and ALL of them. "large" was missing until
@@ -596,27 +631,11 @@ def main() -> None:
     # -- the ones easiest to actually trade -- were the only group with no view
     # of their own. The cut points are scripts.screen_universe's, so "mid" here
     # means what it means there.
-    universes = {"all": (f"All {len(cfg.all_symbols)} stocks", None),
+    universes = {"all": (f"All {len(cfg.merged)} stocks", None),
                  "large": (f"{len(large)} large caps", large),
                  "mid": (f"{len(mid)} mid caps", mid),
                  "small": (f"{len(small)} small caps", small)}
 
-    # ---- the holdout: the same four groups over stocks nothing has seen ----
-    unseen = cfg.out_of_sample
-    hold = hold_universes = {}
-    if unseen:
-        print(f"  holdout: {len(unseen)} stocks nothing has been tuned on", flush=True)
-        hold = signal_lists(unseen, "hold", "holdout ")
-        h_small, h_mid, h_large = buckets(unseen)
-        print(f"  holdout liquidity: {len(h_small)} small/micro, {len(h_mid)} mid, "
-              f"{len(h_large)} large", flush=True)
-        # Same bucket names, prefixed. The page can put "h_mid" beside "mid" and
-        # be asking one question: the rule was ranked on 18 mid caps it was tuned
-        # on -- does that ranking survive on 100 it has never seen?
-        hold_universes = {"h_all": (f"Holdout · all {len(unseen)} stocks", None),
-                          "h_large": (f"Holdout · {len(h_large)} large caps", h_large),
-                          "h_mid": (f"Holdout · {len(h_mid)} mid caps", h_mid),
-                          "h_small": (f"Holdout · {len(h_small)} small caps", h_small)}
 
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and
@@ -625,13 +644,10 @@ def main() -> None:
     slippage.reset()
     slipped = {key: [slippage.apply_spread(t) for t in trades]
                for key, trades in base.items()}
-    h_slipped = {key: [slippage.apply_spread(t) for t in trades]
-                 for key, trades in hold.items()}
     slippage.ENABLED = False
     print("  spread applied to the cached signal lists", flush=True)
     # The spread is a COST, so it rides with the costs half of the key.
     sets = {fkey: (slipped if costs else base) for fkey, (costs, _) in FILL_SPEC.items()}
-    h_sets = {fkey: (h_slipped if costs else hold) for fkey, (costs, _) in FILL_SPEC.items()}
 
     def execution(costs: bool, cap: bool):
         """Impact and the size limit live in portfolio.run, so they are globals."""
@@ -641,14 +657,77 @@ def main() -> None:
 
     grid = {}
 
-    def fill_grid(bar, source, unis, risks, capitals, years):
-        """One pass of the grid. Called twice: full width for the in-sample 101,
-        narrow for the holdout -- see HOLDOUT_RISKS for why the second is not
-        simply the first with more stocks."""
-        for fkey, _flabel in FILL_MODES:
+    # THE SAME HANDS FOR EVERY STRATEGY.
+    #
+    # Baskets are drawn once per (universe, size) and reused by every rule, so a
+    # difference in the compare table is a difference between RULES. Draw them
+    # inside the strategy loop instead and the table silently becomes a report of
+    # which rule was dealt the better stocks -- the deck would stop cancelling,
+    # which is the one property that kept these comparisons worth having when the
+    # universe itself turned out to be biased.
+    basket_cache: dict = {}
+
+    def _baskets(ukey, members, size):
+        hit = basket_cache.get((ukey, size))
+        if hit is None:
+            hit = _draw_baskets(list(members), size, POOL_DRAWS[size])
+            basket_cache[(ukey, size)] = hit
+        return hit
+
+    def _pooled(window, ukey, members, size, capital, risk, priority):
+        """One cell at a finite scanning pool: the MIDDLE draw, not the best.
+
+        The payload comes from a single real run rather than from per-metric
+        medians, so its CAGR, drawdown and MAR describe one account that actually
+        existed. A median CAGR paired with a median drawdown from a different
+        draw is a portfolio nobody ran.
+
+        `pool_worst` rides along because it answers "but I do not know WHICH 15
+        stocks". The median says what a typical basket did; the worst says what
+        the unlucky one did, and on a small account that is the number deciding
+        whether a rule is tradeable at all.
+        """
+        runs = []
+        for basket in _baskets(ukey, members, size):
+            keep = set(basket)
+            sub_trades = [t for t in window if t["symbol"] in keep]
+            if sub_trades:
+                runs.append(portfolio.run(sub_trades, capital, risk, priority))
+        if not runs:
+            return None
+        # A WIPED BASKET IS THE WORST OUTCOME, NOT A MISSING ONE. portfolio.run
+        # reports cagr_pct as None when the account is destroyed, because the
+        # rate is undefined -- and the first version of this filtered those out,
+        # so the median was taken over the survivors and `pool_worst` named the
+        # worst basket THAT LIVED. Both flattered, and pool_worst worst of all:
+        # it is the number a reader leans on precisely because they cannot
+        # choose their stocks. Wiped draws now sort below every loss, exactly as
+        # the breadth sweep has always done, and their count is published.
+        wiped = [r for r in runs if r.get("cagr_pct") is None]
+        rated = sorted((r for r in runs if r.get("cagr_pct") is not None),
+                       key=lambda r: r["cagr_pct"])
+        ordered = wiped + rated
+        out = run_payload(ordered[len(ordered) // 2])
+        out["pool_draws"] = len(ordered)
+        out["pool_wiped"] = len(wiped)
+        # None means "the worst basket was destroyed", which no number says.
+        out["pool_worst"] = None if wiped else round(rated[0]["cagr_pct"], 2)
+        out["pool_best"] = round(rated[-1]["cagr_pct"], 2) if rated else None
+        return out
+
+    def fill_grid(bar, source, unis, risks, capitals, years, pools):
+        """One pass of the grid, over every universe at every setting.
+
+        The pool axis is swept only at START_DEFAULT. Pool size crossed with
+        start year is a second-order interaction -- how a rule's cash starvation
+        differed between 2012 and 2022 -- and gridding it would multiply the
+        build by the number of start years to answer a question no view asks.
+        """
+        for fkey in GRID_FILLS:
             execution(*FILL_SPEC[fkey])
             for (skey, band), signals in source[fkey].items():
                 for ukey, (ulabel, members) in unis.items():
+                    pool_members = members if members is not None else cfg.merged
                     subset = (signals if members is None
                               else [t for t in signals if t["symbol"] in members])
                     # Sorted once; each start year is a suffix of the one before, so
@@ -658,31 +737,44 @@ def main() -> None:
                     for year in years:
                         cut = bisect.bisect_left(stamps, pd.Timestamp(f"{year}-01-01"))
                         window = subset[cut:]
-                        for risk in risks:
-                            for capital in capitals:
-                                key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
-                                       f"|{capital}|{fkey}|{year}")
-                                if not window:
-                                    grid[key] = None
-                                    bar.step()
-                                    continue
-                                r = portfolio.run(window, capital, risk / 100)
-                                grid[key] = run_payload(r)
-                                bar.step()
+                        sizes = pools if year == START_DEFAULT else [None]
+                        for size in sizes:
+                            # The priority sweep is asked once, over the whole
+                            # universe at the default year. Everywhere else runs
+                            # the standing rule, so those cells stay comparable
+                            # with every number published before today.
+                            prios = (PRIORITIES
+                                     if size is None and year == START_DEFAULT
+                                     else [PRIORITY_DEFAULT])
+                            for prio in prios:
+                                for risk in risks:
+                                    for capital in capitals:
+                                        key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
+                                               f"|{capital}|{fkey}|{year}"
+                                               f"|{size if size else 'all'}|{prio}")
+                                        if not window:
+                                            grid[key] = None
+                                            bar.step()
+                                            continue
+                                        if size is None:
+                                            grid[key] = run_payload(portfolio.run(
+                                                window, capital, risk / 100, prio))
+                                        else:
+                                            grid[key] = _pooled(
+                                                window, ukey, pool_members, size,
+                                                capital, risk / 100, prio)
+                                        bar.step()
 
-    total = (len(FILL_MODES) * len(sets[FILL_MODES[0][0]]) * len(universes)
-             * len(RISKS) * len(CAPITALS) * len(START_YEARS))
+    # Cells per (variant, universe, risk, capital): one per start year over the
+    # whole universe, plus the pool sweep at START_DEFAULT.
+    pool_axis = POOL_SIZES + [None]
+    per_combo = len(START_YEARS) + len(POOL_SIZES) + len(PRIORITIES) - 1
+    total = (len(GRID_FILLS) * len(sets[GRID_FILLS[0]]) * len(universes)
+             * len(RISKS) * len(CAPITALS) * per_combo)
     bar = Bar(total, "grid")
-    fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS)
+    fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS, pool_axis)
     bar.close()
 
-    if hold_universes:
-        h_total = (len(FILL_MODES) * len(h_sets[FILL_MODES[0][0]]) * len(hold_universes)
-                   * len(HOLDOUT_RISKS) * len(HOLDOUT_CAPITALS) * len(HOLDOUT_YEARS))
-        h_bar = Bar(h_total, "holdout")
-        fill_grid(h_bar, h_sets, hold_universes, HOLDOUT_RISKS, HOLDOUT_CAPITALS,
-                  HOLDOUT_YEARS)
-        h_bar.close()
     execution(False, False)
 
     # WHERE THE RETURN WENT.
@@ -699,100 +791,38 @@ def main() -> None:
     # changes WHICH signals are affordable, so it interacts with costs rather
     # than stacking on them. The gap is reported as `interaction`.
     waterfall = {}
-    for (skey, band) in sets["0"]:
-        for ukey in universes:
-            for risk in RISKS:
-                for capital in CAPITALS:
-                    def cell(fkey):
-                        k = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
-                             f"|{capital}|{fkey}|{START_DEFAULT}")
-                        got = grid.get(k)
-                        return got["cagr"] if got else None
-                    perfect, costs, cap, both = (cell("0"), cell("2"),
-                                                 cell("3"), cell("1"))
-                    if perfect is None or both is None:
-                        continue
-                    step_costs = None if costs is None else round(costs - perfect, 2)
-                    step_cap = None if cap is None else round(cap - perfect, 2)
-                    inter = (None if None in (step_costs, step_cap)
-                             else round((both - perfect) - step_costs - step_cap, 2))
-                    waterfall[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}"] = {
-                        "perfect": perfect, "costs": step_costs,
-                        "cap": step_cap, "interaction": inter, "net": both}
-    print(f"  cost waterfall: {len(waterfall):,} cells", flush=True)
+    # The waterfall decomposes ONE result across all four fill modes, and only
+    # mode "1" is gridded now (see GRID_FILLS). Rather than emit a table of
+    # nulls that the page would render as zeroes -- a cost of nothing, which is
+    # the most flattering possible lie -- it is skipped outright and the page
+    # falls back to hiding the block. Widen GRID_FILLS to bring it back.
+    if len(GRID_FILLS) < len(FILL_MODES):
+        print("  cost waterfall: skipped (only realistic fills are gridded)",
+              flush=True)
+    else:
+        for (skey, band) in sets["0"]:
+            for ukey in universes:
+                for risk in RISKS:
+                    for capital in CAPITALS:
+                        def cell(fkey):
+                            k = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
+                                 f"|{capital}|{fkey}|{START_DEFAULT}"
+                                 f"|all|{PRIORITY_DEFAULT}")
+                            got = grid.get(k)
+                            return got["cagr"] if got else None
+                        perfect, costs, cap, both = (cell("0"), cell("2"),
+                                                     cell("3"), cell("1"))
+                        if perfect is None or both is None:
+                            continue
+                        step_costs = None if costs is None else round(costs - perfect, 2)
+                        step_cap = None if cap is None else round(cap - perfect, 2)
+                        inter = (None if None in (step_costs, step_cap)
+                                 else round((both - perfect) - step_costs - step_cap, 2))
+                        waterfall[f"{skey}|{tag(band)}|{ukey}|{risk:g}|{capital}"] = {
+                            "perfect": perfect, "costs": step_costs,
+                            "cap": step_cap, "interaction": inter, "net": both}
+        print(f"  cost waterfall: {len(waterfall):,} cells", flush=True)
 
-    tradestats = {}
-    for fkey, _flabel in FILL_MODES:
-        for (skey, band), signals in sets[fkey].items():
-            for ukey, (_, members) in universes.items():
-                subset = (signals if members is None
-                          else [t for t in signals if t["symbol"] in members])
-                tradestats[f"{skey}|{tag(band)}|{ukey}|{fkey}"] = \
-                    trade_stats(positions(subset))
-    for fkey, _flabel in FILL_MODES:
-        for (skey, band), signals in h_sets[fkey].items():
-            for ukey, (_, members) in hold_universes.items():
-                subset = (signals if members is None
-                          else [t for t in signals if t["symbol"] in members])
-                tradestats[f"{skey}|{tag(band)}|{ukey}|{fkey}"] = \
-                    trade_stats(positions(subset))
-    print("  universe trade metrics done", flush=True)
-
-    scaleout = {}
-    for skey in ("ema",):
-        lists = {None: base[(skey, 0.02)], "half": scale_lists[(skey, "half")],
-                 "half_be": scale_lists[(skey, "half_be")]}
-        scaleout[skey] = {}
-        for ukey, (_, members) in universes.items():
-            rows = []
-            for label, variant in SCALE_VARIANTS:
-                trades = lists[variant]
-                subset = (trades if members is None
-                          else [t for t in trades if t["symbol"] in members])
-                rows.append({"variant": label, **trade_stats(positions(subset))})
-            scaleout[skey][ukey] = rows
-        print(f"  scale-out: {skey} done", flush=True)
-
-    # ---- the scale-out page: every rule at every multiple of R ----------
-    # Trade level only, and it cannot be otherwise: portfolio.run prices a trade as
-    # shares x ONE exit price, but a scale-out has two, and the banked leg never
-    # reaches the trade record. Verified 2026-08-31 -- 1,522 of 1,523 banked trades
-    # disagree with the account engine's formula. So no CAGR appears on that page.
-    print("  scale-out R sweep:", flush=True)
-    r_lists = {}
-    for skey, builder in (("ema", lambda s, v, r: backtest.simulate(s, scale_out=v,
-                                                                    scale_r=r)),):
-        for variant, _vlabel in SCALE_RULES:
-            for multiple in SCALE_MULTIPLES:
-                if multiple == 1.0:
-                    r_lists[(skey, variant, multiple)] = scale_lists[(skey, variant)]
-                    continue          # the 1R runs are already cached under old names
-                r_tag = f"{multiple:g}".replace(".", "p")
-                name = ("EMA" if skey == "ema" else "Breakout")
-                name += ("_half" if variant == "half" else "_halfbe") + f"_r{r_tag}_all"
-                r_lists[(skey, variant, multiple)] = cached_signals(
-                    name, lambda s, v=variant, r=multiple: builder(s, v, r))
-
-    scaleout_r = {}
-    for skey in ("ema",):
-        for ukey, (_, members) in universes.items():
-            def cut(trades):
-                return (trades if members is None
-                        else [t for t in trades if t["symbol"] in members])
-            rows = [{"rule": "Keep the whole position", "variant": None,
-                     "multiple": None,
-                     **trade_stats(positions(cut(base[(skey, 0.02)])))}]
-            keep = rows[0]["net"] or 1
-            for variant, vlabel in SCALE_RULES:
-                for multiple in SCALE_MULTIPLES:
-                    stats = trade_stats(positions(cut(r_lists[(skey, variant, multiple)])))
-                    stats.update(rule=vlabel, variant=variant, multiple=multiple,
-                                 vs_keep=round(100 * (stats["net"] - keep) / abs(keep), 1))
-                    rows.append(stats)
-            scaleout_r[f"{skey}|{ukey}"] = rows
-        print(f"    {skey} done", flush=True)
-
-    # ---- how many stocks each rule needs ---------------------------------
     print("  breadth sweep:", flush=True)
     breadth = {}
     for skey in STRATEGY_LABELS:
@@ -802,13 +832,11 @@ def main() -> None:
         by_sym = {}
         for t in signals:
             by_sym.setdefault(t["symbol"], []).append(t)
-        pool = sorted(cfg.all_symbols)
+        pool = sorted(cfg.merged)
         sizes = [n for n in BREADTH_SIZES if n < len(pool)] + [len(pool)]
         rows = []
         for size in sizes:
-            rng = random.Random(BREADTH_SEED + size)
-            draws = ([pool] if size >= len(pool)
-                     else [rng.sample(pool, size) for _ in range(BREADTH_DRAWS[size])])
+            draws = _draw_baskets(pool, size, BREADTH_DRAWS.get(size, 10))
             cagrs, dds, held, starved = [], [], [], []
             for basket in draws:
                 subset = [t for sym in basket for t in by_sym.get(sym, [])]
@@ -852,8 +880,8 @@ def main() -> None:
         for t in signals:
             by_symbol[skey].setdefault(t["symbol"], []).append(t)
     stocks = {}
-    stock_bar = Bar(len(cfg.all_symbols), "per-stock")
-    for index, symbol in enumerate(sorted(cfg.all_symbols), 1):
+    stock_bar = Bar(len(cfg.merged), "per-stock")
+    for index, symbol in enumerate(sorted(cfg.merged), 1):
         stock_bar.step()
         try:
             daily = frames.daily(symbol)
@@ -870,8 +898,8 @@ def main() -> None:
     print("  assets detail:", flush=True)
     assets = {}
     # The middle field was the breakout entry timeframe; ATH Breakout is no
-    # longer computed, so it is unused. ASSETS keeps its shape because
-    # scripts/scaleout_test.py still reads it.
+    # longer computed, so it is unused. (It used to say scripts/scaleout_test.py
+    # still read it -- that file does not exist and has not for some time.)
     for symbol, _entry_tf, fee in ASSETS:
         backtest.FLAT_FEE_RATE = fee
         sizing.FRACTIONAL = True
@@ -882,23 +910,31 @@ def main() -> None:
                      "bh": {"cagr": round(bh["cagr"], 1), "maxdd": round(bh["maxdd"], 1),
                             "uw": round(bh["longest_uw"] / 365.25, 1),
                             "years": round(bh["years"], 1)}}
-            builders = {"ema": lambda so=None: backtest.simulate(symbol, scale_out=so),
-                        "qmw": lambda so=None: variant_builder("QMW")(symbol),
-                        # Both of these need only daily bars, so they run on
-                        # every instrument here, at the class's own settings.
-                        "dv": lambda so=None: darvas.simulate(symbol, 20, 10),
-                        "hg": lambda so=None: holygrail.simulate(symbol),
-                        "e1": lambda so=None: backtest.simulate(
-                            symbol, band=SOLO_BAND, stack="daily"),
-                        "pair": lambda so=None: variant_builder(
-                            PRIMARY["pair"], SOLO_BAND)(symbol),
-                        "eath": lambda so=None: backtest.simulate(
-                            symbol, band=SOLO_BAND, ath_band=ATH_BAND)}
+            # FROM THE REGISTRY, not a hand-written dict. This list used to name
+            # its seven families literally, which meant a newly added strategy
+            # was compared against the others on 500 NSE stocks and then quietly
+            # never tested on Bitcoin, gold or the indices at all -- the same
+            # class of omission as the hand-kept cache-stamp list, and just as
+            # silent. Each family runs at its primary variant, matching the
+            # breadth sweep, so these results sit beside those.
+            #
+            # ONE RESULT MOVES, DELIBERATELY. The old dict called
+            # holygrail.simulate(symbol) bare, and that function's default stop
+            # is "signal_low" -- the CANDLE reading. Every other view uses
+            # PRIMARY["hg"], which is "swing". So this page was quietly showing a
+            # different Holy Grail from the one beside it. It now shows the same
+            # one. Neither reading is the winner (see HANDOVER section 5); being
+            # consistent about which is on screen is the point.
+            builders = {}
+            for fam in registry.families():
+                strat = registry.find(fam, registry.primary(fam))
+                if strat is not None:
+                    builders[fam] = strat.build
             # (per-stock pages show the gated 20/10; the 1TF control lives in the
             #  grid, where it can be compared across every setting at once)
             for skey, build in builders.items():
                 try:
-                    trades = build()
+                    trades = build(symbol)
                 except (SystemExit, FileNotFoundError):
                     entry[skey] = None
                     continue
@@ -906,71 +942,40 @@ def main() -> None:
                 trades = positions(trades)
                 entry[skey] = {"stats": trade_stats(trades), "trades": slim_trades(trades),
                                "account": run_payload(r) if r else None}
-            # scale-out variants for the scale-out-capable strategy
-            entry["scaleout"] = {}
-            for skey in ("ema",):
-                rows = []
-                for label, variant in SCALE_VARIANTS:
-                    try:
-                        trades = builders[skey](variant)
-                    except (SystemExit, FileNotFoundError):
-                        trades = []
-                    rows.append({"variant": label, **trade_stats(positions(trades))})
-                entry["scaleout"][skey] = rows
             assets[symbol] = entry
         finally:
             backtest.FLAT_FEE_RATE = None
             sizing.FRACTIONAL = False
         print(f"    {symbol} done", flush=True)
 
-    tf = {}
-    # W/D/H dropped 2026-09-01; tf_compare still defines it for its own script.
-    for key, label, desc in [v for v in TF_VARIANTS if v[0] != "WDH"]:
-        rows, allt = [], []
-        for symbol in ASSIGNED:
-            w = window_start(symbol)
-            kept = [t for t in simulate_variant(symbol, key)
-                    if pd.Timestamp(t["entry_ts"]).normalize() >= w]
-            allt += kept
-            s = tf_summarise(kept)
-            rows.append({"sym": symbol, **{k: round(v, 2) if isinstance(v, float) else v
-                        for k, v in s.items() if k != "charges"}})
-        s = tf_summarise(allt)
-        rows.append({"sym": "ALL 5", **{k: round(v, 2) if isinstance(v, float) else v
-                     for k, v in s.items() if k != "charges"}})
-        tf[key] = {"label": label, "desc": desc, "rows": rows}
-        print(f"  timeframes: {label} done", flush=True)
-
-
-    nifty = frames.daily("NIFTY 50")
     payload = {
         # IST, and labelled: the build machine may be on any clock.
         "built": config.now_local().strftime("%Y-%m-%d %H:%M IST"),
         "strategies": STRATEGY_LABELS,
-        "universes": {k: v[0] for k, v in {**universes, **hold_universes}.items()},
-        "universe_size": len(cfg.all_symbols),
-        # Which universes are the holdout, and the only settings computed for
-        # them. The page must clamp its selectors to these: every other
-        # combination is a missing cell, not a zero.
-        "holdout_universes": list(hold_universes),
-        "holdout_size": len(unseen),
-        "holdout_axes": {"risks": HOLDOUT_RISKS, "capitals": HOLDOUT_CAPITALS,
-                         "start_years": HOLDOUT_YEARS},
-        "excluded": cfg.excluded,
+        "universes": {k: v[0] for k, v in universes.items()},
+        "universe_size": len(cfg.merged),
         "risks": RISKS, "capitals": CAPITALS,
+        # The scanning pool: how many names the rule is run over. null is the
+        # whole universe. Only computed at start_default -- the page must clamp
+        # its year selector when a finite pool is chosen, because every other
+        # combination is a missing cell, not a zero.
+        "pools": POOL_SIZES + [None],
+        "pool_year": START_DEFAULT,
+        # Which signal wins the cash when the account cannot fund them all. Only
+        # computed at the whole universe and pool_year, so the page clamps both
+        # when a non-default priority is chosen.
+        "priorities": PRIORITIES, "priority_default": PRIORITY_DEFAULT,
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
         "hg_tags": HG_TAGS,
         "pair_tags": PAIR_TAGS, "pair_labels": PAIR_LABEL,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
-        "darvas_windows": DARVAS_TAGS, "darvas_default": DARVAS_DEFAULT,
-        "breadth": breadth, "tie_break": portfolio.TIE_BREAK,
-        "fills": FILL_MODES, "participation": REALISTIC_PARTICIPATION,
+        "darvas_windows": DARVAS_TAGS,
+        "breadth": breadth,
+        "fills": FILL_MODES,
         "assigned": list(ASSIGNED),
-        "grid": grid, "waterfall": waterfall, "tradestats": tradestats, "scaleout": scaleout,
-        "scaleout_r": scaleout_r, "scale_multiples": SCALE_MULTIPLES,
+        "grid": grid, "waterfall": waterfall,
         "stocks": stocks, "assets": assets,
-        "timeframes": tf, "nifty": close_series(nifty),
     }
     # THE CURVES DO NOT TRAVEL WITH THE NUMBERS.
     #
@@ -1026,9 +1031,9 @@ def main() -> None:
     # one. Without it the page can only say "built <date>", which is how a
     # dashboard built over 192 stocks went on being served after 91 of them were
     # excluded. dashboard_server.status() reads this and warns on the page.
-    dashboard_server.write_stamp(cfg.all_symbols, payload["built"])
+    dashboard_server.write_stamp(cfg.merged, payload["built"])
     print(f"  stamped: {dashboard_server.STAMP_PATH.name} "
-          f"({len(cfg.all_symbols)} symbols)")
+          f"({len(cfg.merged)} symbols)")
 
 
 if __name__ == "__main__":

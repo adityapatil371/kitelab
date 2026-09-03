@@ -24,7 +24,6 @@ Conservative conventions, all of which cost the strategy rather than flatter it:
 """
 from __future__ import annotations
 
-import math
 
 import numpy as np
 import pandas as pd
@@ -212,6 +211,12 @@ def _active_levels(symbol: str, kind: str | None, daily: pd.DataFrame) -> list[t
     return out
 
 
+# NOT IN kitelab.registry, and it cannot be. This reads hand-drawn support and
+# resistance lines through _active_levels, and levels.json holds them for a
+# handful of symbols only -- so the rule cannot be run over the 500-stock
+# universe every other strategy is compared on. It is parked, not abandoned:
+# draw levels for a wider set and it becomes registrable. Flagged in the
+# 2026-09-03 audit as unreferenced, which it is, for this reason.
 def support_bounce_trades(symbol: str, trailing_stops: bool = False) -> list[dict]:
     bars = frames.load(symbol, TIMEFRAME)
     daily = frames.load(symbol, "1d")

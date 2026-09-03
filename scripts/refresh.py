@@ -1,8 +1,14 @@
 """Bring the dashboard up to date, doing only the work that is actually needed.
 
-    python -m scripts.refresh            # clean and rebuild whatever is stale
-    python -m scripts.refresh --check    # say what is stale, change nothing
-    python -m scripts.refresh --force    # rebuild even if everything looks current
+    python -m scripts.refresh                    # clean and rebuild whatever is stale
+    python -m scripts.refresh --check            # say what is stale, change nothing
+    python -m scripts.refresh --force            # rebuild even if it looks current
+    python -m scripts.refresh --skip-preflight   # skip the 40s smoke test
+
+A rebuild is preceded by scripts.preflight, which runs the whole build over three
+symbols into a temp directory. It costs about forty seconds and refuses to let the
+long build start on code that cannot complete. It does not run on the "already
+current" path, which still answers in a second.
 
 This does NOT fetch anything and needs no Kite credentials. Getting new data is a
 separate job with a separate program:
@@ -99,16 +105,17 @@ def main() -> None:
                     help="report what is stale and exit without changing anything")
     ap.add_argument("--force", action="store_true",
                     help="clean and rebuild even if nothing looks stale")
+    ap.add_argument("--skip-preflight", action="store_true",
+                    help="start the long build without the 40s smoke test first")
     args = ap.parse_args()
 
     keep = working_set()
     cfg = config.load()
-    # Broken out since the holdout landed: it is most of the working set and
-    # lumping it in with "class assets" made the line read as 400 assets.
-    unseen = cfg.out_of_sample
-    extras = len(keep) - len(cfg.all_symbols) - len(unseen)
-    print(f"\n  universe   {len(cfg.all_symbols)} stocks in-sample "
-          f"+ {len(unseen)} holdout (+{extras} class assets)")
+    # One universe since 2026-09-03 (config.Config.merged). The class assets
+    # are still broken out, because lumping them in made the line read as though
+    # the tradeable universe were larger than it is.
+    extras = len(keep) - len(cfg.merged)
+    print(f"\n  universe   {len(cfg.merged)} stocks (+{extras} class assets)")
     print(f"  raw        {DATA}")
     print(f"  clean      {CLEAN}")
 
@@ -146,6 +153,19 @@ def main() -> None:
         run("scripts.clean_data", f"{dirty} file(s) need cleaning" if dirty
             else "--force")
     if verdict.get("stale") or args.force:
+        # THE GATE. scripts.preflight runs this same build over three symbols in
+        # about forty seconds, so a fault that appears only when main() actually
+        # executes -- a NameError inside it, a payload key the page reads and the
+        # build stopped emitting, a stage that silently produces nothing -- is
+        # found before the long build is spent on it. Five of the six rebuilds on
+        # 2026-09-03 went on discovering exactly those.
+        #
+        # In front of the REBUILD only, never on the "already current" path:
+        # that path answers in a second and is the reason refresh is worth
+        # running at all. run() raises on a non-zero exit, so a failed
+        # pre-flight stops here rather than letting the long build start.
+        if not args.skip_preflight:
+            run("scripts.preflight", "smoke test before the long build")
         run("scripts.dashboard_data", verdict.get("message", "--force")[:60])
 
     # Last, and only after a real rebuild: refresh the copies of the few files

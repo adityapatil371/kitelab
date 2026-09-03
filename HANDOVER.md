@@ -8,6 +8,110 @@ inflated before any strategy runs.
 
 ---
 
+## 0. The split was retired — 3 September, later the same day
+
+**This supersedes section 2 outright, and changes how sections 4 and 10 should
+be read.** The 101/399 in-sample/holdout split is gone. There is one universe of
+500 stocks (`config.Config.merged`), and `scripts/bootstrap.py` is the control
+that took the holdout's place.
+
+**The argument.** Train/test exists to catch a FITTED model that memorised its
+training rows. These rules are not fitted that way — the shapes were taught in
+class before this repo read a candle: the 20 EMA, the M/W/D stack, ADX>25 into a
+pullback, Donchian 20-10 and 55-20. Holding 399 stocks back from a pre-specified
+rule buys no validity and costs a great deal of power, and here it cost more than
+usual, because it forced every headline number onto 101 stocks that turned out to
+be a list of winners. A wider deck fixes that directly.
+
+**Section 2's "every parameter was chosen by looking at them" was an
+overstatement**, and the correction matters because it decides which control is
+needed. Actually chosen here: the 2% band, the weekly gate added to the Turtle on
+2026-09-01, and — the real one — the choice of WHICH of 24 variants to headline.
+Everything else is class-given or swept as a grid axis.
+
+**So the exposure is multiple testing, not contamination**, and a holdout is a
+blunt instrument against it: it spends 80% of the data controlling for something
+a bootstrap controls for on all of it. §4 already measured the exposure — 13
+different variants won across 25 fresh draws.
+
+**What replaced it.** `python -m scripts.bootstrap` reduces each rule's trades to
+net R multiples (costs inside), resamples them into thousands of alternative
+histories at fixed-fractional risk, and reports the CAGR/MAR/drawdown spread. A
+rule whose 5th-percentile CAGR is above zero has an edge distinguishable from
+luck on its own trades. Then the summary that matters: how many of the 24 clear
+that bar, against the ~1.2 an edgeless menu clears by chance.
+
+**What merging does NOT fix, so nothing here is a clean bill.** The old 101 are
+still winners — now ~20% of the deck rather than 100%, which on large caps moves
+the median buy-and-hold from +15.3% to roughly +11.2% against the 399's +9.7%.
+Diluted, not gone. Survivorship is untouched and remains the largest known bias
+in every number this project produces (~4.9pp/yr).
+
+**Reading the rest of this document.** Section 4's tables were computed on the
+old split and are superseded by the first merged rebuild; the *reasoning* in them
+— why the Turtle's tail-dependence sinks it, why comparisons on the same deck
+survive — still holds. The §10 open item "rerun the breadth sweep on the 399" is
+closed by construction: breadth now runs on all 500. The item "decide what the
+101 is for" is closed too — it is no longer a universe, only an argument in
+`scripts.universe_bias`.
+
+---
+
+## 0b. Lean rebuild, two new axes, and an audit — 3 September, later still
+
+Follows section 0. The dashboard was cut to its one purpose, comparing
+strategies, and two axes were added that change how the compare table reads.
+
+**Strategies are declared once**, in `kitelab/registry.py`. Adding one puts it in
+the compare grid, the breadth sweep, the non-equity table and
+`scripts.bootstrap` with no other edit. Each declares the module that produces
+its trades and `signals.stamp()` derives the code digest from that, so the
+2026-09-02 cache bug — a rewritten `holygrail.py` invisible to a hand-kept list —
+is now unrepresentable rather than merely fixed.
+
+**The grid is 2,688 cells and ~7 minutes**, from 23,040 and 15.5. Capital cut to
+one value and risk to two, both on this document's own measurements; only
+realistic fills are gridded, the other three having existed solely to feed the
+cost waterfall.
+
+**Scanning pool is now an axis.** Over 500 stocks at ₹2,00,000 the class EMA
+stack skips **56%** of its signals for want of cash and its median falls to
+**2.5%**, against **15.7%** at 30 names. The Turtle skips 49% and climbs to
+15.1%. So the all-500 default reports partly how each rule's signal frequency
+fits one account, not which rule is better.
+
+**Signal priority is now an axis, and it is the bigger finding.** Which signal
+wins the cash when you cannot fund them all was a hardcoded constant. It swings
+CAGR by up to **20 points** — larger than the gap between the strategies being
+compared. But no ordering wins consistently and Q/M/W's best rule is M/W/D's
+worst, which is what noise looks like; picking the best of 5 orderings × 24
+variants is 120 combinations, exactly the trap `bootstrap` exists to catch.
+**The honest reading is that on a cash-starved account these CAGR numbers are
+not stable estimates of anything.**
+
+**Audit, 12 findings, all fixed.** The three that mattered:
+
+1. `_pooled` dropped wiped baskets, so the median was taken over survivors and
+   `pool_worst` named the worst basket THAT LIVED — flattering the exact number
+   a reader leans on precisely because they cannot choose their stocks. Wiped
+   draws now sort below every loss and their count is published, as the breadth
+   sweep always did.
+2. Breadth and the pool axis drew baskets from different seeds, so one question
+   got different stocks in two views. One sampler now, one seed, and the pool
+   axis reads a prefix of breadth's draws.
+3. The non-equity results were computed and never rendered — half a megabyte of
+   payload with no view. There is an Assets view now, and the instruments run
+   through the same registry as the equities, so a new strategy is tested on
+   them too.
+
+Also: `clampScenario()` had been dead since the holdout payload keys went — it
+returned on its first line while the universe selector kept calling it;
+`scaleout`, `scaleout_r`, `tradestats`, `timeframes` and `nifty` were computed
+every build and displayed nowhere, the scale-out sweep alone costing ~64s;
+`report.py` and the openpyxl dependency are gone. Compare exports to CSV.
+
+---
+
 ## 1. Where the project is
 
 A local backtesting workbench for rules-based swing trading on NSE equities,
@@ -32,7 +136,7 @@ prints "already current" in a second, which matters because a rebuild is ~16 min
 
 ---
 
-## 2. The universe, and the split that matters
+## 2. The universe, and the split that mattered — SUPERSEDED BY §0
 
 101 stocks, cut from 192 by a written quality gate (5 years history, ₹20 lakh
 median turnover, no seams, no padding, no suspected unadjusted splits). Every

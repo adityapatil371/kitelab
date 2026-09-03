@@ -11,11 +11,11 @@ from kitelab import config, signals
 
 def main() -> None:
     cfg = config.load()
-    rows = signals.status(cfg.all_symbols)
+    rows = signals.status(cfg.merged)
     if not rows:
         print("\n  no signal caches on disk -- the next dashboard_data run builds them\n")
         return
-    want = signals.stamp(cfg.all_symbols)
+    want = signals.stamp(cfg.merged)
     print(f"\n  universe: {want['n_symbols']} symbols, {want['n_files']} price files\n")
     width = max(len(n) for n, _ in rows)
     ok = sum(1 for _, v in rows if v.startswith("ok"))

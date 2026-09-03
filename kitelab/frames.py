@@ -241,7 +241,12 @@ _CACHE_SYMBOLS = 600
 
 
 def clear_caches() -> None:
-    """Drop every cached frame. Call after changing anything on disk."""
+    """Drop every cached frame. Call after changing anything on disk.
+
+    Unreferenced by design -- cache invalidation is part of a caching module's
+    surface, and the alternative when frames go stale mid-session is restarting
+    the process. Kept deliberately after the 2026-09-03 audit listed it.
+    """
     for fn in (base_15m, daily, load, _resample_cached):
         fn.cache_clear()
     _CLEAN_WARNED.clear()

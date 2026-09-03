@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -185,7 +184,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = config.load()
-    universe = set(cfg.all_symbols)
+    universe = set(cfg.merged)
     excluded = set(config.EXCLUDED)
     f = Findings()
 
