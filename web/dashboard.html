@@ -228,8 +228,6 @@ const cagrText = r => r.wiped ? "wiped" : pct(r.cagr);
 const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 
 /* ── scenario: one row of controls, shared by every view ──────────────── */
-/* pool: how many names are SCANNED, null meaning the whole universe. Not how
-   many are held -- the account never holds more than about ten of them. */
 const S = { uni: "all", cap: 0, risk: 1, fill: "1", year: null, view: "compare",
             prio: null, sel: null, sort: "mar", desc: true, stock: null };
 
@@ -266,9 +264,9 @@ function segment(label, options, get, set) {
    time it was called, while the Universe selector went on calling it expecting
    the scenario to be clamped. Dead code that looks live is worse than none.
 
-   What remains needing a clamp is real: a finite scanning pool and a non-default
-   every priority is gridded at every start year, so nothing needs pulling
-   back -- the clamp is kept only because a future axis may reintroduce one. */
+   Nothing left needs clamping either: every priority is gridded at every
+   start year, so the year selector never goes stale on its own. The function
+   stays as a guard in case a future axis reintroduces one. */
 function clampScenario() {
   const years = yearsAvailable();
   if (!years.includes(S.year)) S.year = years[years.length - 1];
@@ -375,7 +373,7 @@ function rows() {
    reads the underlying record rather than re-parsing what is on screen.
 
    Every row also carries the full scenario -- universe, capital, risk, fill,
-   start year, scanning pool, signal priority. It makes each row self-describing,
+   start year, signal priority. It makes each row self-describing,
    so several exports can be pasted into one sheet and pivoted, which is the
    thing a lone table of eight columns cannot do.
 

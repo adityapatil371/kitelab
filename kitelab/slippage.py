@@ -231,8 +231,12 @@ def apply_spread(trade: dict) -> dict:
     # intraday. This used to re-bill an already-intraday W/D/H trade at DELIVERY
     # rates, so applying the spread quietly added Rs291,639 of pure convention
     # change to the realistic W/D/H trade list on top of the actual spread cost.
+    # fee_rate rides on the trade, same as every other charges() call site
+    # (portfolio.run) -- this instrument's own model must not fall back to the
+    # NSE equity schedule just because it went through the spread path.
     cost = cost_best = charges(entry * shares, exit_ * shares,
-                               trade.get("same_session", False))
+                               trade.get("same_session", False),
+                               trade.get("fee_rate"))
     risk_taken = trade.get("risk_taken") or 0.0
     out.update(
         quoted_entry=quoted_entry, quoted_exit=quoted_exit,

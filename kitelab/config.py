@@ -362,12 +362,6 @@ class Config:
         """
         return self._dedupe(self.symbols, self.extended, self.holdout, self.unseen)
 
-    @property
-    def everything(self) -> list[str]:
-        """Hand-drawn universe plus the wider list, de-duplicated, order preserved."""
-        return self._dedupe(self.symbols, self.extended)
-
-
 def require_secrets(cfg: Config) -> Config:
     """Stop unless real Kite credentials are present.
 

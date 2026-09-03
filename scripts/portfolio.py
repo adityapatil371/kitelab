@@ -1,7 +1,7 @@
 """Simulate a real account taking these signals.
 
     python -m scripts.portfolio
-    python -m scripts.portfolio --capital 10000 --universe out
+    python -m scripts.portfolio --capital 10000 --risk 2
 """
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ def signals_for(name: str, build, members: list[str], refresh: bool = False) -> 
     """Signal generation is the slow part and does not depend on account size, so it
     is computed once and cached.
 
-    The cache key keeps the in-sample / holdout / all subsets apart, and the stamp
-    kitelab.signals writes rejects it once the universe, the price files or the
-    strategy code has moved -- which a bare `path.exists()` never noticed.
+    The cache key carries the universe size, and the stamp kitelab.signals writes
+    rejects it once the universe, the price files or the strategy code has moved --
+    which a bare `path.exists()` never noticed.
     """
     key = f"{name}_{len(members)}"
     if not refresh:
@@ -39,12 +39,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capital", type=float, nargs="+", default=[10_000, 100_000])
     parser.add_argument("--risk", type=float, default=1.0, help="percent of equity per trade")
-    parser.add_argument("--universe", default="all", choices=["in", "out", "all"])
     parser.add_argument("--refresh", action="store_true", help="rebuild the signal cache")
     args = parser.parse_args()
 
     cfg = config.load()
-    members = {"in": cfg.in_sample, "out": cfg.out_of_sample, "all": cfg.merged}[args.universe]
+    # cfg.in_sample / cfg.out_of_sample are for scripts.universe_bias only -- see
+    # CLAUDE.md. This script quotes the merged universe like everything else.
+    members = cfg.merged
     builders = {"Breakout": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
                 "EMA": backtest.simulate}
 

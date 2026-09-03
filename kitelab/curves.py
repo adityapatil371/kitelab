@@ -167,7 +167,8 @@ def exposure_pct(curve, cash_curve):
 
     Two rules with the same return are not equal if one was invested a fifth of
     the time -- the idle one carries far less risk for it, and on this project's
-    cash-starved accounts exposure is exactly what the scanning-pool axis moves.
+    cash-starved accounts exposure is what moves as universe, capital and risk
+    change how much the account can afford to hold.
     """
     if not curve or not cash_curve or len(curve) != len(cash_curve):
         return None

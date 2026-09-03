@@ -10,7 +10,7 @@ Everything is combinable with everything:
     grid        one-account simulations for every registered strategy
                 (kitelab.registry) x universe (all 500 and three liquidity
                 buckets, sizes counted from config, never hardcoded)
-                x risk x scanning pool x signal priority x start year
+                x risk x signal priority x start year
     assets      the six non-equity instruments -- Bitcoin, the two indices and
                 three MCX commodities -- run through the SAME registry as the
                 equities, so a newly added strategy is tested on them too
@@ -161,23 +161,10 @@ REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnov
 # Three capitals cost 3x the grid to print the same ranking three times.
 CAPITALS = [200_000]
 
-# HOW MANY STOCKS ARE BEING SCANNED -- a different question from how many are
-# owned. Each cell runs the rule over a random sample of this many names from the
-# selected universe. The account still holds only what it can fund, which on
-# these settings is never more than about ten positions at once.
-#
-# WHY THIS IS AN AXIS AND NOT A FOOTNOTE. Over the full universe the class EMA
-# stack skips 52% of its own signals for want of cash, and its median return
-# PEAKS near 30 names then falls away; the Turtle skips 35% and climbs all the
-# way to the end of the list. So "which rule is better" has no answer until the
-# size of the scanning pool is fixed. A table computed over every name is not
-# reporting which rule is better -- it is reporting how well each rule's signal
-# frequency happens to fit one account size. This axis puts that choice in front
-# of the reader instead of burying it in the default.
 # WHICH SIGNAL WINS THE CASH -- see portfolio.PRIORITIES for what each means and
-# why none of them may look at how a trade turned out. Swept only at the whole
-# universe and START_DEFAULT: "does the ordering rule matter" is asked once, and
-# crossing it with the pool sweep would multiply the slowest stage in the build.
+# why none of them may look at how a trade turned out. Swept at every universe
+# and every start year (see fill_grid), so no other control pins this one down --
+# "does the ordering rule matter" gets asked under every scenario, not once.
 PRIORITIES = portfolio.PRIORITIES
 PRIORITY_DEFAULT = "liquidity"
 # EXCLUDED, with the measurement that justifies it -- the same discipline
@@ -862,11 +849,7 @@ def main() -> None:
         "strategies": STRATEGY_LABELS,
         "universes": {k: v[0] for k, v in universes.items()},
         "risks": RISKS, "capitals": CAPITALS,
-        # The scanning pool: how many names the rule is run over. null is the
-        # whole universe. Only computed at start_default -- the page must clamp
-        # its year selector when a finite pool is chosen, because every other
-        # combination is a missing cell, not a zero.
-        # Which signal wins the cash when the account cannot fund them all. Only
+        # Which signal wins the cash when the account cannot fund them all.
         # Every priority is gridded at every start year, so neither control
         # constrains the other and the page needs no clamp.
         "priorities": PRIORITIES, "priority_default": PRIORITY_DEFAULT,

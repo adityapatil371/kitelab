@@ -492,11 +492,12 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
     # time elapsed. `wiped` says which. A genuinely flat account still returns 0.0,
     # because for it 0.0 is the true answer. Callers must not coerce None to 0.
     wiped = growth <= 0
+    cagr_pct = (100 * (growth ** (1 / years) - 1)
+                if years > 0 and growth > 0 else None)
     return {
         "capital": capital, "final": final, "profit": final - capital,
         "return_pct": 100 * (growth - 1),
-        "cagr_pct": (100 * (growth ** (1 / years) - 1)
-                     if years > 0 and growth > 0 else None),
+        "cagr_pct": cagr_pct,
         "wiped": wiped,
         "years": years,
         "signals": len(entries),
@@ -534,8 +535,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
         "ulcer": (round(ui, 2) if (ui := ulcer_index(marked["curve"])) is not None
                   else None),
         "mar": (round(m, 2) if (m := mar_ratio(
-            (100 * (growth ** (1 / years) - 1)) if years > 0 and growth > 0 else None,
-            marked["max_drawdown_pct"])) is not None else None),
+            cagr_pct, marked["max_drawdown_pct"])) is not None else None),
         "legacy_curve": curve,
         "taken": taken,
     }
