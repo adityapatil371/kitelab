@@ -1,6 +1,6 @@
-# written 2026-09-03 11:18 IST by scripts.backup_inputs
+# written 2026-09-03 19:57 IST by scripts.backup_inputs
 
 levels.json          4671 bytes   hand-drawn levels
-accepted.txt         3597 bytes   the 399 screened names
+accepted.txt         4413 bytes   the 399 screened names
 in_sample             101 symbols
-unseen                399 symbols
+unseen                903 symbols
