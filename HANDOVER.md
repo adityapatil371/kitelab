@@ -1,8 +1,10 @@
 # Handover — 3 September 2026
 
-Supersedes the 2 September handover. Read section 4 before quoting any number:
-most of what the previous version published has since been rebuilt on corrected
-code and the figures moved a long way.
+Supersedes the 2 September handover. **Read the first part of section 4 before
+quoting any number.** Two things happened: most of what the previous version
+published was rebuilt on corrected code and moved a long way, and the in-sample
+universe turns out to be a list of winners — so the in-sample figures are
+inflated before any strategy runs.
 
 ---
 
@@ -26,6 +28,7 @@ prints "already current" in a second, which matters because a rebuild is ~16 min
 - 101 stocks in-sample, 399 holdout, 0 overlap
 - 24 strategy variants, 23,808 grid cells, `dashboard.json` 14.9 MB
 - Working tree clean
+- **The in-sample 101 is a list of winners (§4). Quote the 399.**
 
 ---
 
@@ -51,6 +54,11 @@ The page greys out every setting outside `DATA.holdout_axes` so the narrowness i
 visible rather than merely intended.
 
 There is no second holdout. Nothing gets tuned on the 399.
+
+**The split is sound; the in-sample side is not representative.** Nothing above
+is wrong — the 399 really are untouched — but the 101 were assembled by an
+unrecorded process and turn out to be winners (§4). Treat the 101 as a
+development set and quote the 399.
 
 ---
 
@@ -86,6 +94,71 @@ rest simply superseded. The Turtle's 1.57 MAR is now 0.94 at the same cell. Do n
 quote the old file.
 
 All at 101 or 399 stocks, ₹2,00,000, 1% risk, realistic fills, from 2018.
+
+### FIRST: the in-sample 101 is a list of winners
+
+Established 3 September, and it reframes everything below. **The 101 are not a
+fair sample of NSE. They went up far more than the market they were drawn from,
+so every number measured on them is inflated before any strategy runs.**
+
+Buy and hold — no rule, no trading — from 2018, within each liquidity bucket so
+company size cannot explain it:
+
+| bucket | set | median buy & hold | share that lost money |
+|---|---|---:|---:|
+| large | **101** | **+15.3%** | **3%** |
+| | 399 | +9.7% | 16% |
+| mid | **101** | **+11.4%** | **6%** |
+| | 399 | +7.4% | 20% |
+| small | **101** | **+10.5%** | 26% |
+| | 399 | +6.9% | 28% |
+
+Of the 101's 37 large caps, **one** lost money in eight years. Of the 399's 99
+large caps, sixteen did. That is not a sample of large caps; it is a list of
+winners.
+
+**This is not the usual selection bias, and the distinction matters.** The
+obvious explanation for the holdout collapse is that 24 variants were tried and
+the luckiest reported. That was tested directly — the same best-of-24 procedure
+run on 25 fresh 101-stock draws from the 399:
+
+| | best of 24 | **median rule of 24** |
+|---|---:|---:|
+| the real 101 | 0.98 | **0.33** |
+| fresh 101 from the 399 | 0.40 (range 0.22–0.70) | **0.09** |
+
+Selection can only inflate the *winner*. It cannot lift the *middle of the pack*,
+and the middle moved from 0.33 to 0.09. Every rule does better on the 101,
+including the comparison arms nobody chose. No fresh draw reached 0.98, and the
+winning variant differed on almost every draw — 13 different rules won across 25
+draws, which is what noise looks like.
+
+Both tests are reproducible: `python -m scripts.universe_bias` reruns them and
+prints the two tables above.
+
+**Where the 101 came from is recorded nowhere** — not the README, the config, the
+old handover, or the commit history. The 399 by contrast were built mechanically
+and it is all written down (`screen_universe`: sweep every ordinary NSE equity,
+apply the gate, stratify evenly across buckets, longest history wins within
+each). The fingerprint of the 101 is a watchlist assembled from stocks that were
+already worth mentioning, and a stock becomes worth mentioning by having gone up.
+Nobody has to intend that for it to happen.
+
+**Consequences, and they are not small:**
+
+- Every percentage measured on the 101 is roughly a good-stock-list too high. It
+  is not a forecast. That includes the Breadth page (§4) and every figure in the
+  in-sample table below.
+- The Turtle's 0.95 was mostly the deck, not the rule. Its fall to −0.13 on the
+  holdout is therefore much less mysterious than it looks: a good part of that
+  height was never real. It fell hardest because it needs rare big winners and
+  few duds, which is exactly what the 101 oversupplies.
+- **What survives is any comparison between rules on the SAME stocks.** Both
+  rules face the same deck, so the deck cancels. That is why the finding below —
+  EMA 0.22 against Turtle −0.03 on holdout large caps — is still worth having,
+  and it is the shape every future result should take.
+- The 101 remains a perfectly good DEVELOPMENT set. It is not a performance
+  estimate and never was.
 
 ### In-sample (101) — the Turtle leads
 
@@ -146,6 +219,22 @@ Random baskets at nine sizes, ₹2,00,000 at 1% risk, median of many draws.
 
 "Enough at" is the smallest basket whose *middling* draw came within a fifth of
 the full watchlist.
+
+**These percentages are measured on the 101, so they carry the winner bias above
+and are not forecasts.** What to trust here is the *comparison* between rules and
+the shape of each curve, both of which are measured on the same stocks and so are
+unaffected. Rerunning the sweep on the 399 is the top open item (§10).
+
+The number that answers "but I do not know WHICH 15" is the worst draw, not the
+median. Across 30 random 15-stock baskets the class EMA stack's unluckiest draw
+still made +6.2% and none lost money; the Turtle's unluckiest made +1.1%, and at
+5 or 10 names its bad draws lose money outright. So breadth does not tell you
+which stocks to pick — nothing can, see the forward test below — it tells you
+**which rule survives you not being able to pick.**
+
+At 15 names the class EMA stack returns 17.1% against the Turtle's 9.9%, which is
+the reverse of the Compare page's ranking. The leaderboard ranks rules on a
+101-stock account nobody can run.
 
 **The class EMA stack is tradeable on about 15 names. The Turtle is not.** At five
 stocks the Turtle returns 2.2% against its own 22.0% — it depends on width more
@@ -355,6 +444,18 @@ stops are published; the unreproducible inputs are backed up.
 
 **Open, roughly in order of value**
 
+- **Rerun the breadth sweep on the 399.** It is computed on `cfg.all_symbols`
+  only, so its levels carry the winner bias. The question it answers — how few
+  names can be traded before a rule stops working — is the one a real account
+  asks, and it currently has an inflated answer. `breadth` in
+  `scripts/dashboard_data.py` takes a symbol list; the work is passing it the
+  holdout and giving the page a second series.
+- **Decide what the 101 is for.** It is a fine development set and a bad
+  performance estimate. Either document how it was built and accept it as
+  development-only, or rebuild the in-sample side the way the 399 was built —
+  mechanically, from `screen_universe`, with the provenance written down. The
+  present state, where the headline universe has no recorded origin, is the thing
+  that produced today's surprise.
 - **The holdout has been read once. Do not read it again casually.** The result in
   §4 is the honest test, and it says the Turtle does not travel. Every further
   look costs a little of what makes it a holdout.
@@ -424,6 +525,9 @@ set -a; source ~/.secrets/all.env; set +a
 
 # does the page still work with the file just built? (needs node, not the venv)
 node scripts/check_dashboard.js
+
+# is the in-sample universe a fair sample? (see section 4 -- it is not)
+./.venv/bin/python -m scripts.universe_bias
 
 # health
 ./.venv/bin/python -m scripts.cache_status
