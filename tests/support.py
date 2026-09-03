@@ -69,3 +69,64 @@ def account(prices=None, flat_fee=None, fractional=False,
     finally:
         (portfolio._daily_closes, backtest.FLAT_FEE_RATE, sizing.FRACTIONAL,
          slippage.MAX_PARTICIPATION, slippage.ENABLED, slippage.liquidity_at) = saved
+
+
+def bars(rows, start="2020-01-01"):
+    """A daily OHLC frame from (open, high, low, close) tuples.
+
+    Deliberately plain: these tests are about what the ENGINE does with bars,
+    so the bars themselves must be obvious enough to reason about by hand.
+    """
+    stamps = pd.date_range(start, periods=len(rows), freq="D")
+    return pd.DataFrame({
+        "ts": stamps,
+        "open": [r[0] for r in rows], "high": [r[1] for r in rows],
+        "low": [r[2] for r in rows], "close": [r[3] for r in rows],
+        "volume": [10_000] * len(rows),
+    })
+
+
+def signal_frame(rows, entries, exits, start="2020-01-01"):
+    """Bars plus a hand-specified entry/exit condition.
+
+    Patched in place of backtest.ema_stack_signal so the EXIT MECHANICS can be
+    tested on their own. Otherwise every test of "what happens when a bar gaps
+    through the stop" would first have to arrange twenty EMA values to make the
+    stack turn true on the right day, and would be testing both at once.
+    """
+    frame = bars(rows, start)
+    n = len(rows)
+    frame["in_stack"] = [i in entries for i in range(n)]
+    frame["entry_ok"] = [i in entries for i in range(n)]
+    frame["exit_ok"] = [i in exits for i in range(n)]
+    frame["weeks_done"] = list(range(n))
+    frame["months_done"] = list(range(n))
+    return frame
+
+
+@contextlib.contextmanager
+def signals_from(frame):
+    """Run backtest.simulate against a hand-built signal frame."""
+    saved = backtest.ema_stack_signal
+    backtest.ema_stack_signal = lambda *a, **k: frame
+    try:
+        yield
+    finally:
+        backtest.ema_stack_signal = saved
+
+
+@contextlib.contextmanager
+def daily_bars(frame):
+    """Serve a hand-built daily frame wherever frames.daily is called.
+
+    The seam for testing the SIGNAL generators -- ema_stack_signal, darvas
+    channels, holygrail setups -- which each start by reading daily bars and
+    derive everything else from them.
+    """
+    from kitelab import frames
+    saved = frames.daily
+    frames.daily = lambda symbol, *a, **k: frame.reset_index(drop=True)
+    try:
+        yield
+    finally:
+        frames.daily = saved

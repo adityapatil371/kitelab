@@ -21,7 +21,7 @@ the running record of what is measured, what was wrong, and what is open.
 # page reads and the build stopped emitting, a stage that silently produces
 # nothing. Five of the six rebuilds on 2026-09-03 were spent finding faults this
 # would have caught in under a minute.
-./.venv/bin/python -m unittest discover -s tests -t .   # 51 tests, instant
+./.venv/bin/python -m unittest discover -s tests -t .   # 235 tests, instant
 ./.venv/bin/python -m pyflakes kitelab scripts tests    # undefined names, instant
 ./.venv/bin/python -m scripts.preflight                 # the build path, ~40s
 
@@ -101,10 +101,16 @@ comparing rules and starts reporting who drew the better stocks.
   - `dashboard_server.py` — stdlib HTTP server; `/`, `/api/dashboard`, `/api/status`, `/api/curve`.
 - `scripts/` — thin entry points, all run as `python -m scripts.<name>`.
   `dashboard_data.py` (~1000 lines) precomputes the whole grid into `dashboard.json`.
-- `tests/` — 51 hermetic unit tests, no price files or network (`support.py`
-  patches `_daily_closes` and `liquidity_at`). Run with stdlib `unittest`; there
-  is no test dependency. `scripts/preflight.py` is the integration test and
-  `scripts/check_dashboard.js` the page one.
+- `tests/` — 235 hermetic tests, no price files or network (`support.py`
+  patches `_daily_closes`, `liquidity_at`, `ema_stack_signal` and `frames.daily`).
+  Stdlib `unittest`; no runtime test dependency. Three kinds worth knowing:
+  **property** tests (the books balance, a later bar cannot change an earlier
+  trade), a **golden** test that fails when a refactor silently moves numbers,
+  and an **oracle** test running the same bars through `backtesting.py` — the
+  only test that could catch a mistake made consistently in both the code and
+  its own tests. It skips if that dev extra is absent.
+  `scripts/preflight.py` is the integration test, `scripts/check_dashboard.js`
+  the page one.
 - `web/dashboard.html` — the entire UI, one file. A pure viewer: every control
   selects among precomputed results, nothing is simulated in the browser. Views:
   Compare, Detail, Breadth, Assets (non-equity), Stocks. The Compare table

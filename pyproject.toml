@@ -18,7 +18,12 @@ dependencies = [
 # main() cost a whole rebuild on 2026-09-03; `python -m pyflakes kitelab scripts`
 # finds it in under a second.
 [project.optional-dependencies]
-dev = ["pyflakes"]
+# backtesting is the ORACLE, not a runtime dependency: tests/test_oracle.py runs
+# the same bars through an independently written engine and checks both agree on
+# entry price, exit price and the stop walker. It is the only test here that
+# could catch a mistake made consistently in both the code and its own tests.
+# Absent, that file skips rather than fails.
+dev = ["pyflakes", "backtesting>=0.6"]
 
 [tool.setuptools]
 packages = ["kitelab", "scripts"]
