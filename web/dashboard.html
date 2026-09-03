@@ -152,6 +152,18 @@ svg{display:block;width:100%;overflow:visible}
     <div id="det-body"></div>
   </div>
 
+  <div class="view" id="v-breadth">
+    <div class="card">
+      <h3>How many stocks does the rule need?</h3>
+      <p class="sub" id="brd-sub"></p>
+      <div class="field" style="margin-bottom:14px;max-width:280px">
+        <span>Rule</span>
+        <select id="brd-pick"></select>
+      </div>
+      <div id="brd-body"></div>
+    </div>
+  </div>
+
   <div class="view" id="v-stocks">
     <div class="card">
       <h3>One stock at a time</h3>
@@ -222,7 +234,7 @@ const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 
 /* ── scenario: one row of controls, shared by every view ──────────────── */
 const S = { uni: "all", cap: 1, risk: 2, fill: "1", year: null, view: "compare",
-            sel: null, sort: "mar", desc: true, stock: null };
+            sel: null, sort: "mar", desc: true, stock: null, brd: null };
 
 function segment(label, options, get, set) {
   const f = document.createElement("div"); f.className = "field";
@@ -301,13 +313,14 @@ function buildScenario() {
 }
 
 /* ── the rows: every strategy variant at the chosen scenario ──────────── */
-/* The ADX rule keeps only its swing-low stop. The signal-candle variant was
-   fitted to a CLASSMATE's spreadsheet rather than to rule 6, and having both on
-   the board invited reading the fit as the rule. Filtered here as well as in the
-   generator so it leaves the board without waiting for a rebuild. */
+/* The ADX rule shows BOTH readings of "SL will be swing low" -- the signal
+   candle's own low and the last confirmed multi-bar pivot. The rule is genuinely
+   ambiguous, the class's own notes support the candle while the phrase itself
+   reads as the pivot, and neither wins: publishing one was presenting a coin
+   flip as a finding. See HG_VARIANTS in scripts/dashboard_data.py. */
 const variantsOf = skey =>
   skey === "dv" ? (DATA.darvas_windows || []) :
-  skey === "hg" ? (DATA.hg_tags || []).filter(t => t !== "tight") :
+  skey === "hg" ? (DATA.hg_tags || []) :
   skey === "pair" ? (DATA.pair_tags || []) :
   skey === "e1" ? ["daily"] :
   skey === "eath" ? ["near-high"] :
@@ -317,7 +330,8 @@ const settingLabel = (skey, v) =>
   skey === "dv" ? (String(v).includes("1TF")
       ? String(v).replace(" 1TF", "") + " · daily only"
       : String(v) + " · + weekly") :
-  skey === "hg" ? "stop at swing low" :
+  skey === "hg" ? (v === "candle" ? "stop at the signal candle's low"
+                                  : "stop at the last confirmed swing low") :
   skey === "pair" ? (DATA.pair_labels || {})[v] || v :
   skey === "e1" ? "no higher timeframe" :
   skey === "eath" ? "within 10% of the high" :
@@ -562,8 +576,117 @@ function renderStocks() {
   $("stk-body").innerHTML = `<div class="grid2">${cells}</div>`;
 }
 
+/* ── breadth: the answer to "I cannot trade a hundred stocks" ─────────── */
+/* Read this page as a RANGE, not a number. Every row below the full universe is
+   many random baskets of that size, so the median is the middling draw and the
+   10th-90th spread is the luck. The old ten-stock panel published ONE draw and
+   called it a result; at ten names that draw could have been anywhere in a band
+   eight times its own width, and which draw you got decided which rule looked
+   best. That is the whole reason this view exists and that one is gone.
+
+   These rows do NOT follow the scenario controls. They are one fixed cell --
+   the 101 in-sample stocks, 2,00,000, 1% risk, each rule at its default setting
+   -- because the question is how WIDE a watchlist has to be, and answering it
+   at every capital and risk would be answering a different question five times. */
+function renderBreadth() {
+  const pick = $("brd-pick");
+  const have = Object.keys(DATA.breadth || {}).filter(k => (DATA.breadth[k] || []).length);
+  if (!have.length) {
+    $("brd-sub").textContent = "";
+    $("brd-body").innerHTML = '<div class="empty">No breadth sweep in this build.</div>';
+    return;
+  }
+  if (!pick.options.length) {
+    for (const k of have) {
+      const o = document.createElement("option");
+      o.value = k; o.textContent = DATA.strategies[k] || k;
+      pick.appendChild(o);
+    }
+    pick.addEventListener("change", () => { S.brd = pick.value; render(); });
+  }
+  S.brd = have.includes(S.brd) ? S.brd : have[0];
+  pick.value = S.brd;
+
+  const rows = DATA.breadth[S.brd];
+  const full = rows[rows.length - 1];
+  /* The bar is a SPAN, p10 to p90, drawn on one scale shared by every row so the
+     narrowing is visible as a shape rather than only as numbers. Negative
+     territory is shaded, because "the median is positive" and "a third of the
+     draws lost money" are both true of the same row. */
+  const vals = rows.flatMap(r => [r.p10, r.p90, r.median]).filter(v => v != null);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const at = v => 100 * (v - lo) / ((hi - lo) || 1);
+
+  const body = rows.map(r => {
+    const solo = r.draws === 1;
+    const bar = (r.p10 == null || r.p90 == null) ? "" :
+      `<div class="wf-bar"><div class="wf-fill" style="left:${at(r.p10)}%;
+         width:${Math.max(1, at(r.p90) - at(r.p10))}%;
+         background:${(r.median ?? 0) >= 0 ? "var(--up)" : "var(--down)"};
+         opacity:.35"></div>
+       ${r.median == null ? "" : `<div style="position:absolute;top:-2px;bottom:-2px;
+         left:${at(r.median)}%;width:2px;background:var(--ink)"></div>`}
+       <div style="position:absolute;top:0;bottom:0;left:${at(0)}%;width:1px;
+         background:var(--ink-3)"></div></div>`;
+    return `<tr>
+      <td class="num"><b>${r.size}</b></td>
+      <td class="num ${(r.median ?? 0) >= 0 ? "up" : "down"}">${pct(r.median)}</td>
+      <td style="width:34%">${bar}</td>
+      <td class="num">${solo ? "—" : pct(r.p10) + " to " + pct(r.p90)}</td>
+      <td class="num">${pct(r.worst)}</td>
+      <td class="num">${r.wiped ? r.wiped + " of " + r.draws : "—"}</td>
+      <td class="num">${pct(r.dd)}</td>
+      <td class="num">${num(r.held, 1)}</td>
+      <td class="num">${pct(r.starved, 0)}</td>
+    </tr>`;
+  }).join("");
+
+  /* The headline: the SMALLEST basket whose middling draw gets within a fifth of
+     what the whole watchlist returned. Answers the question actually asked --
+     how few names can be traded before the rule stops being the rule. */
+  const target = (full.median ?? 0) * 0.8;
+  const enough = rows.find(r => r.median != null && full.median != null
+                                && full.median > 0 && r.median >= target);
+  const headline = full.median == null || full.median <= 0
+    ? `The full ${full.size}-stock watchlist does not make money here, so there is
+       no basket size that reproduces it.`
+    : enough && enough.size < full.size
+      ? `<b>About ${enough.size} stocks.</b> That is the smallest basket whose middling
+         draw (${pct(enough.median)}) came within a fifth of the full
+         ${full.size}-stock watchlist (${pct(full.median)}). Below it the median
+         falls away and the spread widens.`
+      : `<b>No smaller basket reproduced it.</b> Every size tried fell more than a
+         fifth short of the full ${full.size}-stock watchlist (${pct(full.median)}),
+         so this rule needs the width it is given.`;
+
+  $("brd-sub").textContent =
+    `${DATA.universe_size || full.size} in-sample stocks · ₹2,00,000 at 1% risk · `
+    + `random baskets, ${rows[0].draws} draws at the smallest size`;
+  $("brd-body").innerHTML = `
+    <p class="note" style="margin:0 0 12px;color:var(--ink-2)">${headline}</p>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th class="num">Stocks</th><th class="num">Median CAGR</th>
+        <th>10th &ndash; 90th percentile</th><th class="num">Range</th>
+        <th class="num">Worst draw</th><th class="num">Wiped</th>
+        <th class="num">Drawdown</th><th class="num">Held at once</th>
+        <th class="num">Cash&nbsp;starved</th>
+      </tr></thead><tbody>${body}</tbody>
+    </table></div>
+    <p class="note"><b>Median CAGR</b> is the middling basket of that size, not an
+      average &mdash; one lucky draw cannot lift it. <b>Worst draw</b> is the single
+      unluckiest basket, which is the outcome to plan around rather than the median.
+      <b>Held at once</b> is how many positions were open at the peak: if that number
+      is well below the basket size, the extra names are giving you choice rather
+      than more positions. <b>Cash starved</b> is the share of the rule's signals the
+      account had to turn away, and it is why a wider list keeps helping after the
+      account has run out of money &mdash; more names means more chances that the
+      signal you can afford is a good one.</p>`;
+}
+
 /* ── shell ────────────────────────────────────────────────────────────── */
-const VIEWS = [["compare", "Compare"], ["detail", "Detail"], ["stocks", "Stocks"]];
+const VIEWS = [["compare", "Compare"], ["detail", "Detail"],
+               ["breadth", "Breadth"], ["stocks", "Stocks"]];
 
 /* The scenario controls are built once, but the holdout offers fewer settings
    than the in-sample side -- so crossing that boundary has to REBUILD them, not
@@ -581,6 +704,7 @@ function render() {
   for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
   if (S.view === "compare") renderCompare();
   if (S.view === "detail") renderDetail();
+  if (S.view === "breadth") renderBreadth();
   if (S.view === "stocks") renderStocks();
 }
 

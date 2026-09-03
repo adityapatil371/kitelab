@@ -148,6 +148,13 @@ def main() -> None:
     if verdict.get("stale") or args.force:
         run("scripts.dashboard_data", verdict.get("message", "--force")[:60])
 
+    # Last, and only after a real rebuild: refresh the copies of the few files
+    # nothing can regenerate. Wired in here rather than left as a script to
+    # remember, because a backup that depends on remembering is not one. It
+    # refuses to shrink anything, so a half-written config cannot quietly eat
+    # the holdout list on its way past.
+    run("scripts.backup_inputs", "copying the unreproducible inputs")
+
     print(f"\n  Refresh complete in {(time.time() - started) / 60:.1f} min.")
     after = dashboard_server.status()
     if after.get("stale"):

@@ -42,7 +42,20 @@ low, and with the DI-crossover note that says "STOPLOSS: signal candle low". The
 two-bar variant fits marginally better and is not offered: a 0.14% edge over 39
 trades is noise, and a rule stated three times beats a curve fit.
 
-stop="pivot" keeps the wide reading for comparison; it is not the default.
+stop="pivot" keeps the wide reading; it is not the default here, but it IS a
+defensible reading of the phrase and the dashboard publishes both. Fitting the
+sheet is not the same as trading well, and over the 101 in-sample stocks at
+2,00,000 and 1% risk the two produce different trades from identical signals:
+
+    stop           distance   expectancy   win rate   avg win/loss    MAR
+    signal_low        4.63%     +0.561R      41.1%    2.95R/-1.11R    0.14
+    pivot            13.41%     +0.404R      57.5%    1.31R/-0.82R    0.20
+
+The wide stop banks more often and smaller; the tight one is refused more often
+for being too small to place (387 trades against 266) and starves the account of
+cash sooner (495 skips against 268). Both lose. Neither reading rescues this
+rule, which is why choosing between them is a question about the class's wording
+and not about which number to quote.
 
 Trades come out in the shape backtest.simulate produces, so portfolio.run, the
 dashboard and the reports take them unchanged.

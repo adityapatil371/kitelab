@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import os
 import re
 import pickle
 # Module level, not inside main(): the breadth sweep needs it too, and it used to
@@ -178,16 +179,34 @@ PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
 SOLO_BAND = 0.02
 ATH_BAND = 0.10
 
-# The Holy Grail's band slot carries its STOP, because that is the choice worth
-# seeing: "tight" is the signal candle's low, which is what the class marks and
-# what its own spreadsheet measures out at a median 0.8% below entry; "wide" is
-# the confirmed multi-bar pivot, 5.8% below, which sizes positions about five
-# times smaller. Same signals, very different trade.
-# Only the swing-low stop. Rule 6 of the class sheet says "SL will be swing
-# low", and the signal-candle variant was dropped on 2026-09-02: it was measured
-# against a CLASSMATE's spreadsheet, not the written rule, and having both on the
-# board invited reading the fit as the rule.
-HG_VARIANTS = [("swing", "pivot")]
+# The Holy Grail's band slot carries its STOP, because "SL will be swing low"
+# (rule 6) has two defensible readings and the choice is worth more than any
+# band sweep. BOTH are published, restored on 2026-09-03.
+#
+#   candle  the signal candle's own low. What the class's DI-crossover note
+#           spells out ("STOPLOSS: signal candle low") and what its standing
+#           rule says; fits the 39 stops marked in the sheet to 0.80%.
+#   swing   the last multi-bar pivot low already CONFIRMED at entry. The
+#           literal reading of "swing low"; fits those same 39 stops to 5.82%.
+#
+# Only `swing` was published between 2026-09-02 and 2026-09-03, on the grounds
+# that the candle reading was fitted to a classmate's spreadsheet. That was
+# wrong twice over. The candle reading has its own written support in the class
+# notes, so it is not a curve fit; and holygrail.py has always called it the
+# DEFAULT, so the repo was asserting one thing in the module and the opposite on
+# the dashboard. Worse, the page labelled the pivot variant "stop at swing low"
+# -- the very phrase the module argues means the candle.
+#
+# Publishing one was also read as a verdict it could not support. Measured over
+# the 101 at 2,00,000 and 1% risk, all history:
+#
+#             stop dist   expectancy   win rate   avg win/loss    MAR
+#   candle       4.63%      +0.561R      41.1%    2.95R/-1.11R    0.14
+#   swing       13.41%      +0.404R      57.5%    1.31R/-0.82R    0.20
+#
+# Structurally different trades from identical signals, and BOTH lose at account
+# level -- so showing both cannot be cherry-picking a winner. There isn't one.
+HG_VARIANTS = [("candle", "signal_low"), ("swing", "pivot")]
 HG_TAGS = [tag for tag, _ in HG_VARIANTS]
 
 # Darvas has no band. It has a pair of windows instead, and they matter at least as
@@ -992,7 +1011,15 @@ def main() -> None:
         print(f"  converted {len(leaked):,} numpy values on the way out:")
         for (where, kind), n in sorted(kinds.items(), key=lambda kv: -kv[1])[:6]:
             print(f"    {where}  ({kind}) x{n:,}")
-    OUT.write_text(json.dumps(payload))
+    # Written aside and MOVED into place, never straight over the top. This file
+    # is ~15 MB and the run that produces it is half an hour; an interrupt or a
+    # full disk partway through a direct write would leave truncated JSON that
+    # the page cannot parse, and the only way back is to run the half hour again.
+    # os.replace is atomic within a filesystem, so a reader sees the old file or
+    # the new one and never a half of either.
+    spool = OUT.with_suffix(".json.partial")
+    spool.write_text(json.dumps(payload))
+    os.replace(spool, OUT)
     print(f"\n  written: {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
 
     # Record WHICH UNIVERSE these numbers describe, in a small file beside the big

@@ -14,9 +14,15 @@ data/signal_cache/
 # generated artifacts: every workbook is rebuilt by a script
 output/
 
-# the one data/ file that IS committed: levels.json (hand-drawn, unreproducible)
-data/dashboard.json
-data/
+# data/ is ignored EXCEPT data/keep, which is the point of scripts.backup_inputs:
+# the handful of files nothing can rebuild (hand-drawn levels, the screened 399,
+# the in-sample/holdout split). This used to read "data/dashboard.json" under a
+# comment promising that levels.json was committed, with a bare "data/" directly
+# beneath it -- so the bare line ignored the whole directory, levels.json included,
+# and the comment described a backup that did not exist. A negation cannot reach
+# inside an ignored DIRECTORY, which is why this is "data/*" and not "data/".
+data/*
+!data/keep/
 
 # Class spreadsheets dropped in for reference. Data, not source.
 *.xlsx
