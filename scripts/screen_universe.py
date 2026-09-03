@@ -66,7 +66,13 @@ def ordinary_equities() -> pd.DataFrame:
     eq = d[(d.segment == "NSE") & (d.instrument_type == "EQ")].copy()
 
     def ordinary(s: str) -> bool:
-        if re.search(r"-SG$|-GS$|^\d", s):            # government securities, bonds
+        # -GB: Sovereign Gold Bonds. Missing until 2026-09-04, when five of them
+        # (SGBJUL28IV-GB and siblings) passed the quality gate as equities in the
+        # 1004-stock widening -- a bond barely moves, so the risk-based sizer
+        # computed a near-zero risk_taken against one and produced a 1164R trade
+        # that alone pushed a bootstrap 5th-percentile CAGR into the hundreds of
+        # millions of percent. See kitelab.config.EXCLUDED for the five names.
+        if re.search(r"-SG$|-GS$|-GB$|^\d", s):        # government securities, bonds
             return False
         if re.search(r"-SM$|-ST$|-RE$|-BE$|-BZ$|-N\d$|-IV$|-PP$", s):
             return False                              # SME, rights, T2T, NCDs

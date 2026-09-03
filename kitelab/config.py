@@ -241,6 +241,26 @@ EXCLUDED: dict[str, str] = {
     "WEALTH": "GATE: turnover Rs749,354 < Rs2,000,000",
     "XPROINDIA": "GATE: turnover Rs359,680 < Rs2,000,000",
     "XTGLOBAL": "GATE: history 1.9y / 482 bars < 5.0y",
+
+    # ---------------------------------------------------------------------
+    # 2026-09-04: found while adding a bootstrap-derived "Edge (p05)" column
+    # to the dashboard. scripts.screen_universe's ordinary() filter excludes
+    # tickers ending -SG/-GS (government securities) but not -GB, so five
+    # Sovereign Gold Bonds passed the quality gate as if they were equities
+    # in the 2026-09-03 widening to 1004 stocks. A bond's price barely moves,
+    # so the EMA stack's risk-based sizer computes a near-zero risk_taken
+    # against it -- one SGB trade risked Rs14.40 and made Rs16,762, an R
+    # multiple of 1164. Compounded through kitelab.validation's bootstrap,
+    # that single trade alone pushed the 5th-percentile CAGR for EVERY EMA
+    # band (not just the unfiltered one) into the hundreds of millions of
+    # percent. Not a math bug -- fixed-fractional compounding of a genuine
+    # 1164R trade does that -- the bug is that a bond was ever priced as a
+    # stock. screen_universe.ordinary() now excludes -GB$ too.
+    "SGBAUG28V-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
+    "SGBJUL28IV-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
+    "SGBMAY28-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
+    "SGBMAY29I-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
+    "SGBMR29XII-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
 }
 
 
