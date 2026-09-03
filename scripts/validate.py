@@ -33,6 +33,11 @@ Six tests, and each answers a question the compare table cannot:
 
 Reads the cached trades the dashboard uses, so it describes the rules as
 published rather than a re-simulation that might differ.
+
+THE MATH LIVES IN kitelab/validation.py, not here -- scripts/dashboard_data.py
+puts the same numbers on the dashboard and needed to call the same functions
+rather than a re-derived copy, on pain of repeating the "two samplers, two
+answers" bug from 2026-09-03. This file is the CLI presentation only.
 """
 from __future__ import annotations
 
@@ -40,186 +45,15 @@ import argparse
 import statistics
 
 import numpy as np
-import pandas as pd
 
-from kitelab import config, frames, portfolio, registry, signals
-
-CAPITAL = 200_000
-RISK = 0.01
-WINDOW_YEARS = 3
-TOP_N = (1, 5, 10, 25)
-
-
-def cagr_of(trades, capital=CAPITAL, risk=RISK):
-    if not trades:
-        return None
-    r = portfolio.run(trades, capital, risk)
-    return r.get("cagr_pct")
+from kitelab import config, registry
+from kitelab.validation import (
+    CAPITAL, RISK, TOP_N, WINDOW_YEARS,
+    breakeven_cost, buy_and_hold, cagr_of, correlate, load, monthly_returns,
+    permutation_test, walk_forward, without_best,
+)
 
 
-def load(strat, universe):
-    return signals.load(f"{strat.cache}_all", universe)
-
-
-# ------------------------------------------------------------ benchmark ----
-def buy_and_hold(universe) -> float | None:
-    """Equal-weight buy and hold of the same stocks over the same span.
-
-    Equal weight, not cap weight: the strategies size by risk and hold whatever
-    signals, so an index's concentration would be comparing two different things.
-    """
-    rates = []
-    for sym in universe:
-        try:
-            day = frames.daily(sym)
-        except SystemExit:
-            continue
-        if len(day) < 250:
-            continue
-        first, last = float(day["close"].iloc[0]), float(day["close"].iloc[-1])
-        years = (day["ts"].iloc[-1] - day["ts"].iloc[0]).days / 365.25
-        if first > 0 and years > 1:
-            rates.append(((last / first) ** (1 / years) - 1) * 100)
-    return statistics.median(rates) if rates else None
-
-
-# --------------------------------------------------------- walk-forward ----
-def walk_forward(trades):
-    """CAGR in each DISJOINT window, and how many were positive."""
-    if not trades:
-        return []
-    stamps = sorted(pd.Timestamp(t["entry_ts"]) for t in trades)
-    start, end = stamps[0], stamps[-1]
-    out = []
-    left = start
-    while left < end:
-        right = left + pd.DateOffset(years=WINDOW_YEARS)
-        window = [t for t in trades if left <= pd.Timestamp(t["entry_ts"]) < right]
-        if len(window) >= 20:
-            out.append((left.year, right.year, cagr_of(window)))
-        left = right
-    return out
-
-
-# --------------------------------------------------------------- top-N ----
-def without_best(trades, n):
-    """The account with the n most profitable trades deleted."""
-    if n >= len(trades):
-        return None
-    ordered = sorted(trades, key=lambda t: t.get("net_profit", 0.0), reverse=True)
-    return cagr_of(ordered[n:])
-
-
-# ----------------------------------------------------- breakeven friction ----
-def _charged(trades, bps):
-    """Every trade charged an extra `bps` per side on its turnover."""
-    out = []
-    for t in trades:
-        cost = (bps / 10_000.0) * (t["entry_price"] + t["exit_price"]) * t["shares"]
-        u = dict(t)
-        u["exit_price"] = t["exit_price"] - cost / max(t["shares"], 1e-9)
-        out.append(u)
-    return out
-
-
-def breakeven_cost(trades, hi=200.0):
-    """Basis points per side at which the edge reaches zero. None if already
-    negative, or if it survives even `hi`."""
-    if cagr_of(trades) is None or (cagr_of(trades) or 0) <= 0:
-        return None
-    if (cagr_of(_charged(trades, hi)) or -1) > 0:
-        return float("inf")
-    lo = 0.0
-    for _ in range(12):                       # 12 bisections is ~0.05bp resolution
-        mid = (lo + hi) / 2
-        got = cagr_of(_charged(trades, mid))
-        if got is not None and got > 0:
-            lo = mid
-        else:
-            hi = mid
-    return round((lo + hi) / 2, 1)
-
-
-# ---------------------------------------------------------- correlation ----
-def monthly_returns(trades):
-    """Realised profit by calendar month -- the series to correlate on."""
-    by_month: dict = {}
-    for t in trades:
-        key = pd.Timestamp(t["exit_ts"]).to_period("M")
-        by_month[key] = by_month.get(key, 0.0) + t.get("net_profit", 0.0)
-    return by_month
-
-
-def correlate(a, b):
-    keys = sorted(set(a) & set(b))
-    if len(keys) < 12:
-        return None
-    x = np.array([a[k] for k in keys], dtype=float)
-    y = np.array([b[k] for k in keys], dtype=float)
-    if x.std() == 0 or y.std() == 0:
-        return None
-    return float(np.corrcoef(x, y)[0, 1])
-
-
-# ---------------------------------------------------------- permutation ----
-def permutation_test(strat, universe, rounds, rng, sample=60):
-    """Observed CAGR against the same rule run on shuffled price paths."""
-    pool = sorted(universe)[:sample]
-    real = load(strat, universe)
-    if not real:
-        return None, []
-    observed = cagr_of([t for t in real if t["symbol"] in set(pool)])
-    got = []
-    saved = frames.daily
-    try:
-        for _ in range(rounds):
-            cache = {}
-
-            def fake(sym, *a, **k):
-                if sym not in cache:
-                    cache[sym] = permuted_daily(sym, rng, saved)
-                return cache[sym]
-
-            frames.daily = fake
-            trades = []
-            for sym in pool:
-                try:
-                    trades.extend(strat.build(sym))
-                except (SystemExit, FileNotFoundError, ValueError, IndexError):
-                    continue
-            frames.daily = saved
-            got.append(cagr_of(trades))
-    finally:
-        frames.daily = saved
-    return observed, [g for g in got if g is not None]
-
-
-def permuted_daily(symbol, rng, real_daily):
-    """The same daily returns in a different order.
-
-    Preserves each stock's return DISTRIBUTION -- drift, volatility, fat tails --
-    and destroys only the sequence. A trend rule has nothing left to find, so
-    whatever it still earns there is fitted noise.
-
-    `real_daily` is passed in rather than read from the module, because the
-    caller has patched frames.daily to serve these very frames: reading it from
-    scope would call this function from inside itself.
-    """
-    day = real_daily(symbol).reset_index(drop=True)
-    close = day["close"].to_numpy(float)
-    if len(close) < 60:
-        return day
-    rets = np.diff(close) / close[:-1]
-    rng.shuffle(rets)
-    walk = np.concatenate([[close[0]], close[0] * np.cumprod(1 + rets)])
-    scale = walk / close
-    out = day.copy()
-    for col in ("open", "high", "low", "close"):
-        out[col] = day[col].to_numpy(float) * scale
-    return out
-
-
-# ----------------------------------------------------------------- main ----
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)

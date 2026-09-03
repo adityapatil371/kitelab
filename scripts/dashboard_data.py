@@ -38,7 +38,7 @@ import numpy as np
 import pandas as pd
 
 from kitelab import (backtest, config, contracts, dashboard_server, frames,
-                     portfolio, signals, sizing, slippage, strategies)
+                     portfolio, signals, sizing, slippage, strategies, validation)
 from kitelab.progress import Bar
 from kitelab.curves import (bh_stats, calmar, episodes, exposure_pct,
                             sharpe, sortino, underwater_stats)
@@ -544,6 +544,69 @@ def signal_lists(over=None, suffix="all", label="") -> dict:
     return out
 
 
+# Bumped whenever the shape of what build_validation() writes changes, so an
+# old cache from before a shape change is refused rather than served with a
+# missing key -- kitelab.signals only knows the universe/data/code moved, not
+# that the payload it is guarding grew a field.
+_VALIDATION_CACHE = "_validation_summary_v1"
+
+
+def build_validation(cfg, base: dict) -> dict:
+    """Is each rule's number real, or a curve fit? Once per strategy, cached.
+
+    Six tests plus a bootstrap resample -- kitelab.validation, which is also
+    what `scripts.validate` and `scripts.bootstrap` call, so the page and the
+    CLI tools can never print two different answers to the same question.
+
+    CACHED like every signal list, via the same kitelab.signals stamp
+    (universe + price files + code). The permutation test alone re-simulates
+    every strategy 10 times over a 60-stock sample, so this is the one
+    section of a rebuild genuinely worth not repeating when nothing about
+    the strategies or the universe has moved. signals.save/load expect a
+    list[dict] of trades; this holds none, so it is wrapped as a single-item
+    list to fit that contract rather than changing kitelab/signals.py for
+    one caller.
+    """
+    cached = signals.load(_VALIDATION_CACHE, cfg.merged)
+    if cached is not None:
+        print("  validation: cached, reusing", flush=True)
+        return cached[0]
+
+    print("  validation (benchmark, walk-forward, top-N, cost, correlation, "
+          "permutation, bootstrap):", flush=True)
+    rng = np.random.default_rng(20260903)
+    hold_cagr = validation.buy_and_hold(cfg.merged)
+    per_strategy: dict = {}
+    monthly_by_key: dict = {}
+    bootstrap_rows: list = []
+    trade_stats_out: dict = {}
+    for i, strat in enumerate(registry.REGISTRY, 1):
+        key = f"{strat.key}|{tag(strat.variant)}"
+        trades = base.get((strat.key, strat.variant), [])
+        summary = validation.validation_summary(
+            strat, trades, cfg.merged, rng, hold_cagr=hold_cagr)
+        print(f"    {key:<26} {i}/{len(registry.REGISTRY)}"
+              + ("" if summary else f" -- skipped, under {validation.MIN_TRADES} trades"),
+              flush=True)
+        if summary is None:
+            continue
+        monthly_by_key[key] = summary.pop("monthly")
+        per_strategy[key] = summary
+        if summary["bootstrap"] is not None:
+            bootstrap_rows.append({"key": key, **summary["bootstrap"]})
+        trade_stats_out[key] = trade_stats(strategies.drop_overlaps(trades))
+
+    correlation = validation.correlation_summary(monthly_by_key)
+    for key, row in per_strategy.items():
+        row["most_correlated"] = correlation.get(key)
+
+    out = {"validation": per_strategy,
+           "summary": validation.multiple_testing_summary(bootstrap_rows),
+           "trade_stats": trade_stats_out}
+    signals.save(_VALIDATION_CACHE, [out], cfg.merged)
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -556,6 +619,8 @@ def main() -> None:
 
     print("  signal lists (cached where possible):", flush=True)
     base = signal_lists(cfg.merged)
+
+    validation_out = build_validation(cfg, base)
 
     # Counted, not typed. Seven stocks were removed from the universe on
     # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
@@ -882,6 +947,12 @@ def main() -> None:
         "fills": [m for m in FILL_MODES if m[0] in GRID_FILLS],
         "grid": grid, "waterfall": waterfall,
         "assets": assets,
+        # Is each rule's number real, or a curve fit? Keyed "skey|tag(variant)",
+        # matching the Compare row id built in web/dashboard.html. Computed once
+        # per strategy over the merged universe -- see build_validation().
+        "validation": validation_out["validation"],
+        "validation_summary": validation_out["summary"],
+        "trade_stats": validation_out["trade_stats"],
     }
     # THE CURVES DO NOT TRAVEL WITH THE NUMBERS.
     #

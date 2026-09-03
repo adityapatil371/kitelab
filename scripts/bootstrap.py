@@ -46,129 +46,26 @@ WHAT THIS DOES NOT DO, so it is not read as more than it is:
     (--block 0 restores the naive i.i.d. version for comparison).
   * It cannot see survivorship. Every stock here is one still listed today, and
     that is still the largest known bias in the project (~4.9pp/yr).
+
+THE MATH LIVES IN kitelab/validation.py, not here -- scripts/dashboard_data.py
+puts the same 5th-percentile figures on the dashboard's "Edge (p05)" column and
+needed to call the same functions rather than a re-derived copy. This file is
+the CLI presentation only.
 """
 from __future__ import annotations
 
 import argparse
-import math
-from statistics import NormalDist
 
 import numpy as np
 
 from kitelab import config
+from kitelab.validation import bootstrap as run_bootstrap
+from kitelab.validation import expected_best_of, paths, r_multiples, span_years
 from .dashboard_data import STRATEGY_LABELS, positions, signal_lists, tag
 
 DRAWS = 5_000
 RISK_PCT = 1.0
-CHUNK = 250          # iterations per block, so a 20k-trade rule stays in memory
-# Trades per contiguous block. Around a year of signals for the busier rules,
-# which is the scale on which market regimes -- and therefore runs of winners --
-# actually persist. Not tuned: tuning it on the answer would be the very thing
-# this script exists to detect.
 BLOCK = 20
-
-
-def r_multiples(trades: list[dict]) -> np.ndarray:
-    """Net R per trade: what the trade returned as a multiple of what it risked.
-
-    net_profit, not gross, so brokerage, STT and the modelled spread are already
-    inside every number here. Trades that risked nothing measurable (risk_taken
-    of zero -- a stop at the entry price) carry no R and are dropped rather than
-    counted as flat, which would dilute the distribution toward zero.
-    """
-    return np.array([t["net_profit"] / t["risk_taken"] for t in trades
-                     if t.get("risk_taken")], dtype=float)
-
-
-def span_years(trades: list[dict]) -> float:
-    """Calendar years the trade list actually covers.
-
-    entry_ts / exit_ts, NOT entry_date. Only some producers set the _date pair:
-    kitelab.timeframes (the qmw and pair variants) sets the _ts pair alone, so
-    reading _date here raised KeyError on 10 of the 24 variants -- after the
-    other 14 had already printed, which is the shape of bug this project keeps
-    finding by running things rather than by importing them. The _ts fields are
-    the ones every producer sets, which is why dashboard_data.fill_grid sorts on
-    them too.
-    """
-    first = min(t["entry_ts"] for t in trades)
-    last = max(t["exit_ts"] for t in trades)
-    return max((last - first).days / 365.25, 1e-9)
-
-
-def paths(r: np.ndarray, fraction: float, years: float) -> tuple:
-    """(CAGR %, max drawdown %, MAR) for each row of an (n, trades) R matrix.
-
-    Compounding is multiplicative on equity, which is what fixed-fractional
-    risk means: a rupee risked is a percentage of the account at the time, not a
-    constant. The floor on the per-trade factor stops a pathological draw from
-    taking equity negative -- at 1% risk it never binds (it would need R = -100)
-    and it is here so the arithmetic cannot produce a nonsense curve if someone
-    passes --risk 20.
-    """
-    step = np.maximum(1.0 + fraction * r, 1e-6)
-    curve = np.cumprod(step, axis=1)
-    cagr = (curve[:, -1] ** (1.0 / years) - 1.0) * 100.0
-    peak = np.maximum.accumulate(curve, axis=1)
-    dd = (curve / peak - 1.0).min(axis=1) * 100.0
-    # np.where would evaluate BOTH branches and so divide by zero before
-    # selecting -- right answer, a RuntimeWarning per call, and 24 variants x
-    # 5,000 draws of noise over the report. `where=` skips the division instead.
-    mar = np.divide(cagr, np.abs(dd), out=np.full_like(cagr, np.nan), where=dd < 0)
-    return cagr, dd, mar
-
-
-def _indices(rng, n_rows: int, n_trades: int, block: int) -> np.ndarray:
-    """Row indices for one chunk of resamples.
-
-    block <= 1 is the naive i.i.d. draw. Otherwise this is a MOVING BLOCK
-    bootstrap: pick random start points and take `block` consecutive trades from
-    each, wrapping at the end so every trade is equally likely to appear (a
-    non-wrapping version under-samples the tail, which on a trade list ordered
-    by time means under-sampling the most recent regime).
-    """
-    if block <= 1:
-        return rng.integers(0, n_trades, size=(n_rows, n_trades))
-    n_blocks = -(-n_trades // block)                  # ceiling division
-    starts = rng.integers(0, n_trades, size=(n_rows, n_blocks, 1))
-    offsets = np.arange(block).reshape(1, 1, block)
-    idx = (starts + offsets) % n_trades
-    return idx.reshape(n_rows, -1)[:, :n_trades]
-
-
-def bootstrap(r: np.ndarray, years: float, fraction: float, draws: int, rng,
-              block: int = BLOCK):
-    """Resample in blocks, in chunks, keeping only the statistics."""
-    cagrs, dds, mars = [], [], []
-    done = 0
-    while done < draws:
-        n = min(CHUNK, draws - done)
-        idx = _indices(rng, n, len(r), block)
-        c, d, m = paths(r[idx], fraction, years)
-        cagrs.append(c); dds.append(d); mars.append(m)
-        done += n
-    return (np.concatenate(cagrs), np.concatenate(dds), np.concatenate(mars))
-
-
-def expected_best_of(n_trials: int, spread: float) -> float:
-    """What the BEST of `n_trials` edgeless rules scores by luck alone.
-
-    The order statistic behind the deflated Sharpe ratio (Bailey & Lopez de
-    Prado): the expected maximum of n independent draws from a zero-mean normal
-    of the given spread. Run twenty-four coin-flippers and the luckiest looks
-    skilled; this says how skilled, so an observed winner can be measured
-    against it instead of against zero.
-
-    Uses statistics.NormalDist rather than scipy -- stdlib, and the whole
-    formula is two quantiles.
-    """
-    if n_trials < 2 or spread <= 0:
-        return 0.0
-    nd = NormalDist()
-    gamma = 0.5772156649015329                       # Euler-Mascheroni
-    a = nd.inv_cdf(1 - 1.0 / n_trials)
-    b = nd.inv_cdf(1 - 1.0 / (n_trials * math.e))
-    return spread * ((1 - gamma) * a + gamma * b)
 
 
 def main() -> None:
@@ -206,7 +103,7 @@ def main() -> None:
             continue
         years = span_years(held)
         obs_cagr, obs_dd, obs_mar = (v[0] for v in paths(r[None, :], fraction, years))
-        cagr, dd, mar = bootstrap(r, years, fraction, args.draws, rng, args.block)
+        cagr, dd, mar = run_bootstrap(r, years, fraction, args.draws, rng, args.block)
         rows.append({
             "key": f"{STRATEGY_LABELS.get(skey, skey)} · {tag(band)}",
             "n": len(r), "exp": r.mean(),

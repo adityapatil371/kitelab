@@ -237,6 +237,45 @@ S.view = "detail"; S.uni = "all"; S.sel = null; render();
 }
 S.sel = null; S.view = "compare";
 
+/* VALIDATION: added 2026-09-04 so the dashboard could answer "is this
+ * number real" without a separate CLI run. Checked for the same reason as
+ * everything else here -- computed but never read is exactly the "tradestats"
+ * mistake this project has already made once. */
+console.log("\n== validation columns and the multiple-testing note ==");
+S.view = "compare"; S.uni = "all"; render();
+{
+  const withVal = rows().filter(r => r.val !== null);
+  withVal.length > 0
+    ? ok(`${withVal.length} of ${rows().length} rows carry a validation record`)
+    : bad("no row has a validation record -- DATA.validation is empty or unkeyed");
+  const withEdge = withVal.filter(r => r.edgePct !== null);
+  withEdge.length > 0 ? ok(`${withEdge.length} rows have a bootstrap Edge %`)
+                      : bad("no row has a bootstrap edgePct");
+  const note = els["cmp-multitest"] || {};
+  (!DATA.validation_summary || note.hidden === false)
+    ? ok("multiple-testing note shown when validation_summary is present")
+    : bad("cmp-multitest stayed hidden despite DATA.validation_summary");
+  if (DATA.validation_summary && (note.innerHTML || "").length < 20)
+    bad("cmp-multitest is visible but nearly empty");
+}
+
+console.log("\n== detail: does-it-hold-up and trade-quality cards ==");
+S.view = "detail";
+{
+  const withVal = rows().filter(r => r.val !== null);
+  if (!withVal.length) {
+    bad("no validated row to open in Detail");
+  } else {
+    S.sel = withVal[0].id; render();
+    const html = (els["det-body"] || {}).innerHTML || "";
+    html.includes("Does it hold up?")
+      ? ok("validation card rendered") : bad("validation card missing from Detail");
+    html.includes("Trade quality")
+      ? ok("trade-quality card rendered") : bad("trade-quality card missing from Detail");
+  }
+}
+S.sel = null; S.view = "compare";
+
 /* NOTHING MAY RENDER AS "undefined" OR "NaN". These do not throw, they print --
    a missing field arrives on the page as the word undefined and reads like data.
    Checked across every view rather than one, which is where it used to live. */

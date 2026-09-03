@@ -147,6 +147,7 @@ svg{display:block;width:100%;overflow:visible}
       <h3>Every rule, the same conditions</h3>
       <p class="sub" id="cmp-sub"></p>
       <p class="note" id="cmp-inst" hidden></p>
+      <p class="note" id="cmp-multitest" hidden></p>
       <details class="formulas"><summary>How every column is calculated</summary>
         <div id="cmp-formulas"></div></details>
       <button id="cmp-export" class="export">Export to Excel</button>
@@ -349,19 +350,34 @@ const keyFor = (skey, v) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
   `|${S.year}|${S.prio || DATA.priority_default}`;
 
+/* validation is keyed the same way a row's own id is built ("skey|tag(v)"),
+   computed once per strategy over the FULL universe and history -- it does
+   not change with Universe/Capital/Risk/Fill/Year/Priority above, only with
+   which strategy row this is. See kitelab.validation.validation_summary. */
+function valFor(id) { return (DATA.validation || {})[id] || null; }
+
 function rows() {
   const out = [];
   for (const [skey, label] of Object.entries(DATA.strategies))
     for (const v of variantsOf(skey)) {
       const r = DATA.grid[keyFor(skey, v)];
       if (!r) continue;
-      out.push({ id: skey + "|" + v, skey, v, family: label,
-                 setting: settingLabel(skey, v), r,
+      const id = skey + "|" + v;
+      const val = valFor(id);
+      const boot = val && val.bootstrap;
+      out.push({ id, skey, v, family: label,
+                 setting: settingLabel(skey, v), r, val,
                  cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar: r.mar,
                  ulcer: r.ulcer, final: r.final, taken: r.taken,
                  sharpe: r.sharpe, sortino: r.sortino, exposure: r.exposure,
                  capture: r.signals ? 100 * r.taken / r.signals : null,
-                 full: r.full_pct, wiped: r.wiped });
+                 full: r.full_pct, wiped: r.wiped,
+                 vsHold: val ? val.vs_hold : null,
+                 walkFrac: (val && val.total_windows)
+                   ? val.positive_windows / val.total_windows : null,
+                 walkText: val ? `${val.positive_windows}/${val.total_windows}` : null,
+                 edgePct: boot ? 100 * (1 - boot.p_neg) : null,
+                 clearedEdge: boot ? boot.cleared_95 : null });
     }
   return out;
 }
@@ -385,8 +401,11 @@ const EXPORT_COLS = [
   ["Strategy",  r => r.family],
   ["Setting",   r => r.setting],
   ["CAGR %",    r => r.wiped ? "wiped" : r.cagr],
+  ["vs Hold pp", r => r.vsHold],
   ["Worst dip %", r => r.maxdd],
   ["MAR",       r => r.mar],
+  ["Walk-fwd positive", r => r.walkText],
+  ["Edge (chance of profit) %", r => r.edgePct == null ? null : Math.round(r.edgePct)],
   ["Ulcer",     r => r.ulcer],
   ["Final",     r => r.final],
   ["Trades",    r => r.taken],
@@ -440,8 +459,11 @@ const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
   setting: "The variant within that rule -- band width, channel pair, or stop reading.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
+  vsHold:  "CAGR minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first among 24 and still lose to doing nothing. Computed once over the full universe and history, so it does not move when you change Universe/Capital/Risk/Fill/Year/Priority above -- only when you pick a different strategy row.",
   maxdd:   "Max drawdown = the lowest value of (equity / running peak - 1), in percent. Measured against the peak standing AT THE TIME, not the final one.",
   mar:     "MAR = CAGR / |max drawdown|. Return per unit of worst pain.",
+  walkFrac:"Positive DISJOINT 3-year windows / total windows. The dashboard's own start-year axis is cumulative -- every window ends today, so one strong stretch flatters them all. These windows do not overlap, so a rule cannot pass by being lucky once and riding it. Same fixed scenario as vs Hold and Edge.",
+  edgePct: "Share of 5,000 resampled trade histories (block bootstrap, on the rule's own trades) that finished profitable. Below 95% the 5th-percentile CAGR does not clear zero, which scripts.bootstrap treats as “not distinguishable from luck.” Trade-level, not account-level -- see the Detail view before comparing its magnitude to CAGR.",
   ulcer:   "Ulcer Index = sqrt(mean(drawdown^2)) across every day. Unlike max drawdown it counts how LONG you were underwater, not just how deep it got.",
   sharpe:  "Sharpe = mean(daily return) / stdev(daily return) x sqrt(252). Population stdev; these are the realised returns, not a sample. Empty when volatility is zero.",
   sortino: "Sortino = mean(daily return) / downside deviation x sqrt(252), where downside deviation = sqrt(sum(min(r,0)^2) / N) over ALL N days. Upside volatility is not risk.",
@@ -455,8 +477,16 @@ const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
   ["setting", "Setting",  r => r.setting, "l"],
   ["cagr",    "CAGR",     r => cagrText(r.r)],
+  /* "Is it real", not just "how big" -- computed once per strategy, fixed
+     scenario, see valFor()/FORMULA above. Missing (an em dash) below the
+     30-trade floor kitelab.validation applies, same as an insufficient
+     sample anywhere else on this page. */
+  ["vsHold",  "vs Hold",  r => r.vsHold == null ? "—"
+                               : (r.vsHold > 0 ? "+" : "") + r.vsHold.toFixed(1)],
   ["maxdd",   "Worst dip",r => pct(r.maxdd)],
   ["mar",     "MAR",      r => num(r.mar)],
+  ["walkFrac","Walk-fwd", r => r.walkText || "—"],
+  ["edgePct", "Edge",     r => r.edgePct == null ? "—" : Math.round(r.edgePct) + "%"],
   ["ulcer",   "Ulcer",    r => num(r.ulcer, 1)],
   /* Volatility, not just drawdown. Every other column here measures how deep
      the hole got; these measure how bumpy the ride was, which is what separates
@@ -524,6 +554,9 @@ function renderCompare() {
       td.textContent = fmt(r);
       td.className = cls || "num";
       if (key === "cagr") td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
+      if (key === "vsHold" && r.vsHold != null) td.classList.add(r.vsHold >= 0 ? "up" : "down");
+      if (key === "edgePct" && r.clearedEdge != null)
+        td.classList.add(r.clearedEdge ? "up" : "down");
     }
   });
   $("cmp-sub").textContent =
@@ -553,6 +586,30 @@ function renderCompare() {
       `rather than a tradeable result. Signal priority is not offered here &mdash; ` +
       `one instrument never has two signals competing for the cash, so every ` +
       `ordering returns the same number.`;
+  }
+
+  /* THE ONE NUMBER THAT QUALIFIES EVERY ROW ABOVE IT. 24 variants were tried
+     and ranked; at a 95% bar chance alone clears ~1.2 of them, so counting
+     how many "look good" means nothing without knowing what an edgeless
+     menu of the same size would produce. This is scripts.bootstrap's closing
+     paragraph, always visible on Compare rather than CLI-only -- see
+     kitelab.validation.multiple_testing_summary. Independent of every
+     control above: it describes the whole board, not the current scenario. */
+  const mt = DATA.validation_summary;
+  const mtNote = $("cmp-multitest");
+  if (!mt) { mtNote.hidden = true; }
+  else {
+    mtNote.hidden = false;
+    mtNote.innerHTML =
+      `<b>${mt.cleared} of ${mt.tried}</b> strategy variants clear a 95% bar on their ` +
+      `own trades (5th-percentile bootstrap CAGR above zero), against about ` +
+      `<b>${mt.expected_by_chance}</b> an edgeless menu of ${mt.tried} would clear by ` +
+      `chance alone. The best, <b>${mt.best_key}</b>, scored ${mt.best_cagr}%; the ` +
+      `luckiest of ${mt.tried} coin-flip rules would be expected to score about ` +
+      `${mt.hurdle}% ${mt.clears_hurdle ? "&mdash; it clears that hurdle, which is a " +
+        "reason to keep testing it, not a reason to trade it" :
+        "&mdash; it does not clear that hurdle, so nothing on this board is yet " +
+        "distinguishable from the best of a menu of coin flips"}.`;
   }
   /* Every formula, in full, under the table. Hover gives the same text on each
      column header; this is here so it can be read without hunting for it. */
@@ -655,6 +712,92 @@ function waterfallBlock(skey, v) {
      spread across more names.</p></div>`;
 }
 
+/* Bootstrap resamples a rule's OWN trades sequentially, one continuous
+   account with no cash constraint and no concurrent positions -- a
+   deliberately different (and much more aggressive) model than the
+   account-level grid CAGR everywhere else on this page. Over thousands of
+   trades even a modest edge compounds past anything a real account could
+   reach, so these numbers can legitimately run into the millions of
+   percent. Formatted compactly and captioned rather than hidden, because
+   the SIGN and the relative spread are still informative even when the
+   absolute size is not a forecast of anything. */
+function bigPct(v) {
+  if (v == null) return "—";
+  const a = Math.abs(v), s = v < 0 ? "-" : "";
+  if (a >= 1e9) return s + (a / 1e9).toFixed(1) + "B%";
+  if (a >= 1e6) return s + (a / 1e6).toFixed(1) + "M%";
+  if (a >= 1e3) return s + (a / 1e3).toFixed(1) + "K%";
+  return v.toFixed(1) + "%";
+}
+
+function validationBlock(row) {
+  const val = row.val;
+  if (!val) return `<div class="card"><h3>Does it hold up?</h3>
+    <p class="empty">Fewer than 30 trades on this rule's own record -- too
+    few to bootstrap or test against buy &amp; hold.</p></div>`;
+  const boot = val.bootstrap, perm = val.permutation, be = val.breakeven;
+  const wfSpan = Math.max(...val.walk_forward.map(w => Math.abs(w[2] ?? 0)), 1);
+  const beText = !be ? "—" : be.status === "negative" ? "already negative before any extra cost"
+    : be.status === "robust" ? "survives 200bp+ a side" : `${be.bp.toFixed(1)} bp/side`;
+  const permText = !perm ? "not enough trades in the 60-stock sample" :
+    `${perm.observed.toFixed(1)}% real vs ${perm.shuffled_median.toFixed(1)}% median of shuffled ` +
+    `prices (${perm.beat_by >= 0 ? "+" : ""}${perm.beat_by.toFixed(1)}pp) &mdash; ` +
+    (perm.distinguishable
+      ? "<b>distinguishable from noise</b>"
+      : "<b>NOT distinguishable from noise</b> -- this earns as much on shuffled prices as on real ones");
+  const corr = val.most_correlated;
+  return `<div class="card"><h3>Does it hold up?</h3>
+    <p class="sub">Once per strategy, over the full universe and history -- fixed, not the scenario above</p>
+    <div class="wf">` +
+    val.walk_forward.map(([y0, y1, c]) => `<div class="wf-row"><span>${y0}&ndash;${y1}</span>
+      <div class="wf-bar"><div class="wf-fill" style="background:${(c ?? 0) >= 0 ? 'var(--up)' : 'var(--down)'};
+        left:${c == null ? 50 : c < 0 ? 50 - 50 * Math.abs(c) / wfSpan : 50}%;
+        width:${c == null ? 0 : 50 * Math.abs(c) / wfSpan}%"></div></div>
+      <span class="num" style="text-align:right;font-family:var(--mono)">${c == null ? "—" : (c > 0 ? "+" : "") + c.toFixed(1)}</span></div>`).join("") +
+    `</div>
+    <p class="note">Positive in <b>${val.positive_windows}/${val.total_windows}</b> disjoint windows -- these do
+      not overlap, unlike the cumulative start-year control above.</p>
+    <div class="stats" style="margin-top:var(--gap)">
+      <div class="stat"><div class="k">Best trades removed</div>
+        <div class="v" style="font-size:${'15px'}">${[1, 5, 10, 25].map(n =>
+          `${val.top_n[n] == null ? "—" : val.top_n[n].toFixed(1)}%`).join(" · ")}</div>
+        <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted</div></div>
+      <div class="stat"><div class="k">Breakeven cost</div>
+        <div class="v">${beText}</div>
+        <div class="d">Zerodha + modelled spread run ~15&ndash;40 bp/side</div></div>
+      <div class="stat"><div class="k">Most correlated with</div>
+        <div class="v" style="font-size:15px">${corr ? corr.key : "—"}</div>
+        <div class="d">${corr ? `r = ${corr.r.toFixed(2)}` : "no strong match"}</div></div>
+    </div>
+    <p class="note" style="margin-top:var(--gap)"><b>Shuffled-price test</b> (the sharpest of these six) &mdash; ${permText}.</p>
+    ${boot ? `<p class="note"><b>Bootstrap</b>, 5,000 resampled histories of this rule's own trades
+       (block bootstrap, trade-level -- see the caption above): 5th/50th/95th percentile CAGR
+       ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)}, ${(boot.p_neg * 100).toFixed(0)}%
+       of resamples lost money. ${boot.cleared_95
+         ? "The 5th percentile clears zero -- distinguishable from luck on its own trades."
+         : "The 5th percentile does not clear zero -- not distinguishable from luck on its own trades."}
+       These are trade-level, sequentially compounded figures, not the account-level CAGR shown
+       elsewhere on this page -- compare the SIGN and the spread, not the magnitude.</p>` : ""}
+    </div>`;
+}
+
+function tradeStatsBlock(row) {
+  const t = (DATA.trade_stats || {})[row.id];
+  if (!t) return "";
+  const stat = (k, v, d) => `<div class="stat"><div class="k">${k}</div>
+    <div class="v">${v}</div><div class="d">${d || ""}</div></div>`;
+  return `<div class="card"><h3>Trade quality</h3>
+    <p class="sub">One position at a time per symbol -- overlapping signals in the same stock are not double-counted</p>
+    <div class="stats">
+      ${stat("Win rate", (t.win_rate * 100).toFixed(0) + "%", t.wins + " of " + t.trades)}
+      ${stat("Profit factor", t.pf == null ? "no losses" : t.pf.toFixed(2), "gross win ÷ gross loss")}
+      ${stat("Expectancy", inr(t.expectancy), "average net per trade")}
+      ${stat("Avg win / loss", inr(t.avg_win) + " / " + inr(t.avg_loss), t.rr == null ? "" : "R:R " + t.rr)}
+      ${stat("Best / worst trade", inr(t.best) + " / " + inr(t.worst), "single trade, net")}
+      ${stat("Worst losing streak", inr(t.worst_run), "peak-to-trough on the trade P&amp;L line")}
+    </div></div>`;
+}
+
 function renderDetail() {
   const body = $("det-body");
   /* A DROPDOWN, because Detail was reachable only by clicking a Compare row --
@@ -737,7 +880,11 @@ function renderDetail() {
           ${r.uw_now ? r.uw_now + " years" : "not"} under water where the data ends.</p>
       </div>
     </div>
-    <div style="margin-top:var(--gap)">${waterfallBlock(row.skey, row.v)}</div>`;
+    <div class="grid2" style="margin-top:var(--gap)">
+      ${waterfallBlock(row.skey, row.v)}
+      ${tradeStatsBlock(row)}
+    </div>
+    <div style="margin-top:var(--gap)">${validationBlock(row)}</div>`;
 
   fetchDetail(gridKey).then(got => {
     if (!got || S.sel !== row.id) return;          // moved on while it loaded
