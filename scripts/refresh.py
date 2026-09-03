@@ -4,6 +4,7 @@
     python -m scripts.refresh --check            # say what is stale, change nothing
     python -m scripts.refresh --force            # rebuild even if it looks current
     python -m scripts.refresh --skip-preflight   # skip the 40s smoke test
+    python -m scripts.refresh --stocks-only      # skip Bitcoin/GOLD in the rebuild
 
 A rebuild is preceded by scripts.preflight, which runs the whole build over three
 symbols into a temp directory. It costs about forty seconds and refuses to let the
@@ -82,7 +83,7 @@ def needs_cleaning(keep: set[str]) -> tuple[list[str], list[str]]:
     return missing, outdated
 
 
-def run(module: str, why: str) -> None:
+def run(module: str, why: str, extra_args: list[str] = ()) -> None:
     """Run one of the project's own programs, showing its output as it goes.
 
     A subprocess rather than an import: each program owns its argument parsing
@@ -91,7 +92,7 @@ def run(module: str, why: str) -> None:
     """
     print(f"\n{'=' * 78}\n  {module}  --  {why}\n{'=' * 78}\n", flush=True)
     started = time.time()
-    result = subprocess.run([sys.executable, "-m", module])
+    result = subprocess.run([sys.executable, "-m", module, *extra_args])
     if result.returncode != 0:
         raise SystemExit(f"\n  {module} failed (exit {result.returncode}). "
                          "Nothing further was run.\n")
@@ -107,6 +108,9 @@ def main() -> None:
                     help="clean and rebuild even if nothing looks stale")
     ap.add_argument("--skip-preflight", action="store_true",
                     help="start the long build without the 40s smoke test first")
+    ap.add_argument("--stocks-only", action="store_true",
+                    help="skip the non-equity instruments in the rebuild "
+                         "(passed through to scripts.dashboard_data)")
     args = ap.parse_args()
 
     keep = working_set()
@@ -166,7 +170,8 @@ def main() -> None:
         # pre-flight stops here rather than letting the long build start.
         if not args.skip_preflight:
             run("scripts.preflight", "smoke test before the long build")
-        run("scripts.dashboard_data", verdict.get("message", "--force")[:60])
+        run("scripts.dashboard_data", verdict.get("message", "--force")[:60],
+            ["--stocks-only"] if args.stocks_only else [])
 
     # Last, and only after a real rebuild: refresh the copies of the few files
     # nothing can regenerate. Wired in here rather than left as a script to

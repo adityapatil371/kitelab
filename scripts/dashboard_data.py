@@ -1,6 +1,7 @@
 """Precompute everything the local dashboard can show.
 
     python -m scripts.dashboard_data
+    python -m scripts.dashboard_data --stocks-only   # skip Bitcoin/GOLD
 
 Writes data/dashboard.json for http://localhost:8765/dashboard (served by
 python -m scripts.dashboard). The page is a pure viewer -- every control selects
@@ -27,6 +28,7 @@ Breakout keeps intrabar stops (its buy-stop entry is inherently intrabar).
 """
 from __future__ import annotations
 
+import argparse
 import bisect
 import json
 import os
@@ -543,6 +545,13 @@ def signal_lists(over=None, suffix="all", label="") -> dict:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--stocks-only", action="store_true",
+                    help="skip the non-equity instruments (Bitcoin, GOLD) -- "
+                         "equity grid only, no assets pass")
+    args = ap.parse_args()
+
     cfg = config.load()
 
     print("  signal lists (cached where possible):", flush=True)
@@ -762,86 +771,89 @@ def main() -> None:
     # equity turnover; asking it about Bitcoin would return a number with no
     # meaning behind it. Their flat exchange fee already covers the round trip,
     # so they are gridded from unslipped trades under the same fill key.
-    print("  non-equity instruments:", flush=True)
-    # An unverified contract spec must not reach the dashboard quietly: every
-    # lot size and margin in kitelab.contracts is hand-entered from a published
-    # note, not derived from anything the project holds.
-    held = {a[0] for a in ASSETS}
-    unverified = [c for c in contracts.unverified_multipliers() if c in held]
-    if unverified:
-        print(f"    WARNING: multiplier UNVERIFIED for {', '.join(unverified)}",
-              flush=True)
-    # A SERIES OLDER THAN ITS CONTRACT is not a long history, it is a different
-    # instrument wearing the same name. GOLDTEN launched 2025-04-01 and
-    # SILVER100 2026-06-01; a vendor serving either back to 2010 is synthesising
-    # it, and nothing downstream could tell.
-    for symbol in sorted(held):
-        spec = contracts.get(symbol)
-        if spec is None or spec.launched is None:
-            continue
-        try:
-            first = frames.daily(symbol)["ts"].iloc[0]
-        except (SystemExit, IndexError):
-            continue
-        if spec.predates_launch(first):
-            print(f"    WARNING: {symbol} data starts {str(first)[:10]} but the "
-                  f"contract launched {spec.launched} -- the earlier bars are "
-                  f"not this instrument", flush=True)
-    asset_base: dict = {}
     assets = {}
-    for symbol, _entry_tf, fee in ASSETS:
-        try:
-            daily = frames.daily(symbol)
-        except SystemExit:
-            print(f"    {symbol}: no data, skipped", flush=True)
-            continue
-        bh = bh_stats(daily)
-        assets[symbol] = {"bh": {"cagr": round(bh["cagr"], 1),
-                                 "maxdd": round(bh["maxdd"], 1),
-                                 "uw": round(bh["longest_uw"] / 365.25, 1),
-                                 "years": round(bh["years"], 1)},
-                          "fee_pct": round(100 * fee, 3)}
-        backtest.FLAT_FEE_RATE = fee
-        sizing.FRACTIONAL = True
-        try:
-            for st in registry.REGISTRY:
-                try:
-                    trades = st.build(symbol)
-                except (SystemExit, FileNotFoundError):
-                    trades = []
-                # Stamped per trade so the account can price and size this
-                # instrument by its own rules even in a mixed run. A contract
-                # spec means futures: whole lots, funded by margin. Without one
-                # the instrument is bought outright, which is right for spot
-                # Bitcoin and wrong for everything on MCX.
-                spec = contracts.get(symbol)
-                for t in trades:
-                    t["fee_rate"] = fee
-                    if spec is None:
-                        t["fractional"] = True
-                    else:
-                        t["multiplier"] = spec.multiplier
-                        # DATED, not constant. Crude's minimum initial margin
-                        # ran ~9% in 2016 and 33% after the Aug 2024 revision;
-                        # one figure across the sample would let the account
-                        # hold late positions the exchange would have refused.
-                        t["margin_pct"] = spec.margin_at(t["entry_ts"])
-                asset_base.setdefault((st.key, st.variant), []).extend(trades)
-        finally:
-            backtest.FLAT_FEE_RATE = None
-            sizing.FRACTIONAL = False
-        print(f"    {symbol} done", flush=True)
+    if args.stocks_only:
+        print("  non-equity instruments: skipped (--stocks-only)", flush=True)
+    else:
+        print("  non-equity instruments:", flush=True)
+        # An unverified contract spec must not reach the dashboard quietly: every
+        # lot size and margin in kitelab.contracts is hand-entered from a published
+        # note, not derived from anything the project holds.
+        held = {a[0] for a in ASSETS}
+        unverified = [c for c in contracts.unverified_multipliers() if c in held]
+        if unverified:
+            print(f"    WARNING: multiplier UNVERIFIED for {', '.join(unverified)}",
+                  flush=True)
+        # A SERIES OLDER THAN ITS CONTRACT is not a long history, it is a different
+        # instrument wearing the same name. GOLDTEN launched 2025-04-01 and
+        # SILVER100 2026-06-01; a vendor serving either back to 2010 is synthesising
+        # it, and nothing downstream could tell.
+        for symbol in sorted(held):
+            spec = contracts.get(symbol)
+            if spec is None or spec.launched is None:
+                continue
+            try:
+                first = frames.daily(symbol)["ts"].iloc[0]
+            except (SystemExit, IndexError):
+                continue
+            if spec.predates_launch(first):
+                print(f"    WARNING: {symbol} data starts {str(first)[:10]} but the "
+                      f"contract launched {spec.launched} -- the earlier bars are "
+                      f"not this instrument", flush=True)
+        asset_base: dict = {}
+        for symbol, _entry_tf, fee in ASSETS:
+            try:
+                daily = frames.daily(symbol)
+            except SystemExit:
+                print(f"    {symbol}: no data, skipped", flush=True)
+                continue
+            bh = bh_stats(daily)
+            assets[symbol] = {"bh": {"cagr": round(bh["cagr"], 1),
+                                     "maxdd": round(bh["maxdd"], 1),
+                                     "uw": round(bh["longest_uw"] / 365.25, 1),
+                                     "years": round(bh["years"], 1)},
+                              "fee_pct": round(100 * fee, 3)}
+            backtest.FLAT_FEE_RATE = fee
+            sizing.FRACTIONAL = True
+            try:
+                for st in registry.REGISTRY:
+                    try:
+                        trades = st.build(symbol)
+                    except (SystemExit, FileNotFoundError):
+                        trades = []
+                    # Stamped per trade so the account can price and size this
+                    # instrument by its own rules even in a mixed run. A contract
+                    # spec means futures: whole lots, funded by margin. Without one
+                    # the instrument is bought outright, which is right for spot
+                    # Bitcoin and wrong for everything on MCX.
+                    spec = contracts.get(symbol)
+                    for t in trades:
+                        t["fee_rate"] = fee
+                        if spec is None:
+                            t["fractional"] = True
+                        else:
+                            t["multiplier"] = spec.multiplier
+                            # DATED, not constant. Crude's minimum initial margin
+                            # ran ~9% in 2016 and 33% after the Aug 2024 revision;
+                            # one figure across the sample would let the account
+                            # hold late positions the exchange would have refused.
+                            t["margin_pct"] = spec.margin_at(t["entry_ts"])
+                    asset_base.setdefault((st.key, st.variant), []).extend(trades)
+            finally:
+                backtest.FLAT_FEE_RATE = None
+                sizing.FRACTIONAL = False
+            print(f"    {symbol} done", flush=True)
 
-    if assets:
-        asset_universes = {sym: (sym, {sym}) for sym in assets}
-        asset_sets = {fkey: asset_base for fkey in FILL_SPEC}
-        # One priority each: every one of these is a single instrument.
-        a_total = (len(GRID_FILLS) * len(asset_base) * len(asset_universes)
-                   * len(RISKS) * len(CAPITALS) * len(START_YEARS))
-        a_bar = Bar(a_total, "assets")
-        fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS, START_YEARS)
-        a_bar.close()
-        universes.update({k: (v[0], v[1]) for k, v in asset_universes.items()})
+        if assets:
+            asset_universes = {sym: (sym, {sym}) for sym in assets}
+            asset_sets = {fkey: asset_base for fkey in FILL_SPEC}
+            # One priority each: every one of these is a single instrument.
+            a_total = (len(GRID_FILLS) * len(asset_base) * len(asset_universes)
+                       * len(RISKS) * len(CAPITALS) * len(START_YEARS))
+            a_bar = Bar(a_total, "assets")
+            fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS, START_YEARS)
+            a_bar.close()
+            universes.update({k: (v[0], v[1]) for k, v in asset_universes.items()})
 
     payload = {
         # IST, and labelled: the build machine may be on any clock.
