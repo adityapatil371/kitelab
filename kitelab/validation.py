@@ -43,6 +43,11 @@ BLOCK = 20
 # caller here must degrade to None/empty rather than raise.
 MIN_TRADES = 30
 
+# Validation gates -- see validation_summary()'s "gates" block. A strategy
+# must pass every one of these to be ranked as a real candidate at all.
+WALK_FORWARD_MIN_FRACTION = 0.5    # positive in at least half the disjoint windows
+BREAKEVEN_MARGIN_BP = 40.0         # top of the ~15-40bp real Zerodha+spread range
+
 
 def cagr_of(trades, capital=CAPITAL, risk=RISK):
     if not trades:
@@ -310,33 +315,80 @@ def expected_best_of(n_trials: int, spread: float) -> float:
 # disagree. What follows is new: it packages that math into the shapes
 # scripts/dashboard_data.py puts on the page.
 
-def _bootstrap_one(trades, risk_pct=RISK_PCT, draws=DRAWS, seed=20260903,
+def bootstrap_one(trades, risk_pct=RISK_PCT, draws=DRAWS, seed=20260903,
                     block=BLOCK):
     """One rule's bootstrap row, or None below MIN_TRADES.
 
-    Mirrors scripts/bootstrap.py's main() loop for a single rule -- same
-    inputs (fixed-fractional risk, block resampling), so `p05` here and the
-    'Edge (p05)' column on the page always match what `python -m
-    scripts.bootstrap` prints for the same rule.
+    THE CREDIBILITY FIGURE IS A ONE-SAMPLE T-STATISTIC ON NET R MULTIPLES,
+    not compounded CAGR. Compounding is order-dependent and multiplicative,
+    so a rule's compounded return grows roughly exponentially with its trade
+    count for ANY positive average edge -- measured 2026-09-04 at a 0.82
+    correlation between log(trade count) and the old CAGR-based ratio across
+    this project's 24 variants, meaning it was ranking "how many trades did
+    this fire" nearly as much as "is this a real edge". A t-statistic does
+    not have that problem: more trades correctly narrows the standard error
+    (t_stat's denominator), not the numerator, so it rewards more data with
+    more CONFIDENCE rather than a bigger number. This is the standard
+    practitioner move for exactly this failure mode -- Harvey & Liu
+    ("Backtesting", Journal of Portfolio Management, 2015) convert Sharpe to
+    a t-ratio before applying a multiple-testing correction for the same
+    reason.
+
+    `p05_mean_r`/`p50_mean_r`/`p95_mean_r` resample the MEAN of the trades in
+    each block-bootstrap draw (not the compounded product), so they are
+    order-invariant too: "would the average trade still look this good under
+    a different mix", not "would this particular compounding path still end
+    up ahead" -- the question that saturates near 100% once there are
+    thousands of trades. Reuses the SAME block-bootstrap machinery
+    (_indices, BLOCK) that the compounded version below still uses, because
+    the reason for resampling in contiguous blocks -- trades cluster, a
+    working rule's winners arrive together -- applies to a mean exactly as
+    much as to a compounded product.
+
+    obs_cagr/p05/p50/p95 (compounded, in %) are KEPT below for the Detail
+    view's existing display of the full compounded distribution -- legitimate
+    supporting context, captioned there as trade-level and not comparable to
+    account CAGR -- but no longer what decides whether a rule clears the
+    luck hurdle. See kitelab.validation.multiple_testing_summary.
     """
     r = r_multiples(trades)
     if len(r) < MIN_TRADES:
         return None
+    n = len(r)
+    mean_r = float(r.mean())
+    se_r = float(r.std(ddof=1) / math.sqrt(n)) if n > 1 else 0.0
+    t_stat = (mean_r / se_r) if se_r > 0 else None
+
     years = span_years(trades)
     fraction = risk_pct / 100.0
     rng = np.random.default_rng(seed)
     obs_cagr, obs_dd, obs_mar = (v[0] for v in paths(r[None, :], fraction, years))
     cagr, dd, mar = bootstrap(r, years, fraction, draws, rng, block)
+
+    means, done = [], 0
+    rng2 = np.random.default_rng(seed)
+    while done < draws:
+        k = min(CHUNK, draws - done)
+        idx = _indices(rng2, k, n, block)
+        means.append(r[idx].mean(axis=1))
+        done += k
+    means = np.concatenate(means)
+
     return {
-        "n": len(r),
+        "n": n, "mean_r": round(mean_r, 4), "se_r": round(se_r, 4),
+        "t_stat": round(t_stat, 2) if t_stat is not None else None,
+        "p05_mean_r": round(float(np.percentile(means, 5)), 4),
+        "p50_mean_r": round(float(np.percentile(means, 50)), 4),
+        "p95_mean_r": round(float(np.percentile(means, 95)), 4),
+        "p_neg": round(float((means <= 0).mean()), 3),
+        "cleared_95": bool(np.percentile(means, 5) > 0),
+        # Compounded distribution -- Detail view context only, see docstring.
         "obs_cagr": round(float(obs_cagr), 1),
         "obs_mar": round(float(obs_mar), 2) if np.isfinite(obs_mar) else None,
         "p05": round(float(np.percentile(cagr, 5)), 1),
         "p50": round(float(np.percentile(cagr, 50)), 1),
         "p95": round(float(np.percentile(cagr, 95)), 1),
         "dd05": round(float(np.percentile(dd, 5)), 1),
-        "p_neg": round(float((cagr <= 0).mean()), 3),
-        "cleared_95": bool(np.percentile(cagr, 5) > 0),
     }
 
 
@@ -388,12 +440,39 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=10,
     observed_cagr = cagr_of(held)
     wf = walk_forward(held)
     positive_windows = sum(1 for _, _, c in wf if c is not None and c > 0)
+    vs_hold = (round(observed_cagr - bh, 1)
+               if observed_cagr is not None and bh is not None else None)
+    breakeven = _breakeven_payload(held)
+    permutation = _permutation_summary(strat, universe, rng, permutation_rounds)
+
+    # GATES, not weights. Research on this exact question (composite scoring
+    # of return + significance + robustness, 2026-09-04) is unambiguous that
+    # practitioners overwhelmingly gate-then-rank rather than blend axes into
+    # one number -- a compensatory weighted sum lets a spectacular score on
+    # one axis paper over a failing score on another (Quantopian's contest
+    # rules and WorldQuant BRAIN's submission criteria are both hard gates
+    # first, a single ranking metric only among survivors; Arnott, Harvey &
+    # Markowitz 2019 frame the whole idea of backtest validation as a
+    # checklist of pass/fail questions, not a score). A strategy failing any
+    # gate here is not down-weighted -- it is ranked below every strategy
+    # that passes all of them, which is what "not yet distinguishable from
+    # luck" should mean on a leaderboard.
+    gates = {
+        "beats_hold": vs_hold is not None and vs_hold > 0,
+        "distinguishable": bool(permutation and permutation["distinguishable"]),
+        "walk_forward_majority": (len(wf) > 0
+                                   and positive_windows / len(wf) >= WALK_FORWARD_MIN_FRACTION),
+        "breakeven_margin": bool(breakeven and (
+            breakeven["status"] == "robust"
+            or (breakeven["status"] == "finite" and breakeven["bp"] is not None
+                and breakeven["bp"] > BREAKEVEN_MARGIN_BP))),
+    }
+    gates["passes"] = all(gates.values())
 
     return {
         "n": len(held),
         "cagr": round(observed_cagr, 1) if observed_cagr is not None else None,
-        "vs_hold": (round(observed_cagr - bh, 1)
-                    if observed_cagr is not None and bh is not None else None),
+        "vs_hold": vs_hold,
         "hold_cagr": round(bh, 1) if bh is not None else None,
         "walk_forward": [[y0, y1, round(c, 1) if c is not None else None]
                           for y0, y1, c in wf],
@@ -401,9 +480,10 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=10,
         "total_windows": len(wf),
         "top_n": {str(n): (round(c, 1) if c is not None else None)
                   for n in TOP_N for c in [without_best(held, n)]},
-        "breakeven": _breakeven_payload(held),
-        "bootstrap": _bootstrap_one(held),
-        "permutation": _permutation_summary(strat, universe, rng, permutation_rounds),
+        "breakeven": breakeven,
+        "bootstrap": bootstrap_one(held),
+        "permutation": permutation,
+        "gates": gates,
         "monthly": monthly_returns(held),         # consumed by correlation_summary, stripped after
     }
 
@@ -443,27 +523,108 @@ def correlation_summary(monthly_by_key: dict) -> dict:
     return out
 
 
-def multiple_testing_summary(bootstrap_rows: list[dict]) -> dict | None:
+def average_pairwise_correlation(monthly_by_key: dict) -> float:
+    """Mean correlation of monthly P&L across every pair of strategies.
+
+    Feeds effective_trials() below. Not the same number as
+    correlation_summary(), which keeps only each key's SINGLE closest match
+    for display -- this needs the average over the WHOLE matrix.
+    """
+    keys = list(monthly_by_key)
+    vals = []
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            r = correlate(monthly_by_key[a], monthly_by_key[b])
+            if r is not None:
+                vals.append(r)
+    return float(np.mean(vals)) if vals else 0.0
+
+
+def _correlation_matrix(monthly_by_key: dict) -> np.ndarray:
+    keys = list(monthly_by_key)
+    m = len(keys)
+    mat = np.eye(m)
+    for i, a in enumerate(keys):
+        for j in range(i + 1, m):
+            r = correlate(monthly_by_key[a], monthly_by_key[keys[j]])
+            mat[i, j] = mat[j, i] = r if r is not None else 0.0
+    return mat
+
+
+def effective_trials(monthly_by_key: dict) -> float:
+    """How many INDEPENDENT trials the tested variants are worth.
+
+    A first attempt used the simple "design effect" (N_eff = N / (1 + (N-1)
+    x rho) on the AVERAGE pairwise correlation) and it broke: on this
+    project's 24 variants, average correlation 0.54, that formula gives 1.8
+    effective trials -- below 2, expected_best_of() returns a hurdle of
+    exactly 0.0, and "clears the luck hurdle" becomes true for any positive
+    t-stat. The design effect assumes one UNIFORM correlation across every
+    pair, which is the wrong shape here: EMA-band variants are extremely
+    correlated with EACH OTHER but not uniformly with the Turtle or Holy
+    Grail families, so the correlation matrix has real STRUCTURE the average
+    throws away.
+
+    Nyholt's method (Nyholt, "A simple correction for multiple testing...",
+    American Journal of Human Genetics, 2004) uses that structure instead:
+    eigen-decompose the correlation matrix and discount each eigenvalue
+    above 1 by how much it exceeds 1 (an eigenvalue near 1 contributes close
+    to one full independent test; a large eigenvalue -- one dominant
+    correlated cluster, like the six EMA bands moving together -- is
+    discounted toward zero). Standard in genetics for exactly this shape of
+    problem (many correlated test statistics; there, SNPs in linkage
+    disequilibrium). On this project's 24 variants it gives ~5.7 effective
+    trials -- a number that reflects "about half a dozen real bets," not
+    "barely more than one," which is what one strongly correlated family and
+    several weakly related ones should produce.
+    """
+    keys = list(monthly_by_key)
+    m = len(keys)
+    if m < 2:
+        return float(m)
+    eig = np.clip(np.linalg.eigvalsh(_correlation_matrix(monthly_by_key)), 0, None)
+    m_eff = m - float(np.sum(np.maximum(eig - 1.0, 0.0)))
+    return max(1.0, min(m_eff, float(m)))
+
+
+def multiple_testing_summary(bootstrap_rows: list[dict],
+                              monthly_by_key: dict | None = None) -> dict | None:
     """The paragraph scripts/bootstrap.py prints last, structured.
 
-    `bootstrap_rows` is a list of {"key": label, "obs_cagr": .., "p05": ..}
-    for every strategy that cleared MIN_TRADES -- the reason this exists at
+    IN T-STATISTIC UNITS, not raw CAGR (see bootstrap_one) -- comparable
+    across strategies with very different trade counts, where compounded
+    CAGR is not. A t-statistic's spread under a TRUE null is ~1 by
+    construction, so unlike the old CAGR-percentile version this needs no
+    empirical spread estimate: expected_best_of(n_eff, 1.0) directly gives
+    the expected t-stat of the best of n_eff independent no-edge trials.
+
+    `monthly_by_key` -- see effective_trials(): 24 variants tried is not 24
+    INDEPENDENT trials when they are this correlated, and the hurdle is
+    computed against the effective count, not the raw one. None (or a dict
+    with under 2 usable entries) falls back to treating every trial as
+    independent, i.e. n_eff = tried -- the conservative direction to be
+    wrong in, since it sets the hurdle too HIGH rather than too low.
+
+    `bootstrap_rows` is a list of {"key": label, "t_stat": .., ...} for
+    every strategy that cleared MIN_TRADES -- the reason this exists at
     all: counting how many rules "look good" means nothing without knowing
     how many an edgeless menu of the same size would produce by chance.
     """
-    rows = [r for r in bootstrap_rows if r.get("p05") is not None]
+    rows = [r for r in bootstrap_rows if r.get("t_stat") is not None]
     if not rows:
         return None
     tried = len(rows)
-    cleared = [r for r in rows if r["p05"] > 0]
+    avg_corr = average_pairwise_correlation(monthly_by_key) if monthly_by_key else 0.0
+    n_eff = (effective_trials(monthly_by_key) if monthly_by_key and len(monthly_by_key) >= 2
+             else float(tried))
     expected = tried * 0.05
-    spread = float(np.median([r["p95"] - r["p05"] for r in rows
-                              if r.get("p95") is not None])) / 3.29
-    hurdle = expected_best_of(tried, spread)
-    best = max(rows, key=lambda r: r["obs_cagr"])
+    hurdle = expected_best_of(n_eff, 1.0)
+    cleared = [r for r in rows if r["t_stat"] > hurdle]
+    best = max(rows, key=lambda r: r["t_stat"])
     return {
-        "tried": tried, "cleared": len(cleared), "expected_by_chance": round(expected, 1),
-        "hurdle": round(hurdle, 1), "best_cagr": round(best["obs_cagr"], 1),
-        "best_key": best["key"], "clears_hurdle": best["obs_cagr"] > hurdle,
+        "tried": tried, "n_eff": round(n_eff, 1), "avg_correlation": round(avg_corr, 2),
+        "cleared": len(cleared), "expected_by_chance": round(expected, 1),
+        "hurdle": round(hurdle, 2), "best_t": best["t_stat"],
+        "best_key": best["key"], "clears_hurdle": best["t_stat"] > hurdle,
         "cleared_keys": [r["key"] for r in cleared],
     }

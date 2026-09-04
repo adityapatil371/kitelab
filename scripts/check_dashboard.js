@@ -74,13 +74,13 @@ global.window = {};
 const driver = `
   DATA = hydrate(JSON.parse(require("fs").readFileSync(process.env.KITELAB_DASHBOARD_JSON, "utf8")));
   init();
-  module.exports = { DATA, S, render, rows, variantsOf, settingLabel, keyFor, VIEWS };
+  module.exports = { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS };
 `;
 process.env.KITELAB_DASHBOARD_JSON = jsonPath;
 const mod = { exports: {} };
 new Function("module", "require", js + driver)(mod, require);
 
-const { DATA, S, render, rows, variantsOf, settingLabel, keyFor, VIEWS } = mod.exports;
+const { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS } = mod.exports;
 const fail = [];
 const ok = m => console.log("  ok   " + m);
 const bad = m => { fail.push(m); console.log("  FAIL " + m); };
@@ -248,15 +248,32 @@ S.view = "compare"; S.uni = "all"; render();
   withVal.length > 0
     ? ok(`${withVal.length} of ${rows().length} rows carry a validation record`)
     : bad("no row has a validation record -- DATA.validation is empty or unkeyed");
-  const withEdge = withVal.filter(r => r.edgePct !== null);
-  withEdge.length > 0 ? ok(`${withEdge.length} rows have a bootstrap Edge %`)
-                      : bad("no row has a bootstrap edgePct");
+  const withT = withVal.filter(r => r.tStat !== null);
+  withT.length > 0 ? ok(`${withT.length} rows have a credibility t-stat`)
+                   : bad("no row has a tStat (check bootstrap_one output)");
+  const withGates = withVal.filter(r => r.gates !== null);
+  withGates.length > 0 ? ok(`${withGates.length} rows carry a gates verdict`)
+                       : bad("no row has a gates object");
+  const validated = withVal.filter(r => r.validated === true);
+  ok(`${validated.length} of ${withVal.length} rows are Validated`);
+  // Sorted rows must put every Validated row ahead of every non-validated one.
+  const sorted = sortedRows ? sortedRows() : null;
+  if (sorted) {
+    const firstFail = sorted.findIndex(r => r.validated === false);
+    const lastPass = sorted.map(r => r.validated).lastIndexOf(true);
+    (firstFail === -1 || lastPass === -1 || lastPass < firstFail)
+      ? ok("default sort puts every Validated row before every non-validated one")
+      : bad("a non-validated row sorts above a validated one -- rankKey is broken");
+  }
   const note = els["cmp-multitest"] || {};
   (!DATA.validation_summary || note.hidden === false)
     ? ok("multiple-testing note shown when validation_summary is present")
     : bad("cmp-multitest stayed hidden despite DATA.validation_summary");
   if (DATA.validation_summary && (note.innerHTML || "").length < 20)
     bad("cmp-multitest is visible but nearly empty");
+  if (DATA.validation_summary && DATA.validation_summary.n_eff > DATA.validation_summary.tried)
+    bad(`n_eff (${DATA.validation_summary.n_eff}) exceeds tried `
+        + `(${DATA.validation_summary.tried}) -- effective_trials() should never exceed the raw count`);
 }
 
 console.log("\n== detail: does-it-hold-up and trade-quality cards ==");

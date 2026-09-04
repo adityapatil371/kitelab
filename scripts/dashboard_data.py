@@ -548,7 +548,7 @@ def signal_lists(over=None, suffix="all", label="") -> dict:
 # old cache from before a shape change is refused rather than served with a
 # missing key -- kitelab.signals only knows the universe/data/code moved, not
 # that the payload it is guarding grew a field.
-_VALIDATION_CACHE = "_validation_summary_v1"
+_VALIDATION_CACHE = "_validation_summary_v2"
 
 
 def build_validation(cfg, base: dict) -> dict:
@@ -597,11 +597,19 @@ def build_validation(cfg, base: dict) -> dict:
         trade_stats_out[key] = trade_stats(strategies.drop_overlaps(trades))
 
     correlation = validation.correlation_summary(monthly_by_key)
+    summary = validation.multiple_testing_summary(bootstrap_rows, monthly_by_key)
+    hurdle = summary["hurdle"] if summary else None
     for key, row in per_strategy.items():
         row["most_correlated"] = correlation.get(key)
+        # VALIDATED = passes every gate AND clears the (correlation-adjusted)
+        # luck hurdle -- the single boolean the page sorts by first. Needs
+        # the hurdle, which is only known once every strategy's t-stat is in,
+        # so it is added here rather than inside validation_summary().
+        t = row["bootstrap"]["t_stat"] if row.get("bootstrap") else None
+        row["clears_hurdle"] = (hurdle is not None and t is not None and t > hurdle)
+        row["validated"] = bool(row["gates"]["passes"] and row["clears_hurdle"])
 
-    out = {"validation": per_strategy,
-           "summary": validation.multiple_testing_summary(bootstrap_rows),
+    out = {"validation": per_strategy, "summary": summary,
            "trade_stats": trade_stats_out}
     signals.save(_VALIDATION_CACHE, [out], cfg.merged)
     return out
