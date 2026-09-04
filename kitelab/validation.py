@@ -22,7 +22,7 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
-from . import frames, portfolio, signals, strategies
+from . import frames, portfolio, signals, slippage, strategies
 
 CAPITAL = 200_000
 RISK = 0.01
@@ -161,6 +161,69 @@ def walk_forward_grid(trades, universes: dict, priorities: list, capitals: list,
     return out
 
 
+def fixed_checks_by_universe(strat, trades, full_universe, universes: dict, rng,
+                              permutation_rounds=10) -> dict:
+    """Credibility, Beats-shuffled-prices and Survives-cost -- all three of
+    the "is this rule real" checks that run on the trade list rather than the
+    account -- live per Universe. Added 2026-09-05, in two steps: Credibility
+    first (credibility_grid, since bootstrap_one was already known to be
+    cheap), then the other two once they were actually TIMED at ~6s
+    (permutation) and ~5.5s (breakeven) per strategy -- affordable, not the
+    "too slow" this project first assumed before checking. See the Compare
+    banner's own history for that correction.
+
+    NOT crossed with Priority or Capital, unlike walk_forward_grid: none of
+    the three ever calls portfolio.run() -- bootstrap_one resamples the trade
+    list's own R multiples, the permutation test re-simulates the RULE (not
+    the account) on shuffled prices, and breakeven perturbs the RULE's own
+    entry/exit prices -- so only WHICH TRADES EXIST (Universe) can move any
+    of them. Deriving these from portfolio.run()'s position-sized `taken`
+    trades instead would make Priority/Capital move them too, but for
+    Credibility specifically that means reintroducing the compounding-order-
+    dependence this project redesigned it to be free of (see bootstrap_one's
+    docstring) -- not a trade worth making, so the other two stay symmetric
+    with it rather than each drawing its own line.
+
+    `trades` is the strategy's RAW cached "on paper" trade list; drop_overlaps
+    is applied per universe subset (overlap can differ once membership
+    narrows the trade list). `full_universe` is cfg.merged -- the symbol pool
+    the permutation test samples 60 from when `universes[key]` is None (the
+    "all" entry); a subset uses its own members instead, so an "all" caller
+    with a Universe subset live gets the SAME 60-stock pool a "large caps"
+    view would, both drawn from that view's own member set. Keyed by universe
+    key alone, not scenario_key() -- Priority/Capital never enter the key
+    because they never enter the computation.
+
+    Cost: len(universes) x (~6s permutation + ~5.5s breakeven + ~4s bootstrap)
+    per strategy -- a few extra minutes across the whole registry per universe
+    added, not the tens of minutes this project first assumed before timing
+    it (see kitelab.validation's own module history / the 2026-09-05 banner
+    correction).
+    """
+    out = {}
+    for uni_key, members in universes.items():
+        subset = trades if members is None else [t for t in trades if t["symbol"] in members]
+        held = strategies.drop_overlaps(subset)
+        if len(held) < MIN_TRADES:
+            continue
+        pool_universe = full_universe if members is None else members
+        breakeven = _breakeven_payload(held)
+        permutation = _permutation_summary(strat, pool_universe, rng, permutation_rounds,
+                                            trades=subset)
+        fixed_gates = {
+            "distinguishable": bool(permutation and permutation["distinguishable"]),
+            "breakeven_margin": bool(breakeven and (
+                breakeven["status"] == "robust"
+                or (breakeven["status"] == "finite" and breakeven["bp"] is not None
+                    and breakeven["bp"] > BREAKEVEN_MARGIN_BP))),
+        }
+        out[uni_key] = {
+            "credibility": bootstrap_one(held), "breakeven": breakeven,
+            "permutation": permutation, "fixed_gates": fixed_gates,
+        }
+    return out
+
+
 # --------------------------------------------------------------- top-N ----
 def without_best(trades, n):
     """The account with the n most profitable trades deleted."""
@@ -222,10 +285,33 @@ def correlate(a, b):
 
 
 # ---------------------------------------------------------- permutation ----
-def permutation_test(strat, universe, rounds, rng, sample=60):
-    """Observed CAGR against the same rule run on shuffled price paths."""
+def permutation_test(strat, universe, rounds, rng, sample=60, trades=None):
+    """Observed CAGR against the same rule run on shuffled price paths.
+
+    `trades` -- an optional pre-loaded trade list for `strat` (what
+    scripts.dashboard_data holds in `slipped`, i.e. the SAME spread-adjusted
+    trades the account grid's "Realistic fills" CAGR column uses -- see
+    fixed_checks_by_universe). Falls back to `load(strat, universe)` when
+    omitted, which is what scripts.validate and validation_summary's own
+    single, full-universe call still do (both intentionally run "on paper",
+    matching scripts.validate's own printed numbers). A caller that already
+    has the trades in memory and wants a NARROWER `universe` than they were
+    cached under must pass them: load()'s cache is stamped to the universe it
+    was SAVED under, so calling it with a subset silently misses and returns
+    no trades at all, rather than the subset's own trades.
+
+    The SHUFFLED side is spread-adjusted too (via slippage.apply_spread,
+    below), for the same reason `trades` should already be: comparing a
+    cost-charged "observed" CAGR against cost-free shuffled ones would make
+    every rule look worse than it is relative to noise, not because the edge
+    is weaker but because one side of the comparison is paying a toll the
+    other is not. apply_spread is a safe no-op when slippage.ENABLED is
+    False (mirrors `trades`, which is only ever spread-adjusted when the
+    caller set that flag before building it), so this never diverges from
+    whatever fill assumption the caller is already using.
+    """
     pool = sorted(universe)[:sample]
-    real = load(strat, universe)
+    real = trades if trades is not None else load(strat, universe)
     if not real:
         return None, []
     observed = cagr_of([t for t in real if t["symbol"] in set(pool)])
@@ -248,6 +334,7 @@ def permutation_test(strat, universe, rounds, rng, sample=60):
                 except (SystemExit, FileNotFoundError, ValueError, IndexError):
                     continue
             frames.daily = saved
+            trades = [slippage.apply_spread(t) for t in trades]
             got.append(cagr_of(trades))
     finally:
         frames.daily = saved
@@ -498,21 +585,25 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=10,
 
     bh = buy_and_hold(universe) if hold_cagr is None else hold_cagr
     breakeven = _breakeven_payload(held)
-    permutation = _permutation_summary(strat, universe, rng, permutation_rounds)
+    permutation = _permutation_summary(strat, universe, rng, permutation_rounds, trades=trades)
 
-    # FIXED, RULE-LEVEL GATES ONLY. beats_hold and walk_forward_majority used
-    # to live here too, at one fixed baseline scenario -- moved 2026-09-05 to
-    # a LIVE computation (see walk_forward_grid() and scripts.dashboard_data)
-    # because they are account-level questions (do the trades actually taken
-    # under Universe/Priority/Capital beat doing nothing, do they hold up
-    # over time under those same settings) and a strategy validated at one
-    # scenario is not automatically validated at another. distinguishable and
-    # breakeven_margin stay fixed because they are NOT account-level: both
-    # run on the trade list before any account simulation happens (the
-    # permutation test re-simulates the RULE on shuffled prices; breakeven
-    # perturbs the RULE's own entry/exit prices), so they test whether the
-    # signal itself has structure -- a question that does not change with
-    # Priority or Capital, not merely one that is too expensive to re-test.
+    # FIXED HERE, RULE-LEVEL GATES ONLY -- this single, full-universe call is
+    # what scripts.validate and scripts.bootstrap still use directly. beats_hold
+    # and walk_forward_majority used to live here too, at one fixed baseline
+    # scenario -- moved 2026-09-05 to a LIVE computation (see walk_forward_grid()
+    # and scripts.dashboard_data) because they are account-level questions (do
+    # the trades actually taken under Universe/Priority/Capital beat doing
+    # nothing, do they hold up over time under those same settings) and a
+    # strategy validated at one scenario is not automatically validated at
+    # another. distinguishable and breakeven_margin are NOT account-level
+    # either (the permutation test re-simulates the RULE on shuffled prices;
+    # breakeven perturbs the RULE's own entry/exit prices), so like Credibility
+    # neither can ever depend on Priority or Capital -- but they CAN and, in
+    # scripts.dashboard_data's per-strategy loop, DO depend on Universe (see
+    # fixed_checks_by_universe). This one call stays fixed to whatever
+    # `universe` it is given because it has no per-Universe loop of its own to
+    # live in, not because these two are somehow different in kind from
+    # Credibility.
     #
     # GATES, not weights, still: a compensatory weighted sum lets one great
     # axis paper over a failing one, which the practitioner literature this
@@ -542,8 +633,8 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=10,
     }
 
 
-def _permutation_summary(strat, universe, rng, rounds):
-    observed, shuffled = permutation_test(strat, universe, rounds, rng)
+def _permutation_summary(strat, universe, rng, rounds, trades=None):
+    observed, shuffled = permutation_test(strat, universe, rounds, rng, trades=trades)
     if observed is None or not shuffled:
         return None
     med = float(np.median(shuffled))

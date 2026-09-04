@@ -1,5 +1,5 @@
 {
- "written": "2026-09-03T21:25:15+05:30",
+ "written": "2026-09-04T15:50:18+05:30",
  "note": "The in-sample/holdout split. Restore into [universe] in config.local.toml. Never tune on `unseen`.",
  "in_sample": [
   "ABB",

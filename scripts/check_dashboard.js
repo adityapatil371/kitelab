@@ -304,6 +304,49 @@ console.log("\n== validated/walk-forward actually change with the scenario ==");
   S.prio = null;
 }
 
+/* SAME PROOF FOR THE THREE TRADE-LEVEL CHECKS -- added 2026-09-05 alongside
+ * fixed_checks_by_universe. Unlike Validated/Walk-fwd above, none of the
+ * three (Credibility, distinguishable, breakeven_margin) must move with
+ * Priority (checked implicitly above: none of these fields are in that
+ * before/after comparison) but ALL THREE must move with Universe, since
+ * fixed_checks_by_universe is keyed by universe alone. Picks a universe
+ * with a materially smaller stock count so the filtered trade list is
+ * actually different, not just relabelled. */
+console.log("\n== the three trade-level checks track Universe, not Priority/Capital ==");
+{
+  S.view = "compare"; S.uni = "all"; S.prio = "liquidity"; render();
+  const allT = rows().filter(r => r.val !== null)
+    .map(r => ({ id: r.id, tStat: r.tStat,
+                 distinguishable: r.fixedGates && r.fixedGates.distinguishable,
+                 breakevenMargin: r.fixedGates && r.fixedGates.breakeven_margin }));
+  const smallUni = ["large", "mid", "small"].find(u => DATA.universes[u]) || null;
+  if (!smallUni) {
+    bad("no large/mid/small universe key found in DATA.universes -- cannot check");
+  } else {
+    S.uni = smallUni; render();
+    const smallT = rows().filter(r => r.val !== null)
+      .map(r => ({ id: r.id, tStat: r.tStat,
+                   distinguishable: r.fixedGates && r.fixedGates.distinguishable,
+                   breakevenMargin: r.fixedGates && r.fixedGates.breakeven_margin }));
+    const changedT = allT.filter((b, i) => b.tStat !== smallT[i].tStat).length;
+    const changedFg = allT.filter((b, i) =>
+      b.distinguishable !== smallT[i].distinguishable
+      || b.breakevenMargin !== smallT[i].breakevenMargin).length;
+    changedT > 0
+      ? ok(`${changedT} of ${allT.length} rows' Credibility changed between All stocks and ` +
+           `${DATA.universes[smallUni]} -- fixed_checks_by_universe is live for Credibility`)
+      : bad("NOTHING changed in Credibility between two different universes -- " +
+            "fixed_checks_by_universe lookup is probably broken (wrong key, or falling " +
+            "through to the 'all' fallback)");
+    changedFg > 0
+      ? ok(`${changedFg} of ${allT.length} rows' distinguishable/breakeven_margin changed ` +
+           `between All stocks and ${DATA.universes[smallUni]} -- live for those two as well`)
+      : bad("NOTHING changed in distinguishable/breakeven_margin between two different " +
+            "universes -- fixedGates is probably still reading the fixed All-stocks value");
+  }
+  S.uni = "all"; S.prio = null;
+}
+
 console.log("\n== detail: does-it-hold-up and trade-quality cards ==");
 S.view = "detail";
 {

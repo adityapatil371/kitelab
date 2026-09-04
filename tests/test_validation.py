@@ -327,5 +327,105 @@ class WalkForwardGrid(unittest.TestCase):
         self.assertNotEqual(out[all_key]["windows"], out[bbb_key]["windows"])
 
 
+class PermutationTestUsesPreloadedTrades(unittest.TestCase):
+    """trades= (added 2026-09-05) must bypass load() entirely -- load()'s
+    cache is stamped to the universe it was SAVED under, so a caller working
+    with a Universe SUBSET would get a silent cache miss (empty result) if
+    this fell through to it instead of using the trades already in hand."""
+
+    def test_bypasses_load_and_filters_to_the_pool(self):
+        aaa = _trade("2020-01-01", "2020-01-05", 100.0, 50.0)
+        aaa["symbol"] = "AAA"
+        zzz = _trade("2020-01-01", "2020-01-05", 100.0, 50.0)
+        zzz["symbol"] = "ZZZ"  # outside the pool -- must not affect "observed"
+
+        def boom(*a, **k):
+            raise AssertionError("load() must not be called when trades= is given")
+        saved = validation.load
+        validation.load = boom
+        try:
+            # rounds=0: no shuffled rounds, so strat is never touched either.
+            with support.account():
+                observed, shuffled = validation.permutation_test(
+                    None, ["AAA"], 0, np.random.default_rng(0),
+                    sample=60, trades=[aaa, zzz])
+        finally:
+            validation.load = saved
+        self.assertEqual(shuffled, [])
+        self.assertIsNotNone(observed)
+
+
+class FixedChecksByUniverse(unittest.TestCase):
+    """Credibility, distinguishable and breakeven_margin, live per Universe
+    -- added 2026-09-05 once these were actually timed (~12s/strategy total)
+    and found affordable, not the "too slow" first assumed. NOT crossed with
+    Priority/Capital: none of the three ever touches portfolio.run(), so
+    those two cannot change any of their answers (see the function's own
+    docstring). permutation_rounds=0 throughout: these tests cover the
+    Universe-filtering and MIN_TRADES-floor plumbing, not the shuffled-price
+    simulation itself (covered by PermutationTestUsesPreloadedTrades above
+    and by scripts.preflight/scripts.validate, which need real price data)."""
+
+    def _trades(self, n=80):
+        out = []
+        for i in range(n):
+            entry = TS("2010-01-01") + pd.Timedelta(days=i * 7)
+            exit_ = entry + pd.Timedelta(days=3)
+            symbol = "AAA" if i % 2 == 0 else "BBB"
+            # AAA: a strong, consistent edge, robust to any extra cost. BBB:
+            # consistently LOSING, so mixing it into "all" thins the edge
+            # enough that breakeven and Credibility genuinely differ between
+            # "all" and "aaa_only" -- not just noisy around the same number.
+            net = 20.0 if symbol == "AAA" else -19.0
+            t = _trade(entry, exit_, net, 10.0)
+            t["symbol"] = symbol
+            # net_profit/risk_taken (above) drive Credibility (r_multiples);
+            # cagr_of/breakeven work off entry/exit/shares instead (see
+            # portfolio.run), so both must encode the same win/loss -- same
+            # pattern WalkForwardGrid's own _trades() uses above.
+            t["entry_price"], t["exit_price"], t["shares"] = 100.0, 100.0 + net / 10, 10
+            out.append(t)
+        return out
+
+    def test_keyed_by_universe_only_with_all_three_checks(self):
+        """No Priority/Capital in the key -- unlike walk_forward_grid's
+        scenario_key, since those axes cannot move any of these three."""
+        trades = self._trades()
+        with support.account():
+            out = validation.fixed_checks_by_universe(
+                None, trades, ["AAA", "BBB"], {"all": None, "aaa_only": {"AAA"}},
+                np.random.default_rng(0), permutation_rounds=0)
+        self.assertEqual(set(out), {"all", "aaa_only"})
+        for row in out.values():
+            self.assertIn("credibility", row)
+            self.assertIn("breakeven", row)
+            self.assertIn("fixed_gates", row)
+            self.assertIn("breakeven_margin", row["fixed_gates"])
+
+    def test_universe_filter_actually_filters_credibility_and_breakeven(self):
+        """AAA alone (all-winners) must not report the same Credibility or
+        breakeven as "all" (half AAA, half noisy/losing BBB) -- proves
+        membership is applied, not silently ignored."""
+        trades = self._trades()
+        with support.account():
+            out = validation.fixed_checks_by_universe(
+                None, trades, ["AAA", "BBB"], {"all": None, "aaa_only": {"AAA"}},
+                np.random.default_rng(0), permutation_rounds=0)
+        self.assertNotEqual(out["all"]["credibility"]["t_stat"],
+                             out["aaa_only"]["credibility"]["t_stat"])
+        self.assertNotEqual(out["all"]["breakeven"], out["aaa_only"]["breakeven"])
+
+    def test_below_floor_universe_is_simply_absent(self):
+        """A universe too thin to bootstrap (below MIN_TRADES once filtered)
+        degrades to a missing key, not a crash or a resampled noise figure."""
+        trades = self._trades(n=validation.MIN_TRADES)  # ~half per symbol
+        with support.account():
+            out = validation.fixed_checks_by_universe(
+                None, trades, ["AAA", "BBB"], {"all": None, "aaa_only": {"AAA"}},
+                np.random.default_rng(0), permutation_rounds=0)
+        self.assertIn("all", out)
+        self.assertNotIn("aaa_only", out)
+
+
 if __name__ == "__main__":
     unittest.main()
