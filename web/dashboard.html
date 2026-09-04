@@ -528,7 +528,7 @@ function exportCsv() {
 const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
   setting: "The variant within that rule -- band width, channel pair, or stop reading.",
-  validated: "Passes every one of four gates (see the ✓/✗ breakdown on click, or the Detail view) AND clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look -- a weighted blend would let one great axis paper over a failing one, which the practitioner literature on this is explicit is the wrong way round. This is also the table's default sort: validated rows first, MAR breaking ties within each group.",
+  validated: "Passes every one of four gates (see the ✓/✗ breakdown on click, or the Detail view) AND clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look -- a weighted blend would let one great axis paper over a failing one, which the practitioner literature on this is explicit is the wrong way round. This is also the table's default sort: validated rows first, MAR breaking ties within each group. Computed at a FIXED baseline (1% risk, most-liquid-first, full history, unslipped trades) -- it can show ✓ at the same time this row's live vs Hold reads negative under your current Priority/Risk/Year/Fill. That is not a contradiction, it is two different questions; see the banner above the table.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
   vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first among 24 and still lose to doing nothing. One of the four gates. Buy & hold does not depend on the account's settings, so unlike Walk-fwd and Credibility, this always tracks the scenario you are looking at.",
   maxdd:   "Drawdown = the lowest value of (equity / running peak - 1), in percent -- the deepest fall from any peak the account reached, not necessarily the final one. Sometimes called \"max drawdown\".",
@@ -621,11 +621,25 @@ function renderCompare() {
       if (key === "cagr") td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
       if (key === "vsHold" && r.vsHold != null) td.classList.add(r.vsHold >= 0 ? "up" : "down");
       if (key === "validated" && r.validated != null) td.classList.add(r.validated ? "up" : "down");
-      /* Walk-fwd and Credibility are fixed at one baseline (see the banner
-         above the table for the permanent "rule on paper" gap, present
-         always). Dimmed here on TOP of that whenever Priority/Risk/Year have
-         also moved off that baseline, so a big scenario CAGR next to a small
-         fixed Credibility reads as "different question", not "contradiction". */
+      /* Validated, Walk-fwd and Credibility are ALL fixed at one baseline --
+         found 2026-09-05: Validated's own "beats buy & hold" gate does not
+         even match the grid cell AT the matching Priority/Risk/Year, because
+         the gates also drop overlapping signals and run on unslipped
+         ("rule on paper") trades, which the grid never does (see the banner
+         above the table). So the title on Validated is unconditional, not
+         only shown off-baseline like the other two -- a row can show
+         Validated + a NEGATIVE current-scenario "vs Hold" at the SAME time,
+         correctly, because they are answering different questions and
+         "vs Hold" is the one that tracks whatever is on screen right now. */
+      if (key === "validated" && r.validated != null) {
+        td.title = "Computed once at a fixed baseline (1% risk, most-liquid-first, full "
+          + "history, unslipped trades) -- can disagree with this row's live vs Hold/CAGR "
+          + "above, which track your current Priority/Risk/Year/Fill. See the banner above the table.";
+      }
+      /* Walk-fwd and Credibility: same fixed baseline, dimmed on TOP of the
+         unconditional caveat whenever Priority/Risk/Year have ALSO moved off
+         it, so a big scenario CAGR next to a small fixed Credibility reads
+         as "different question", not "contradiction". */
       if ((key === "walkFrac" || key === "tStat") && !baseline) {
         td.classList.add("stale-baseline");
         td.title = "Fixed at 1% risk, most-liquid-first, full history -- "
@@ -633,6 +647,7 @@ function renderCompare() {
       } else if (key === "tStat" && r.clearsHurdle != null) {
         td.classList.add(r.clearsHurdle ? "up" : "down");
       }
+      if (key === "validated" && !baseline) td.classList.add("stale-baseline");
     }
   });
   $("cmp-sub").textContent =
@@ -640,16 +655,23 @@ function renderCompare() {
     ` · ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}` +
     ` · ${prioName()} first`;
 
-  /* CANNOT BE MISSED, unlike a column tooltip: Walk-fwd and Credibility are
-     "rule on paper" numbers (see BASELINE_FILLS_NOTE) with NO control on
-     this page that can ever make them match the realistic-fills CAGR column
-     exactly -- that part is always true. Priority/Risk/Year add a SECOND,
-     avoidable gap on top of it when they are not at the 1%/most-liquid/
-     earliest-year baseline those two were also computed at. */
+  /* CANNOT BE MISSED, unlike a column tooltip: Validated, Walk-fwd and
+     Credibility are ALL "rule on paper" numbers (see BASELINE_FILLS_NOTE)
+     with NO control on this page that can ever make them match the
+     realistic-fills CAGR column exactly -- that part is always true, and it
+     is why a row can show Validated ✓ at the same moment its OWN live vs
+     Hold column reads negative: the gate's "beats buy & hold" check ran on
+     unslipped trades at a fixed scenario, vs Hold tracks whatever is
+     selected right now. Priority/Risk/Year add a SECOND, avoidable gap on
+     top of it when they are not at the 1%/most-liquid/earliest-year
+     baseline those three were also computed at. */
   const warn = $("cmp-baseline-warn");
   warn.classList.add("on");
   warn.innerHTML =
-    `<b>Walk-fwd and Credibility</b> are ${BASELINE_FILLS_NOTE}` +
+    `<b>Validated, Walk-fwd and Credibility</b> are ${BASELINE_FILLS_NOTE} ` +
+    `A row can show Validated even while ITS OWN vs Hold column (right next to it) is ` +
+    `negative -- that is not a contradiction, they answer different questions; vs Hold ` +
+    `always tracks your current scenario, Validated never does.` +
     (baseline ? "" :
       ` They are also frozen at 1% risk, most-liquid-first, from ` +
       `${DATA.start_years[0]} &mdash; not the ${DATA.risks[S.risk]}% risk / ` +
