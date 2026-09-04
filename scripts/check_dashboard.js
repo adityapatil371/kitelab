@@ -115,17 +115,20 @@ for (const [v] of VIEWS) {
   } catch (e) { bad(`${v} threw: ${e.message}`); }
 }
 
-console.log("\n== both Holy Grail stops on the board ==");
+console.log("\n== Holy Grail stop on the board ==");
+/* Was "both stops": candle retired 2026-09-05 (kitelab.registry.HG_VARIANTS)
+   -- consistently the second-worst variant tested, on the same validation
+   the rest of the board runs on. swing is the one reading left. */
 const hg = variantsOf("hg");
-hg.length === 2 ? ok(`hg variants: ${hg.join(", ")}`) : bad(`hg variants: ${hg.join(", ")}`);
+hg.length === 1 ? ok(`hg variants: ${hg.join(", ")}`) : bad(`hg variants: ${hg.join(", ")}, expected 1`);
 for (const v of hg) {
   const label = settingLabel("hg", v);
   /^stop at /.test(label) ? ok(`  "${v}" -> "${label}"`) : bad(`  "${v}" -> "${label}"`);
 }
 S.view = "compare"; S.uni = "all"; render();
 const hgRows = rows().filter(r => r.skey === "hg");
-hgRows.length === 2 ? ok(`compare shows ${hgRows.length} Holy Grail rows`)
-                    : bad(`compare shows ${hgRows.length} Holy Grail rows, expected 2`);
+hgRows.length === 1 ? ok(`compare shows ${hgRows.length} Holy Grail row`)
+                    : bad(`compare shows ${hgRows.length} Holy Grail rows, expected 1`);
 for (const r of hgRows) console.log(`       ${r.v.padEnd(7)} MAR ${r.mar}  CAGR ${r.cagr}  taken ${r.taken}`);
 
 /* THE POOL AXIS MUST RESOLVE. Every size the page offers has to reach real grid
@@ -251,9 +254,12 @@ S.view = "compare"; S.uni = "all"; render();
   const withT = withVal.filter(r => r.tStat !== null);
   withT.length > 0 ? ok(`${withT.length} rows have a credibility t-stat`)
                    : bad("no row has a tStat (check bootstrap_one output)");
-  const withGates = withVal.filter(r => r.gates !== null);
-  withGates.length > 0 ? ok(`${withGates.length} rows carry a gates verdict`)
-                       : bad("no row has a gates object");
+  const withGates = withVal.filter(r => r.fixedGates !== null);
+  withGates.length > 0 ? ok(`${withGates.length} rows carry a fixed-gates verdict`)
+                       : bad("no row has a fixedGates object");
+  const withWf = withVal.filter(r => r.walkForwardMajority !== null);
+  withWf.length > 0 ? ok(`${withWf.length} rows have a live walk-forward-majority verdict`)
+                    : bad("no row has walkForwardMajority (check walk_forward_by_scenario)");
   const validated = withVal.filter(r => r.validated === true);
   ok(`${validated.length} of ${withVal.length} rows are Validated`);
   // Sorted rows must put every Validated row ahead of every non-validated one.
@@ -274,6 +280,28 @@ S.view = "compare"; S.uni = "all"; render();
   if (DATA.validation_summary && DATA.validation_summary.n_eff > DATA.validation_summary.tried)
     bad(`n_eff (${DATA.validation_summary.n_eff}) exceeds tried `
         + `(${DATA.validation_summary.tried}) -- effective_trials() should never exceed the raw count`);
+}
+
+/* PROOF THE TAILORING IS ACTUALLY LIVE, not silently stuck on one value --
+ * the whole point of the 2026-09-05 rework. Compares the same row's
+ * Validated/Walk-fwd verdict at two different priorities; if nothing ever
+ * changes, walk_forward_by_scenario is not being looked up correctly. */
+console.log("\n== validated/walk-forward actually change with the scenario ==");
+{
+  S.view = "compare"; S.uni = "all"; S.prio = "liquidity"; render();
+  const before = rows().filter(r => r.val !== null)
+    .map(r => ({ id: r.id, validated: r.validated, walkText: r.walkText }));
+  S.prio = "illiquid"; render();
+  const after = rows().filter(r => r.val !== null)
+    .map(r => ({ id: r.id, validated: r.validated, walkText: r.walkText }));
+  const changed = before.filter((b, i) =>
+    b.validated !== after[i].validated || b.walkText !== after[i].walkText).length;
+  changed > 0
+    ? ok(`${changed} of ${before.length} rows' Validated/Walk-fwd changed between ` +
+         `liquidity and illiquid priority -- tailoring is live`)
+    : bad("NOTHING changed between two different priorities -- walk_forward_by_scenario " +
+          "lookup is probably broken (wrong scenarioKey, or falling through to null)");
+  S.prio = null;
 }
 
 console.log("\n== detail: does-it-hold-up and trade-quality cards ==");

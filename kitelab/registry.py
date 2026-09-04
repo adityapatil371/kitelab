@@ -77,7 +77,29 @@ SOLO_BAND = 0.02
 ATH_BAND = 0.10
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
-HG_VARIANTS = [("candle", "signal_low"), ("swing", "pivot")]
+
+# RETIRED 2026-09-05, EMA M/W/D at 0% band. BANDS is shared with Q/M/W, where
+# 0% is one of the stronger settings on the board -- this is a family-specific
+# cut, not a change to BANDS itself. Consistently the worst variant tested:
+# median MAR -0.14 across all 50 priority x risk x start-year combinations,
+# positive in only 7 of them, and its best case across every combination is
+# still a losing 0.23. Not a parameter worth a slot on a board meant to
+# compare strategies someone would actually trade.
+EMA_MWD_RETIRED = {0.0}
+
+# RETIRED 2026-09-05, the candle-stop reading. Both readings of the class's
+# ambiguous "SL will be swing low" were kept on the board deliberately (see
+# kitelab/holygrail.py) so that publishing one was not presenting a coin
+# flip as a finding. That reasoning holds for choosing which one to feature
+# as THE headline number; it does not hold for a board whose purpose is
+# comparing strategies someone would use in real life. Under the same
+# validation this board runs on everything else, candle is the second-worst
+# variant tested (median MAR -0.06, positive in only 8 of 50 combinations,
+# best case 0.08) -- it does not clear MIN_TRADES-worth of doubt, it clears
+# none. stop="signal_low" is still implemented and documented in
+# holygrail.py for anyone who wants to run it directly; it is not deleted,
+# only off the comparison board.
+HG_VARIANTS = [("swing", "pivot")]
 
 FAMILY_LABELS = {
     "ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W", "pair": "EMA · one higher TF",
@@ -117,9 +139,13 @@ def _build_registry() -> list[Strategy]:
         # Band 2% keeps the historical cache names, so the one setting that has
         # been on the board longest does not force a needless rebuild.
         stem = "" if band == 0.02 else f"_b{band*100:g}"
-        out.append(Strategy("ema", band, f"EMA · M/W/D · {band:.0%} band",
-                            f"EMA{stem}", "backtest.py",
-                            lambda s, b=band: backtest.simulate(s, band=b)))
+        # See EMA_MWD_RETIRED: M/W/D at this band is cut, Q/M/W at the same
+        # band is not -- BANDS is shared between the two families, and 0% is
+        # one of Q/M/W's stronger settings even though it is M/W/D's worst.
+        if band not in EMA_MWD_RETIRED:
+            out.append(Strategy("ema", band, f"EMA · M/W/D · {band:.0%} band",
+                                f"EMA{stem}", "backtest.py",
+                                lambda s, b=band: backtest.simulate(s, band=b)))
         out.append(Strategy("qmw", band, f"EMA · Q/M/W · {band:.0%} band",
                             f"QMW{stem}", "timeframes.py", _padded("QMW", band)))
     # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a

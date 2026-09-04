@@ -44,16 +44,22 @@ RISK, CAPITAL, YEAR, DRAWS = 0.01, 200_000, 2018, 25
 REALISTIC_PARTICIPATION = 0.02          # matches dashboard_data.py
 CUT = pd.Timestamp(f"{YEAR}-01-01")
 
-# The 24 published variants, by cache stem. Kept explicit rather than globbed:
+# The 22 published variants, by cache stem. Kept explicit rather than globbed:
 # the cache directory also holds retired lists (Breakout_101, the scale-out
 # sweeps), and a sweep that silently changes width is not a comparison.
-NAMES = ["EMA", "EMA_b0", "EMA_b1", "EMA_b3", "EMA_b4", "EMA_b5",
+#
+# EMA_b0 and HolyGrail_candle retired 2026-09-05 along with their registry
+# entries (kitelab.registry.EMA_MWD_RETIRED / HG_VARIANTS) -- this script
+# reads cache files directly by path, bypassing kitelab.signals' staleness
+# check, so it would otherwise go on silently scoring two variants that are
+# no longer on the comparison board and whose caches will never be rebuilt.
+NAMES = ["EMA", "EMA_b1", "EMA_b3", "EMA_b4", "EMA_b5",
          "QMW", "QMW_b0", "QMW_b1", "QMW_b3", "QMW_b4", "QMW_b5",
          "EMA_MD", "EMA_MW", "EMA_QW", "EMA_WD",
          "EMA_daily_only", "EMA_ath10",
          "Turtle_w20_20_10", "Turtle_w20_55_20",
          "Turtle_1tf_20_10", "Turtle_1tf_55_20",
-         "HolyGrail_candle", "HolyGrail_swing"]
+         "HolyGrail_swing"]
 
 
 def load(name: str, suffix: str) -> list[dict]:
@@ -143,8 +149,8 @@ def main() -> None:
         return f"min {v[0]:+.2f}  median {q(.5):+.2f}  max {v[-1]:+.2f}"
 
     print(f"  {len(bests)} fresh draws of {len(in_sample)} from the {len(unseen)}:")
-    print(f"    best of 24      {band(bests)}")
-    print(f"    MEDIAN of 24    {band(meds)}")
+    print(f"    best of {len(NAMES)}      {band(bests)}")
+    print(f"    MEDIAN of {len(NAMES)}    {band(meds)}")
     print(f"  {sum(1 for b in bests if b >= real_best)} of {len(bests)} fresh draws "
           f"reached {real_best:+.2f} or better")
     print(f"  {len(winners)} different variants won across {len(bests)} draws")

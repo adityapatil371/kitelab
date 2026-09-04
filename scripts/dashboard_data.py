@@ -161,7 +161,16 @@ REALISTIC_PARTICIPATION = 0.01     # one order <= 1% of the stock's daily turnov
 # barely moves the result: position size scales with equity, so more money buys
 # bigger positions rather than more of them, and the lever is the risk setting.
 # Three capitals cost 3x the grid to print the same ranking three times.
-CAPITALS = [200_000]
+#
+# RS1 CRORE ADDED 2026-09-05, on request (the class). That finding was measured
+# across roughly Rs1L-10L, where the account only ever holds ~10 positions and
+# nothing binds on liquidity; a full order of magnitude beyond the old range is
+# a genuinely different regime -- MAX_PARTICIPATION (kitelab.slippage) caps a
+# single order at 1% of a stock's own daily turnover, which a Rs1 crore account
+# can hit on names the Rs2L account never gets close to. Two capitals, not
+# three: doubles the grid rather than tripling it, and the open question is
+# "does the size cap start to bite", which two points answer as well as three.
+CAPITALS = [200_000, 10_000_000]
 
 # WHICH SIGNAL WINS THE CASH -- see portfolio.PRIORITIES for what each means and
 # why none of them may look at how a trade turned out. Swept at every universe
@@ -548,15 +557,26 @@ def signal_lists(over=None, suffix="all", label="") -> dict:
 # old cache from before a shape change is refused rather than served with a
 # missing key -- kitelab.signals only knows the universe/data/code moved, not
 # that the payload it is guarding grew a field.
-_VALIDATION_CACHE = "_validation_summary_v2"
+_VALIDATION_CACHE = "_validation_summary_v4"
 
 
-def build_validation(cfg, base: dict) -> dict:
+def build_validation(cfg, base: dict, universes: dict) -> dict:
     """Is each rule's number real, or a curve fit? Once per strategy, cached.
 
     Six tests plus a bootstrap resample -- kitelab.validation, which is also
     what `scripts.validate` and `scripts.bootstrap` call, so the page and the
     CLI tools can never print two different answers to the same question.
+
+    "Validated" itself is NOT computed here. It is a mix of fixed, rule-level
+    checks (this function) and live, account-level checks (beats buy & hold,
+    walk-forward majority) that depend on Universe/Priority/Capital -- see
+    web/dashboard.html's rows(), which combines this function's fixed_gates
+    and clears_hurdle with the CURRENT scenario's own grid cell and this
+    function's walk_forward_by_scenario. What IS fixed here -- the permutation
+    test and breakeven margin -- runs on the trade list before any account
+    simulation, so it does not vary with those controls in the first place;
+    see kitelab.validation.validation_summary for why that split is principled
+    and not just a cost saving.
 
     CACHED like every signal list, via the same kitelab.signals stamp
     (universe + price files + code). The permutation test alone re-simulates
@@ -572,10 +592,11 @@ def build_validation(cfg, base: dict) -> dict:
         print("  validation: cached, reusing", flush=True)
         return cached[0]
 
-    print("  validation (benchmark, walk-forward, top-N, cost, correlation, "
-          "permutation, bootstrap):", flush=True)
+    print("  validation (benchmark, walk-forward x every scenario, top-N, cost, "
+          "correlation, permutation, bootstrap):", flush=True)
     rng = np.random.default_rng(20260903)
     hold_cagr = validation.buy_and_hold(cfg.merged)
+    uni_members = {k: v[1] for k, v in universes.items()}
     per_strategy: dict = {}
     monthly_by_key: dict = {}
     bootstrap_rows: list = []
@@ -590,6 +611,11 @@ def build_validation(cfg, base: dict) -> dict:
               flush=True)
         if summary is None:
             continue
+        # RAW trades, not drop_overlaps-filtered: this mirrors what the
+        # account grid actually does (portfolio.run handles busy/cash
+        # skipping itself), unlike the fixed rule-level checks above.
+        summary["walk_forward_by_scenario"] = validation.walk_forward_grid(
+            trades, uni_members, PRIORITIES, CAPITALS)
         monthly_by_key[key] = summary.pop("monthly")
         per_strategy[key] = summary
         if summary["bootstrap"] is not None:
@@ -601,13 +627,13 @@ def build_validation(cfg, base: dict) -> dict:
     hurdle = summary["hurdle"] if summary else None
     for key, row in per_strategy.items():
         row["most_correlated"] = correlation.get(key)
-        # VALIDATED = passes every gate AND clears the (correlation-adjusted)
-        # luck hurdle -- the single boolean the page sorts by first. Needs
-        # the hurdle, which is only known once every strategy's t-stat is in,
-        # so it is added here rather than inside validation_summary().
+        # CLEARS_HURDLE is scenario-independent (the bootstrap runs on the
+        # trade list, not the account) so it can still be resolved here, once
+        # every strategy's t-stat is in. VALIDATED itself cannot be -- it
+        # also needs the live beats-hold/walk-forward for whatever scenario
+        # is on screen, which only web/dashboard.html's rows() has.
         t = row["bootstrap"]["t_stat"] if row.get("bootstrap") else None
         row["clears_hurdle"] = (hurdle is not None and t is not None and t > hurdle)
-        row["validated"] = bool(row["gates"]["passes"] and row["clears_hurdle"])
 
     out = {"validation": per_strategy, "summary": summary,
            "trade_stats": trade_stats_out}
@@ -627,8 +653,6 @@ def main() -> None:
 
     print("  signal lists (cached where possible):", flush=True)
     base = signal_lists(cfg.merged)
-
-    validation_out = build_validation(cfg, base)
 
     # Counted, not typed. Seven stocks were removed from the universe on
     # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
@@ -694,6 +718,10 @@ def main() -> None:
                  "mid": (f"{len(mid)} mid caps", mid),
                  "small": (f"{len(small)} small caps", small)}
 
+    # Needs `universes` (for the live per-scenario walk-forward, crossed with
+    # Universe x Priority x Capital -- see kitelab.validation.walk_forward_grid),
+    # so this runs after the bucket definitions above, not before them.
+    validation_out = build_validation(cfg, base, universes)
 
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and

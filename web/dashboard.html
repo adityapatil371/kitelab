@@ -354,35 +354,49 @@ const keyFor = (skey, v) =>
   `|${S.year}|${S.prio || DATA.priority_default}`;
 
 /* validation is keyed the same way a row's own id is built ("skey|tag(v)").
-   MOST of it (walk-forward, top-N, breakeven, bootstrap, permutation) is
-   computed once, at a fixed baseline scenario (full history, standard risk,
-   most-liquid-first priority, realistic fills) -- re-running any of those
-   for every Universe/Capital/Risk/Fill/Year/Priority combination on this
-   page would multiply the cost by thousands. See BASELINE_NOTE below for
-   where that baseline is surfaced to the reader.
+   SPLIT 2026-09-05 into fixed and live halves, because "Validated" needs to
+   answer "for the scenario on screen", not one baseline everyone has to
+   mentally discount:
 
-   vs Hold is the one exception: buy-and-hold does not depend on the
-   account's settings at all (it is just the underlying stocks' own price
-   history), so it is safe -- and was a real bug not to -- to compare it
-   against the CURRENT scenario's own CAGR (r.cagr) rather than the fixed
-   baseline's. See kitelab.validation.validation_summary. */
+     FIXED, rule-level (top-N, breakeven, bootstrap/credibility, permutation)
+     -- these run on the trade list BEFORE any account simulation, so they
+     do not depend on Universe/Priority/Risk/Capital in the first place, not
+     merely too expensive to re-test. See kitelab.validation.validation_summary.
+
+     LIVE, account-level (beats buy & hold, walk-forward majority) -- these
+     DO depend on which trades the account actually took, so they are
+     recomputed for the CURRENT scenario from data already in the grid
+     (beats_hold) or precomputed across every Universe x Priority x Capital
+     combination (walk-forward; see kitelab.validation.walk_forward_grid).
+     Risk and Year are not crossed for walk-forward -- see that function's
+     own docstring for why. */
 function valFor(id) { return (DATA.validation || {})[id] || null; }
 
-/* Is the CURRENT scenario the one every fixed-baseline validation number
-   (walk-forward, top-N, breakeven, bootstrap, permutation) was computed
-   under? Those never move from this one scenario, so anywhere they are
-   shown must say so when the reader has picked something else -- the
-   confusion a "crazy good" scenario CAGR sitting next to a fixed, worse
-   Credibility/Walk-fwd caused before this existed. */
-function atBaselineScenario() {
+/* Must match kitelab.validation.scenario_key() exactly, including using the
+   plain capital NUMBER, not an index: Python's %g format (used elsewhere on
+   this page for band tags) renders Rs1 crore as "1e+07", which JavaScript's
+   default number-to-string never does at this scale, so matching on int()
+   on both sides was the fix, not a shared formatter. */
+const scenarioKey = (uniKey, priority, capital) => `${uniKey}|${priority}|${capital}`;
+
+/* Is the CURRENT scenario the one the FIXED, rule-level checks describe?
+   Credibility/permutation/breakeven run on the full universe's raw trades
+   and do not vary with ANY of these controls -- this is not "does Credibility
+   track what's on screen" (it never does, by design) but "is what's on
+   screen the scenario a reader would assume by default", so the page can
+   flag when it is not. Validated and Walk-fwd no longer need this check:
+   both are live now and always match the current scenario. */
+function atCredibilityBaseline() {
   // Fill is deliberately not checked: the page only ever grids "Realistic
-  // fills" (see DATA.fills), while Walk-fwd/Credibility/permutation are computed on
-  // "rule on paper" trades (real brokerage/STT/DP charges, no modeled
-  // spread, impact or size cap) -- a gap no control on this page can close,
-  // so it is stated as a constant caveat (see BASELINE_FILLS_NOTE) rather
-  // than something a reader could ever get this function to report as fixed.
-  return (S.prio || DATA.priority_default) === "liquidity"
+  // fills" (see DATA.fills), while Credibility/permutation/breakeven are
+  // computed on "rule on paper" trades (real brokerage/STT/DP charges, no
+  // modeled spread, impact or size cap) -- a gap no control on this page can
+  // close, so it is stated as a constant caveat (see BASELINE_FILLS_NOTE)
+  // rather than something this function could ever report as matched.
+  return S.uni === "all"
+    && (S.prio || DATA.priority_default) === "liquidity"
     && DATA.risks[S.risk] === 1
+    && DATA.capitals[S.cap] === DATA.capitals[0]
     && S.year === (DATA.start_years || [])[0];
 }
 
@@ -402,13 +416,19 @@ const BASELINE_FILLS_NOTE = "computed on the rule “on paper” -- real " +
    contest and WorldQuant BRAIN's submission rules both gate on hard
    pass/fail criteria first and rank survivors by ONE metric after; Arnott,
    Harvey & Markowitz (2019) frame backtest validation as a checklist, not
-   a score. kitelab.validation.validation_summary computes the four gates
-   (beats buy & hold, distinguishable from shuffled prices, profitable in a
-   majority of walk-forward windows, survives a cost margin) and whether the
-   t-stat clears the correlation-adjusted luck hurdle; `validated` here is
-   just that boolean, read off the payload, not re-derived. */
+   a score.
+
+   FOUR GATES, two fixed (distinguishable from shuffled prices, survives a
+   cost margin -- kitelab.validation.validation_summary's fixed_gates) and
+   two live (beats buy & hold, wins a majority of walk-forward windows --
+   computed HERE, for the current scenario, added 2026-09-05 so a strategy
+   validated under one Priority/Universe/Capital is not silently assumed
+   validated under another), plus whether the credibility t-stat clears the
+   correlation-adjusted luck hurdle (also fixed -- see clears_hurdle). */
 function rows() {
   const out = [];
+  const prio = S.prio || DATA.priority_default;
+  const capital = DATA.capitals[S.cap];
   for (const [skey, label] of Object.entries(DATA.strategies))
     for (const v of variantsOf(skey)) {
       const r = DATA.grid[keyFor(skey, v)];
@@ -416,8 +436,21 @@ function rows() {
       const id = skey + "|" + v;
       const val = valFor(id);
       const boot = val && val.bootstrap;
-      const gates = val && val.gates;
+      const fixedGates = val && val.fixed_gates;
       const mar = r.mar;
+      const vsHold = (val && val.hold_cagr != null && !r.wiped && r.cagr != null)
+        ? r.cagr - val.hold_cagr : null;
+      const liveWf = val
+        ? (val.walk_forward_by_scenario || {})[scenarioKey(S.uni, prio, capital)] : null;
+      const walkFrac = (liveWf && liveWf.total_windows)
+        ? liveWf.positive_windows / liveWf.total_windows : null;
+      const beatsHold = vsHold != null ? vsHold > 0 : null;
+      const walkForwardMajority = walkFrac != null ? walkFrac >= 0.5 : null;
+      const clearsHurdle = val ? val.clears_hurdle : null;
+      const gateVals = [fixedGates && fixedGates.distinguishable,
+                        fixedGates && fixedGates.breakeven_margin,
+                        beatsHold, walkForwardMajority, clearsHurdle];
+      const validated = gateVals.every(g => g != null) ? gateVals.every(g => g === true) : null;
       out.push({ id, skey, v, family: label,
                  setting: settingLabel(skey, v), r, val,
                  cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar,
@@ -425,23 +458,18 @@ function rows() {
                  sharpe: r.sharpe, sortino: r.sortino, exposure: r.exposure,
                  capture: r.signals ? 100 * r.taken / r.signals : null,
                  full: r.full_pct, wiped: r.wiped,
-                 vsHold: (val && val.hold_cagr != null && !r.wiped && r.cagr != null)
-                   ? r.cagr - val.hold_cagr : null,
-                 walkFrac: (val && val.total_windows)
-                   ? val.positive_windows / val.total_windows : null,
-                 walkText: val ? `${val.positive_windows}/${val.total_windows}` : null,
+                 vsHold, walkFrac,
+                 walkText: liveWf ? `${liveWf.positive_windows}/${liveWf.total_windows}` : null,
                  tStat: boot ? boot.t_stat : null,
-                 gates, validated: val ? val.validated : null,
-                 clearsHurdle: val ? val.clears_hurdle : null,
-                 gatesPassed: gates ? Object.values(gates).filter(x => x === true).length
-                                    - (gates.passes ? 1 : 0) : null,
-                 gatesTotal: gates ? Object.keys(gates).length - 1 : null,
+                 fixedGates, beatsHold, walkForwardMajority, clearsHurdle, validated,
+                 gatesPassed: gateVals.filter(g => g === true).length,
+                 gatesTotal: gateVals.length,
                  // Sort key: validated rows always outrank unvalidated ones,
                  // MAR breaks ties inside each group. MAR's usual range is
                  // roughly -2..3, so +1000 keeps the groups from ever
                  // crossing regardless of how negative an unvalidated row's
                  // MAR is.
-                 rankKey: (val && val.validated ? 1000 : 0) + (mar ?? -999) });
+                 rankKey: (validated ? 1000 : 0) + (mar ?? -999) });
     }
   return out;
 }
@@ -528,13 +556,13 @@ function exportCsv() {
 const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
   setting: "The variant within that rule -- band width, channel pair, or stop reading.",
-  validated: "Passes every one of four gates (see the ✓/✗ breakdown on click, or the Detail view) AND clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look -- a weighted blend would let one great axis paper over a failing one, which the practitioner literature on this is explicit is the wrong way round. This is also the table's default sort: validated rows first, MAR breaking ties within each group. Computed at a FIXED baseline (1% risk, most-liquid-first, full history, unslipped trades) -- it can show ✓ at the same time this row's live vs Hold reads negative under your current Priority/Risk/Year/Fill. That is not a contradiction, it is two different questions; see the banner above the table.",
+  validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, wins a majority of walk-forward windows, survives a cost margin, and clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. TAILORED TO THIS SCENARIO since 2026-09-05 -- beats-buy-&-hold and walk-forward are recomputed for your current Universe/Priority/Capital, so Validated here means validated FOR WHAT'S ON SCREEN, not one fixed baseline (the other three checks are fixed on purpose -- see the banner above the table). Default sort: validated rows first, MAR breaking ties within each group.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
-  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first among 24 and still lose to doing nothing. One of the four gates. Buy & hold does not depend on the account's settings, so unlike Walk-fwd and Credibility, this always tracks the scenario you are looking at.",
+  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first among 24 and still lose to doing nothing. One of the five gates behind Validated. Buy & hold does not depend on the account's settings, so unlike Credibility (fixed), this always tracks the scenario you are looking at -- same as Walk-fwd since 2026-09-05.",
   maxdd:   "Drawdown = the lowest value of (equity / running peak - 1), in percent -- the deepest fall from any peak the account reached, not necessarily the final one. Sometimes called \"max drawdown\".",
   mar:     "MAR = CAGR / |drawdown|. Return per unit of worst pain, and what breaks ties among Validated rows.",
-  walkFrac:"Positive DISJOINT 3-year windows / total windows. One of the four gates (needs a majority). The dashboard's own start-year axis is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it. Computed once at 1% risk / most-liquid-first / full history, and always on the rule “on paper” -- see the banner above the table for what that leaves out.",
-  tStat:   "A one-sample t-statistic (mean net R multiple ÷ its standard error) on this rule's own trades, block-resampled 5,000 times. Scale-invariant, unlike a compounded-CAGR version tried first: that one correlated 0.82 with log(trade count) across this board, rewarding \"fires a lot of signals\" nearly as much as \"has a real edge\" -- more trades correctly narrows a t-stat's standard error instead of inflating its point estimate. Clears the luck hurdle (shown in the banner above the table, itself corrected for how correlated the 24 variants are) to help decide Validated.",
+  walkFrac:"Positive DISJOINT 3-year windows / total windows, for THIS row's current Universe/Priority/Capital (not Risk or Year -- risk mainly scales a window's size, not its sign, and walk-forward already covers every year through its own windows). One of the five gates behind Validated (needs a majority). The dashboard's own start-year axis is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it. Live since 2026-09-05: this recomputes as you change Universe/Priority/Capital, unlike Credibility.",
+  tStat:   "A one-sample t-statistic (mean net R multiple ÷ its standard error) on this rule's own trades, block-resampled 5,000 times. Scale-invariant, unlike a compounded-CAGR version tried first: that one correlated 0.82 with log(trade count) across this board, rewarding \"fires a lot of signals\" nearly as much as \"has a real edge\" -- more trades correctly narrows a t-stat's standard error instead of inflating its point estimate. FIXED, unlike Validated/Walk-fwd: it runs on the trade list before any account simulation, so it does not vary with Universe/Priority/Risk/Capital at all. Clears the luck hurdle (shown in the banner above the table, itself corrected for how correlated the variants are) to help decide Validated.",
   ulcer:   "Ulcer Index = sqrt(mean(drawdown^2)) across every day. Unlike drawdown it counts how LONG you were underwater, not just how deep it got. Detail view only -- see that page for the reasoning.",
   sharpe:  "Sharpe = mean(daily return) / stdev(daily return) x sqrt(252). Population stdev; these are the realised returns, not a sample. Empty when volatility is zero. Detail view only.",
   sortino: "Sortino = mean(daily return) / downside deviation x sqrt(252), where downside deviation = sqrt(sum(min(r,0)^2) / N) over ALL N days. Upside volatility is not risk. Detail view only.",
@@ -581,7 +609,7 @@ function sortedRows() {
 
 function renderCompare() {
   const list = sortedRows();
-  const baseline = atBaselineScenario();
+  const credBaseline = atCredibilityBaseline();
 
   const t = $("cmp"); t.innerHTML = "";
   const hr = t.createTHead().insertRow();
@@ -620,34 +648,26 @@ function renderCompare() {
       td.className = cls || "num";
       if (key === "cagr") td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
       if (key === "vsHold" && r.vsHold != null) td.classList.add(r.vsHold >= 0 ? "up" : "down");
+      /* Validated and Walk-fwd are LIVE since 2026-09-05 -- both always
+         describe the CURRENT Universe/Priority/Capital (Walk-fwd also
+         Universe; Risk and Year are not crossed, see walk_forward_grid's
+         own docstring), so neither needs a baseline caveat any more: a row
+         showing Validated now means validated FOR WHAT'S ON SCREEN. */
       if (key === "validated" && r.validated != null) td.classList.add(r.validated ? "up" : "down");
-      /* Validated, Walk-fwd and Credibility are ALL fixed at one baseline --
-         found 2026-09-05: Validated's own "beats buy & hold" gate does not
-         even match the grid cell AT the matching Priority/Risk/Year, because
-         the gates also drop overlapping signals and run on unslipped
-         ("rule on paper") trades, which the grid never does (see the banner
-         above the table). So the title on Validated is unconditional, not
-         only shown off-baseline like the other two -- a row can show
-         Validated + a NEGATIVE current-scenario "vs Hold" at the SAME time,
-         correctly, because they are answering different questions and
-         "vs Hold" is the one that tracks whatever is on screen right now. */
-      if (key === "validated" && r.validated != null) {
-        td.title = "Computed once at a fixed baseline (1% risk, most-liquid-first, full "
-          + "history, unslipped trades) -- can disagree with this row's live vs Hold/CAGR "
-          + "above, which track your current Priority/Risk/Year/Fill. See the banner above the table.";
-      }
-      /* Walk-fwd and Credibility: same fixed baseline, dimmed on TOP of the
-         unconditional caveat whenever Priority/Risk/Year have ALSO moved off
-         it, so a big scenario CAGR next to a small fixed Credibility reads
-         as "different question", not "contradiction". */
-      if ((key === "walkFrac" || key === "tStat") && !baseline) {
+      if (key === "walkFrac" && r.walkForwardMajority != null)
+        td.classList.add(r.walkForwardMajority ? "up" : "down");
+      /* Credibility is the one exception left: it runs on the trade list
+         before any account simulation (see kitelab.validation.bootstrap_one),
+         so it is fixed and dimmed whenever the current scenario is not the
+         one a reader would assume by default. */
+      if (key === "tStat" && !credBaseline) {
         td.classList.add("stale-baseline");
-        td.title = "Fixed at 1% risk, most-liquid-first, full history -- "
-          + "not this row's current Priority/Risk/Year. See the banner above the table.";
+        td.title = "Fixed -- computed on the trade list before any account simulation, "
+          + "so it does not vary with Universe/Priority/Risk/Capital/Year at all. "
+          + "See the banner above the table.";
       } else if (key === "tStat" && r.clearsHurdle != null) {
         td.classList.add(r.clearsHurdle ? "up" : "down");
       }
-      if (key === "validated" && !baseline) td.classList.add("stale-baseline");
     }
   });
   $("cmp-sub").textContent =
@@ -655,28 +675,29 @@ function renderCompare() {
     ` · ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}` +
     ` · ${prioName()} first`;
 
-  /* CANNOT BE MISSED, unlike a column tooltip: Validated, Walk-fwd and
-     Credibility are ALL "rule on paper" numbers (see BASELINE_FILLS_NOTE)
-     with NO control on this page that can ever make them match the
-     realistic-fills CAGR column exactly -- that part is always true, and it
-     is why a row can show Validated ✓ at the same moment its OWN live vs
-     Hold column reads negative: the gate's "beats buy & hold" check ran on
-     unslipped trades at a fixed scenario, vs Hold tracks whatever is
-     selected right now. Priority/Risk/Year add a SECOND, avoidable gap on
-     top of it when they are not at the 1%/most-liquid/earliest-year
-     baseline those three were also computed at. */
+  /* CANNOT BE MISSED, unlike a column tooltip: Credibility is a "rule on
+     paper" number (see BASELINE_FILLS_NOTE) with NO control on this page
+     that can ever make it match the realistic-fills CAGR column -- that
+     part is always true, regardless of Universe/Priority/Risk/Capital/Year.
+     Validated and Walk-fwd, by contrast, ARE tailored to whatever scenario
+     is on screen (added 2026-09-05: a strategy validated at one Priority or
+     Capital is not automatically validated at another), so this banner does
+     NOT need to warn about them any more -- only Credibility, and the two
+     of its five ingredients (distinguishable from shuffled prices, survives
+     a cost margin) that Validated still draws from it. */
   const warn = $("cmp-baseline-warn");
   warn.classList.add("on");
   warn.innerHTML =
-    `<b>Validated, Walk-fwd and Credibility</b> are ${BASELINE_FILLS_NOTE} ` +
-    `A row can show Validated even while ITS OWN vs Hold column (right next to it) is ` +
-    `negative -- that is not a contradiction, they answer different questions; vs Hold ` +
-    `always tracks your current scenario, Validated never does.` +
-    (baseline ? "" :
-      ` They are also frozen at 1% risk, most-liquid-first, from ` +
-      `${DATA.start_years[0]} &mdash; not the ${DATA.risks[S.risk]}% risk / ` +
-      `${prioName().toLowerCase()} / ${S.year} scenario selected above, and ` +
-      `shown dimmed below for it. CAGR and vs Hold always match what you selected.`);
+    `<b>Credibility</b> is ${BASELINE_FILLS_NOTE} <b>Validated</b> and <b>Walk-fwd</b> do ` +
+    `track your current Universe/Priority/Capital (Walk-fwd: not Risk or Year, see its ` +
+    `column formula) -- only three of Validated's five checks (distinguishable from shuffled ` +
+    `prices, survives a cost margin, clears the luck hurdle) are fixed the same way Credibility ` +
+    `is; the other two (beats buy & hold, wins a majority of windows) are live.` +
+    (credBaseline ? "" :
+      ` Credibility above is shown dimmed: it describes All stocks / 1% risk / ` +
+      `most-liquid-first / ${inr(DATA.capitals[0])} / from ${DATA.start_years[0]}, not the ` +
+      `${DATA.universes[S.uni]} / ${DATA.risks[S.risk]}% risk / ${prioName().toLowerCase()} / ` +
+      `${inr(DATA.capitals[S.cap])} / ${S.year} scenario selected above.`);
 
   /* A SINGLE INSTRUMENT NEEDS A DIFFERENT BENCHMARK. Across 500 stocks the
      comparison is rule against rule. On one instrument the question is whether
@@ -858,23 +879,20 @@ function bigPct(v) {
   return v.toFixed(1) + "%";
 }
 
-/* The gate labels, in the same order kitelab.validation.validation_summary
-   builds the "gates" dict -- keep this in sync with that function's keys. */
-const GATE_LABELS = {
-  beats_hold: "Beats buy & hold",
-  distinguishable: "Beats shuffled prices",
-  walk_forward_majority: "Wins a majority of windows",
-  breakeven_margin: "Survives realistic cost",
-};
-
-function gateChecklist(gates, clearsHurdle) {
-  if (!gates) return "";
-  const rows = [
-    ...Object.entries(GATE_LABELS).map(([k, label]) => [label, gates[k]]),
-    ["Clears the luck hurdle", clearsHurdle],
+/* row-level (LIVE, tracks the current scenario) then val-level (FIXED) --
+   built from what rows() already computed, not re-derived. */
+function gateChecklist(row) {
+  if (!row.val) return "";
+  const fg = row.fixedGates || {};
+  const items = [
+    ["Beats buy & hold", row.beatsHold],
+    ["Beats shuffled prices", fg.distinguishable],
+    ["Wins a majority of windows", row.walkForwardMajority],
+    ["Survives realistic cost", fg.breakeven_margin],
+    ["Clears the luck hurdle", row.clearsHurdle],
   ];
   return `<div class="stats" style="margin-bottom:var(--gap)">` +
-    rows.map(([label, ok]) => `<div class="stat">
+    items.map(([label, ok]) => `<div class="stat">
       <div class="k">${label}</div>
       <div class="v ${ok == null ? '' : ok ? 'up' : 'down'}">${ok == null ? '—' : ok ? '✓' : '✗'}</div>
     </div>`).join("") + `</div>`;
@@ -886,7 +904,11 @@ function validationBlock(row) {
     <p class="empty">Fewer than 30 trades on this rule's own record -- too
     few to bootstrap or test against buy &amp; hold.</p></div>`;
   const boot = val.bootstrap, perm = val.permutation, be = val.breakeven;
-  const wfSpan = Math.max(...val.walk_forward.map(w => Math.abs(w[2] ?? 0)), 1);
+  const prio = S.prio || DATA.priority_default;
+  const capital = DATA.capitals[S.cap];
+  const liveWf = (val.walk_forward_by_scenario || {})[scenarioKey(S.uni, prio, capital)];
+  const windows = liveWf ? liveWf.windows : [];
+  const wfSpan = Math.max(...windows.map(w => Math.abs(w[2] ?? 0)), 1);
   const beText = !be ? "—" : be.status === "negative" ? "already negative before any extra cost"
     : be.status === "robust" ? "survives 200bp+ a side" : `${be.bp.toFixed(1)} bp/side`;
   const permText = !perm ? "not enough trades in the 60-stock sample" :
@@ -896,32 +918,33 @@ function validationBlock(row) {
       ? "<b>distinguishable from noise</b>"
       : "<b>NOT distinguishable from noise</b> -- this earns as much on shuffled prices as on real ones");
   const corr = val.most_correlated;
-  const baseline = atBaselineScenario();
+  const credBaseline = atCredibilityBaseline();
   return `<div class="card"><h3>Does it hold up?
-      <span class="pill" style="color:${val.validated ? 'var(--up)' : 'var(--down)'}">
-        ${val.validated ? "✓ Validated" : "✗ Not validated"}</span></h3>
-    <p class="sub">1% risk, most-liquid-first, full history, ${BASELINE_FILLS_NOTE}${baseline ? "" :
-      ` <b style="color:var(--down)">Also NOT</b> the ${DATA.risks[S.risk]}% risk / ` +
-      `${prioName().toLowerCase()} / ${S.year} scenario selected above -- the stat cards higher up ` +
-      `this page match what you selected, these do not.`}</p>
-    ${gateChecklist(val.gates, val.clears_hurdle)}
+      <span class="pill" style="color:${row.validated ? 'var(--up)' : 'var(--down)'}">
+        ${row.validated == null ? "— not enough data" : row.validated ? "✓ Validated" : "✗ Not validated"}</span></h3>
+    <p class="sub">Beats-buy-&amp;-hold and Walk-fwd below are LIVE for ${DATA.universes[S.uni]} /
+      ${prioName()} first / ${inr(capital)} (Walk-fwd not Risk/Year, see its column formula).
+      Beats-shuffled-prices, Survives-cost and Credibility are fixed, ${BASELINE_FILLS_NOTE}${credBaseline
+        ? "" : ` shown against your current ${DATA.universes[S.uni]} / ${DATA.risks[S.risk]}% risk / ` +
+          `${prioName().toLowerCase()} / ${inr(capital)} / ${S.year} for comparison.`}</p>
+    ${gateChecklist(row)}
     <p class="note">Validated means every one of the five checks above passed -- gated, not
       averaged: one bad check is not offset by the others scoring well, on the same reasoning
       the Compare page's banner explains.</p>
     <div class="wf" style="margin-top:var(--gap)">` +
-    val.walk_forward.map(([y0, y1, c]) => `<div class="wf-row"><span>${y0}&ndash;${y1}</span>
+    windows.map(([y0, y1, c]) => `<div class="wf-row"><span>${y0}&ndash;${y1}</span>
       <div class="wf-bar"><div class="wf-fill" style="background:${(c ?? 0) >= 0 ? 'var(--up)' : 'var(--down)'};
         left:${c == null ? 50 : c < 0 ? 50 - 50 * Math.abs(c) / wfSpan : 50}%;
         width:${c == null ? 0 : 50 * Math.abs(c) / wfSpan}%"></div></div>
       <span class="num" style="text-align:right;font-family:var(--mono)">${c == null ? "—" : (c > 0 ? "+" : "") + c.toFixed(1)}</span></div>`).join("") +
     `</div>
-    <p class="note">Positive in <b>${val.positive_windows}/${val.total_windows}</b> disjoint windows -- these do
-      not overlap, unlike the cumulative start-year control above.</p>
+    <p class="note">Positive in <b>${row.walkText || "—"}</b> disjoint windows for this scenario --
+      these do not overlap, unlike the cumulative start-year control above.</p>
     <div class="stats" style="margin-top:var(--gap)">
       <div class="stat"><div class="k">Best trades removed</div>
         <div class="v" style="font-size:${'15px'}">${[1, 5, 10, 25].map(n =>
           `${val.top_n[n] == null ? "—" : val.top_n[n].toFixed(1)}%`).join(" · ")}</div>
-        <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted</div></div>
+        <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted (fixed baseline)</div></div>
       <div class="stat"><div class="k">Breakeven cost</div>
         <div class="v">${beText}</div>
         <div class="d">Zerodha + modelled spread run ~15&ndash;40 bp/side; gate needs &gt;40bp margin</div></div>
@@ -929,18 +952,18 @@ function validationBlock(row) {
         <div class="v" style="font-size:15px">${corr ? corr.key : "—"}</div>
         <div class="d">${corr ? `r = ${corr.r.toFixed(2)}` : "no strong match"}</div></div>
     </div>
-    <p class="note" style="margin-top:var(--gap)"><b>Shuffled-price test</b> (the sharpest of the five gates) &mdash; ${permText}.</p>
-    ${boot ? `<p class="note"><b>Credibility</b>: t=${boot.t_stat == null ? "—" : boot.t_stat.toFixed(2)}
+    <p class="note" style="margin-top:var(--gap)"><b>Shuffled-price test</b> (the sharpest of the five gates, fixed) &mdash; ${permText}.</p>
+    ${boot ? `<p class="note"><b>Credibility</b> (fixed): t=${boot.t_stat == null ? "—" : boot.t_stat.toFixed(2)}
        (mean net R ${boot.mean_r.toFixed(3)} &divide; standard error ${boot.se_r.toFixed(3)}, over
        ${boot.n.toLocaleString("en-IN")} trades) against a luck hurdle of t=${DATA.validation_summary
          ? DATA.validation_summary.hurdle : "—"} -- see the banner atop Compare for what that hurdle
-       is and why it is corrected for how correlated the 24 variants are.
+       is and why it is corrected for how correlated the variants are.
        Block-resampled 5,000 times: the mean net R stays positive in
        ${(100 - boot.p_neg * 100).toFixed(0)}% of resamples (5th/50th/95th percentile
        ${boot.p05_mean_r.toFixed(3)} / ${boot.p50_mean_r.toFixed(3)} / ${boot.p95_mean_r.toFixed(3)} R).
        For reference only, the SAME resampling COMPOUNDED sequentially (not the credibility figure --
-       see the Edge column's history for why compounding alone is misleading at this trade count):
-       5th/50th/95th percentile CAGR ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)},
+       see the FORMULA note on the Credibility column for why compounding alone is misleading at this
+       trade count): 5th/50th/95th percentile CAGR ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)},
        trade-level and not comparable to the account-level CAGR shown elsewhere on this page.</p>` : ""}
     </div>`;
 }

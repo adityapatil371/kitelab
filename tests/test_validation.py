@@ -261,5 +261,71 @@ class MultipleTestingSummary(unittest.TestCase):
         self.assertEqual(out["n_eff"], 10.0)
 
 
+class ScenarioKey(unittest.TestCase):
+    """web/dashboard.html's scenarioKey() must build the IDENTICAL string --
+    this is the one place a Python/JS formatting mismatch would silently
+    break the lookup (see kitelab.validation.scenario_key's own docstring:
+    Python's %g renders Rs1 crore as "1e+07", JS's default number-to-string
+    never does at this scale). Locking the exact string here is the guard."""
+
+    def test_uses_plain_int_not_percent_g(self):
+        self.assertEqual(validation.scenario_key("all", "liquidity", 10_000_000),
+                         "all|liquidity|10000000")
+        self.assertEqual(validation.scenario_key("large", "tight", 200_000),
+                         "large|tight|200000")
+
+    def test_accepts_float_capital_too(self):
+        # signals.load/save round-trip through JSON at the boundary of this
+        # project more than once; a capital that comes back as 200000.0
+        # must still produce the integer-looking key.
+        self.assertEqual(validation.scenario_key("all", "liquidity", 200_000.0),
+                         "all|liquidity|200000")
+
+
+class WalkForwardGrid(unittest.TestCase):
+    """Live, per-scenario walk-forward -- added 2026-09-05 so Validated
+    tracks Universe/Priority/Capital instead of one fixed baseline."""
+
+    def _trades(self, n=60, start="2010-01-01", days_apart=30):
+        out = []
+        for i in range(n):
+            entry = TS(start) + pd.Timedelta(days=i * days_apart)
+            exit_ = entry + pd.Timedelta(days=5)
+            t = _trade(entry, exit_, 0.0, 100.0)     # net_profit unused by walk_forward
+            t["symbol"] = "AAA" if i % 2 == 0 else "BBB"
+            net = 200.0 if i % 2 == 0 else -50.0      # AAA wins, BBB loses
+            t["entry_price"], t["exit_price"], t["shares"] = 100.0, 100.0 + net / 10, 10
+            out.append(t)
+        return out
+
+    def test_every_combination_gets_a_key(self):
+        trades = self._trades()
+        with support.account():
+            out = validation.walk_forward_grid(
+                trades, {"all": None, "aaa_only": {"AAA"}},
+                ["liquidity", "tight"], [200_000, 10_000_000])
+        self.assertEqual(len(out), 2 * 2 * 2)
+        for uni in ("all", "aaa_only"):
+            for prio in ("liquidity", "tight"):
+                for cap in (200_000, 10_000_000):
+                    key = validation.scenario_key(uni, prio, cap)
+                    self.assertIn(key, out)
+                    self.assertIn("positive_windows", out[key])
+                    self.assertIn("windows", out[key])
+
+    def test_universe_filter_actually_filters(self):
+        """A universe holding only the LOSING symbol must not show the same
+        result as "all" (which also holds the winner) -- proves the member
+        filter is applied, not silently ignored."""
+        trades = self._trades()
+        with support.account():
+            out = validation.walk_forward_grid(
+                trades, {"all": None, "bbb_only": {"BBB"}},
+                ["liquidity"], [200_000])
+        all_key = validation.scenario_key("all", "liquidity", 200_000)
+        bbb_key = validation.scenario_key("bbb_only", "liquidity", 200_000)
+        self.assertNotEqual(out[all_key]["windows"], out[bbb_key]["windows"])
+
+
 if __name__ == "__main__":
     unittest.main()

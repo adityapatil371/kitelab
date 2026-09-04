@@ -49,10 +49,10 @@ WALK_FORWARD_MIN_FRACTION = 0.5    # positive in at least half the disjoint wind
 BREAKEVEN_MARGIN_BP = 40.0         # top of the ~15-40bp real Zerodha+spread range
 
 
-def cagr_of(trades, capital=CAPITAL, risk=RISK):
+def cagr_of(trades, capital=CAPITAL, risk=RISK, priority=None):
     if not trades:
         return None
-    r = portfolio.run(trades, capital, risk)
+    r = portfolio.run(trades, capital, risk, priority=priority)
     return r.get("cagr_pct")
 
 
@@ -84,8 +84,12 @@ def buy_and_hold(universe) -> float | None:
 
 
 # --------------------------------------------------------- walk-forward ----
-def walk_forward(trades):
-    """CAGR in each DISJOINT window, and how many were positive."""
+def walk_forward(trades, capital=CAPITAL, risk=RISK, priority=None):
+    """CAGR in each DISJOINT window, and how many were positive.
+
+    capital/risk/priority default to the same fixed baseline every caller
+    used before 2026-09-05; walk_forward_grid() below is what varies them.
+    """
     if not trades:
         return []
     stamps = sorted(pd.Timestamp(t["entry_ts"]) for t in trades)
@@ -96,8 +100,64 @@ def walk_forward(trades):
         right = left + pd.DateOffset(years=WINDOW_YEARS)
         window = [t for t in trades if left <= pd.Timestamp(t["entry_ts"]) < right]
         if len(window) >= 20:
-            out.append((left.year, right.year, cagr_of(window)))
+            out.append((left.year, right.year, cagr_of(window, capital, risk, priority)))
         left = right
+    return out
+
+
+def scenario_key(uni_key: str, priority, capital) -> str:
+    """The lookup key walk_forward_grid() stores under, and rows() in
+    web/dashboard.html builds to match -- keep the two in sync.
+
+    Plain int(), not the ":g" format the rest of this project's grid keys
+    use (see tag() in scripts/dashboard_data.py): Python's %g switches to
+    scientific notation above 1e6 -- f"{10_000_000:g}" is "1e+07" -- while
+    JavaScript's default number-to-string never does at this scale, so the
+    two sides would build different keys for the Rs1 crore capital and the
+    lookup would silently miss. int() renders identically on both sides for
+    every capital value this project uses.
+    """
+    return f"{uni_key}|{priority}|{int(capital)}"
+
+
+def walk_forward_grid(trades, universes: dict, priorities: list, capitals: list,
+                      risk: float = RISK) -> dict:
+    """Walk-forward, live per Universe x Priority x Capital -- added 2026-09-05
+    so "Validated" answers "for the scenario on screen", not one fixed baseline.
+
+    `trades` is the RAW cached trade list (NOT strategies.drop_overlaps-
+    filtered): this now mirrors what the account grid actually does --
+    portfolio.run handles busy/cash skipping itself -- rather than the
+    pre-filtered trades the fixed rule-level checks use. `universes` is
+    {uni_key: member_set_or_None} (None = the whole universe), matching
+    scripts.dashboard_data's own bucket dict.
+
+    Risk is NOT crossed here (unlike Universe/Priority/Capital): it mainly
+    scales position size, which scales a window's magnitude, not usually
+    its SIGN -- the thing "positive in a majority of windows" actually
+    checks -- so crossing it would roughly double the cost for little
+    expected change in the verdict. Year is not crossed either: walk-forward
+    already covers every year through its own disjoint windows, which is a
+    different question from where the cumulative start-year control begins.
+
+    Cost: len(universes) x len(priorities) x len(capitals) combinations,
+    each a full walk_forward() pass (~7 cagr_of() calls) -- comparable to a
+    few extra minutes across the whole registry, not a rerun of the
+    expensive per-strategy tests (permutation, bootstrap), which do not
+    appear here at all.
+    """
+    out = {}
+    for uni_key, members in universes.items():
+        subset = trades if members is None else [t for t in trades if t["symbol"] in members]
+        for priority in priorities:
+            for capital in capitals:
+                wf = walk_forward(subset, capital=capital, risk=risk, priority=priority)
+                positive = sum(1 for _, _, c in wf if c is not None and c > 0)
+                out[scenario_key(uni_key, priority, capital)] = {
+                    "positive_windows": positive, "total_windows": len(wf),
+                    "windows": [[y0, y1, round(c, 1) if c is not None else None]
+                               for y0, y1, c in wf],
+                }
     return out
 
 
@@ -437,53 +497,47 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=10,
         return None
 
     bh = buy_and_hold(universe) if hold_cagr is None else hold_cagr
-    observed_cagr = cagr_of(held)
-    wf = walk_forward(held)
-    positive_windows = sum(1 for _, _, c in wf if c is not None and c > 0)
-    vs_hold = (round(observed_cagr - bh, 1)
-               if observed_cagr is not None and bh is not None else None)
     breakeven = _breakeven_payload(held)
     permutation = _permutation_summary(strat, universe, rng, permutation_rounds)
 
-    # GATES, not weights. Research on this exact question (composite scoring
-    # of return + significance + robustness, 2026-09-04) is unambiguous that
-    # practitioners overwhelmingly gate-then-rank rather than blend axes into
-    # one number -- a compensatory weighted sum lets a spectacular score on
-    # one axis paper over a failing score on another (Quantopian's contest
-    # rules and WorldQuant BRAIN's submission criteria are both hard gates
-    # first, a single ranking metric only among survivors; Arnott, Harvey &
-    # Markowitz 2019 frame the whole idea of backtest validation as a
-    # checklist of pass/fail questions, not a score). A strategy failing any
-    # gate here is not down-weighted -- it is ranked below every strategy
-    # that passes all of them, which is what "not yet distinguishable from
-    # luck" should mean on a leaderboard.
-    gates = {
-        "beats_hold": vs_hold is not None and vs_hold > 0,
+    # FIXED, RULE-LEVEL GATES ONLY. beats_hold and walk_forward_majority used
+    # to live here too, at one fixed baseline scenario -- moved 2026-09-05 to
+    # a LIVE computation (see walk_forward_grid() and scripts.dashboard_data)
+    # because they are account-level questions (do the trades actually taken
+    # under Universe/Priority/Capital beat doing nothing, do they hold up
+    # over time under those same settings) and a strategy validated at one
+    # scenario is not automatically validated at another. distinguishable and
+    # breakeven_margin stay fixed because they are NOT account-level: both
+    # run on the trade list before any account simulation happens (the
+    # permutation test re-simulates the RULE on shuffled prices; breakeven
+    # perturbs the RULE's own entry/exit prices), so they test whether the
+    # signal itself has structure -- a question that does not change with
+    # Priority or Capital, not merely one that is too expensive to re-test.
+    #
+    # GATES, not weights, still: a compensatory weighted sum lets one great
+    # axis paper over a failing one, which the practitioner literature this
+    # was researched against (Quantopian's contest, WorldQuant BRAIN, Arnott/
+    # Harvey/Markowitz 2019) is explicit is backwards. See
+    # scripts.dashboard_data.build_validation() for where these two combine
+    # with the live checks into the final "validated" verdict.
+    fixed_gates = {
         "distinguishable": bool(permutation and permutation["distinguishable"]),
-        "walk_forward_majority": (len(wf) > 0
-                                   and positive_windows / len(wf) >= WALK_FORWARD_MIN_FRACTION),
         "breakeven_margin": bool(breakeven and (
             breakeven["status"] == "robust"
             or (breakeven["status"] == "finite" and breakeven["bp"] is not None
                 and breakeven["bp"] > BREAKEVEN_MARGIN_BP))),
     }
-    gates["passes"] = all(gates.values())
+    fixed_gates["passes"] = all(v for k, v in fixed_gates.items() if k != "passes")
 
     return {
         "n": len(held),
-        "cagr": round(observed_cagr, 1) if observed_cagr is not None else None,
-        "vs_hold": vs_hold,
         "hold_cagr": round(bh, 1) if bh is not None else None,
-        "walk_forward": [[y0, y1, round(c, 1) if c is not None else None]
-                          for y0, y1, c in wf],
-        "positive_windows": positive_windows,
-        "total_windows": len(wf),
         "top_n": {str(n): (round(c, 1) if c is not None else None)
                   for n in TOP_N for c in [without_best(held, n)]},
         "breakeven": breakeven,
         "bootstrap": bootstrap_one(held),
         "permutation": permutation,
-        "gates": gates,
+        "fixed_gates": fixed_gates,
         "monthly": monthly_returns(held),         # consumed by correlation_summary, stripped after
     }
 
