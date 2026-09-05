@@ -37,29 +37,27 @@ import sys
 import numpy as np
 import pandas as pd
 
-from kitelab import config, frames, portfolio, slippage
+from kitelab import config, frames, portfolio, registry, slippage
 
 CACHE = config.CLEAN / "signal_cache"
 RISK, CAPITAL, YEAR, DRAWS = 0.01, 200_000, 2018, 25
 REALISTIC_PARTICIPATION = 0.02          # matches dashboard_data.py
 CUT = pd.Timestamp(f"{YEAR}-01-01")
 
-# The 22 published variants, by cache stem. Kept explicit rather than globbed:
-# the cache directory also holds retired lists (Breakout_101, the scale-out
-# sweeps), and a sweep that silently changes width is not a comparison.
+# The published variants, by cache stem -- DERIVED FROM THE REGISTRY, never
+# globbed and no longer hand-kept. Globbing is wrong because the cache directory
+# also holds retired lists (Breakout_101, the scale-out sweeps, every band this
+# board used to sweep), and a comparison whose width changes silently is not a
+# comparison. A hand-kept list was wrong for the older reason: it was written out
+# here as 22 stems and went stale the same day the board changed, on 2026-09-05,
+# when the EMA band was removed and 22 variants became 13.
 #
-# EMA_b0 and HolyGrail_candle retired 2026-09-05 along with their registry
-# entries (kitelab.registry.EMA_MWD_RETIRED / HG_VARIANTS) -- this script
-# reads cache files directly by path, bypassing kitelab.signals' staleness
-# check, so it would otherwise go on silently scoring two variants that are
-# no longer on the comparison board and whose caches will never be rebuilt.
-NAMES = ["EMA", "EMA_b1", "EMA_b3", "EMA_b4", "EMA_b5",
-         "QMW", "QMW_b0", "QMW_b1", "QMW_b3", "QMW_b4", "QMW_b5",
-         "EMA_MD", "EMA_MW", "EMA_QW", "EMA_WD",
-         "EMA_daily_only", "EMA_ath10",
-         "Turtle_w20_20_10", "Turtle_w20_55_20",
-         "Turtle_1tf_20_10", "Turtle_1tf_55_20",
-         "HolyGrail_swing"]
+# STILL TRUE, and the reason to run this only after a full rebuild: it reads
+# cache files directly by path, bypassing kitelab.signals' staleness check. The
+# stems EMA_WD, EMA_daily_only and EMA_ath10 did not change when the band went to
+# zero, so a stale pickle under one of those names scores the OLD 2% rule under
+# the new rule's label and nothing here would say so.
+NAMES = [s.cache for s in registry.REGISTRY]
 
 
 def load(name: str, suffix: str) -> list[dict]:

@@ -55,8 +55,18 @@ _WARNED: set[str] = set()
 # trades and _code_files() derives them, so a rule that is on the board is in
 # the stamp by construction. That is the whole fix for 2026-09-02: the hand-kept
 # list is gone, and with it the way to forget an entry.
+#
+# registry.py ADDED 2026-09-05. It is not a support module by the definition
+# above -- no producer reads it -- but it holds the PARAMETER VALUES baked into
+# every cached trade: BANDS, SOLO_BAND, ATH_BAND, DARVAS_WINDOWS. Removing the
+# EMA band that day changed what `pair`, `e1` and `eath` trade while their cache
+# names (EMA_WD, EMA_daily_only, EMA_ath10) stayed identical and no producer file
+# was touched, so the stamp would not have moved and refresh would have said
+# "already current" over superseded trades. That is the 2026-09-02 failure again
+# with a different file in the hole. The cost is that any edit to registry.py --
+# a label typo included -- invalidates every cache, which is the safe direction.
 _SUPPORT = ["frames.py", "sizing.py", "indicators.py", "slippage.py",
-            "levels.py", "strategies.py", "trailing.py"]
+            "levels.py", "strategies.py", "trailing.py", "registry.py"]
 
 
 def _code_files() -> list[str]:
