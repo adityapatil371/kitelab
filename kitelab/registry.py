@@ -103,10 +103,28 @@ BANDS = [0.0]
 # called -- which is why signals._SUPPORT now stamps this file.
 SOLO_BAND = 0.0
 
-# NOT an EMA band and not touched by the above: how far below its own all-time
-# high a stock may be and still be bought. It is the whole definition of the
-# `eath` family -- set it to 0 and that family becomes a duplicate of `ema`.
+# NOT an EMA band and not touched by the band removal: how far below its own
+# all-time high a stock may be and still be bought. It is the whole definition
+# of the `eath` family -- set it to 0 and that family becomes a duplicate of the
+# stack underneath it.
 ATH_BAND = 0.10
+
+# WHICH STACKS THE ATH FILTER IS ASKED ON, widened 2026-09-05 from the single
+# M/W/D row to five. The question the family exists to answer is "does refusing
+# to buy a stock far below its own record improve the rule?", and one stack
+# could not answer it -- a filter can easily help a stack that trades daily and
+# do nothing for one that trades weekly, and the board had no way to see that.
+# It matters now in particular because after the band came off, every
+# daily-traded EMA rule on the board lost money and every weekly-traded one
+# passed all five gates: this family spans both, so it can say whether the ATH
+# filter rescues the daily side or merely rides the weekly one.
+#
+# MWD is backtest.py's stack; the other four are timeframes.py pairs and are
+# named there (PAIRS). Each has an unfiltered twin already on the board -- ema
+# for MWD, pair|<key> for the rest -- so every row here can be read against the
+# same stack without the filter. That pairing is the point; do not add an ATH
+# stack without its control.
+ATH_STACKS = ["MWD", "MW", "QM", "QD", "WD"]
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
 
@@ -136,18 +154,28 @@ HG_VARIANTS = [("swing", "pivot")]
 
 FAMILY_LABELS = {
     "ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W", "pair": "EMA · one higher TF",
-    "e1": "EMA · daily only", "eath": "EMA · near the high",
+    # The percentage lives HERE, once, because it is the same on all five rows
+    # and the Setting column carries the stack instead. It was in Strategy.label
+    # only, which the payload never publishes -- so until 2026-09-05 the page
+    # never showed the 10% anywhere at all.
+    "e1": "EMA · daily only", "eath": f"EMA · within {ATH_BAND:.0%} of the high",
     "dv": "Turtle channel", "hg": "Holy Grail · ADX",
 }
 
 # The variant each family shows wherever only one can be shown -- the per-stock
 # page, and the breadth sweep. Not "the best": the DEFAULT, chosen once so that
 # the breadth curves compare families rather than each family's luckiest setting.
+# Stack -> display label, DERIVED from the timeframes tables rather than
+# retyped, so a pair renamed there cannot leave a stale label here. MWD is in
+# VARIANTS; the rest are in PAIRS.
+ATH_STACK_LABEL = {k: label for k, label, _ in
+                   (*timeframes.VARIANTS, *timeframes.PAIRS)}
+
 PRIMARY = {"ema": 0.0, "qmw": 0.0, "pair": "WD", "e1": "daily",
-           "eath": "near-high", "dv": "20-10", "hg": "swing"}
+           "eath": "MWD", "dv": "20-10", "hg": "swing"}
 
 
-def _padded(key: str, band: float):
+def _padded(key: str, band: float, ath_band: float | None = None):
     """simulate_variant trades, plus the two fields portfolio.run needs.
 
     kitelab.timeframes emits neither same_session nor net_profit; every other
@@ -156,7 +184,7 @@ def _padded(key: str, band: float):
     """
     def build(symbol):
         out = []
-        for t in simulate_variant(symbol, key, band=band):
+        for t in simulate_variant(symbol, key, band=band, ath_band=ath_band):
             t = dict(t)
             t["same_session"] = (pd.Timestamp(t["entry_ts"]).date()
                                  == pd.Timestamp(t["exit_ts"]).date())
@@ -203,11 +231,24 @@ def _build_registry() -> list[Strategy]:
     out.append(Strategy("e1", "daily", "EMA · daily only", "EMA_daily_only",
                         "backtest.py",
                         lambda s: backtest.simulate(s, band=SOLO_BAND, stack="daily")))
-    out.append(Strategy("eath", "near-high",
-                        f"EMA · within {ATH_BAND:.0%} of the high",
-                        f"EMA_ath{ATH_BAND*100:g}", "backtest.py",
-                        lambda s: backtest.simulate(s, band=SOLO_BAND,
-                                                    ath_band=ATH_BAND)))
+    # The ATH family, one row per stack in ATH_STACKS. MWD goes through
+    # backtest.py (its own M/W/D implementation); the rest are timeframes.py
+    # pairs, where stack_signal grew an ath_band argument on 2026-09-05 that
+    # applies the filter to the BASE frame's own closes -- so a weekly-traded
+    # row compares a weekly close against the highest weekly close, matching
+    # pine/ema_ath_band.pine rather than diverging from it.
+    for stack in ATH_STACKS:
+        pct = f"{ATH_BAND:.0%}"
+        if stack == "MWD":
+            out.append(Strategy("eath", stack, f"EMA · M/W/D · within {pct} of the high",
+                                f"EMA_ath{ATH_BAND*100:g}_MWD", "backtest.py",
+                                lambda s: backtest.simulate(s, band=SOLO_BAND,
+                                                            ath_band=ATH_BAND)))
+        else:
+            out.append(Strategy("eath", stack,
+                                f"EMA · {ATH_STACK_LABEL[stack]} · within {pct} of the high",
+                                f"EMA_ath{ATH_BAND*100:g}_{stack}", "timeframes.py",
+                                _padded(stack, SOLO_BAND, ath_band=ATH_BAND)))
     for hg_tag, hg_stop in HG_VARIANTS:
         out.append(Strategy("hg", hg_tag, f"Holy Grail · {hg_tag} stop",
                             f"HolyGrail_{hg_tag}", "holygrail.py",

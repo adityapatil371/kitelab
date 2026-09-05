@@ -335,7 +335,7 @@ const variantsOf = skey =>
   skey === "hg" ? (DATA.hg_tags || []) :
   skey === "pair" ? (DATA.pair_tags || []) :
   skey === "e1" ? ["daily"] :
-  skey === "eath" ? ["near-high"] :
+  skey === "eath" ? (DATA.ath_tags || ["MWD"]) :
   (DATA.bands || []);
 
 const settingLabel = (skey, v) =>
@@ -346,7 +346,13 @@ const settingLabel = (skey, v) =>
                                   : "stop at the last confirmed swing low") :
   skey === "pair" ? (DATA.pair_labels || {})[v] || v :
   skey === "e1" ? "no higher timeframe" :
-  skey === "eath" ? "within 10% of the high" :
+  /* The stack, not the filter. Every row in this family carries the same 10%
+     ATH filter -- what separates them is which EMA stack it sits on top of, and
+     that is what the reader needs in this cell. The percentage is in the family
+     label and the column tooltip. Was the constant string "within 10% of the
+     high" while the family had one row; five rows sharing one label made four
+     of them unreadable. */
+  skey === "eath" ? ((DATA.ath_labels || {})[v] || v) :
   /* THE BAND IS OFF THE PAGE, 2026-09-05. This cell names what distinguishes
      one row from the others in its family; the EMA stack families now have a
      single row each, so there is nothing to name and it shows an em dash. It

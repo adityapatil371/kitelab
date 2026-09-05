@@ -240,6 +240,15 @@ PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
 #         all-time high.
 SOLO_BAND = registry.SOLO_BAND
 ATH_BAND = registry.ATH_BAND
+# The eath family stopped being one row on 2026-09-05 -- see registry.ATH_STACKS
+# for why five. Published like PAIR_TAGS so the page enumerates the family from
+# the payload instead of the hardcoded ["near-high"] it carried until then, which
+# would have shown one row and silently hidden the other four.
+ATH_TAGS = registry.ATH_STACKS
+ATH_LABELS = {k: registry.ATH_STACK_LABEL[k] for k in ATH_TAGS}
+# ATH_BAND is deliberately NOT published: the page would have no view for it.
+# The percentage reaches the reader through the family label instead, which
+# registry.FAMILY_LABELS builds from the same constant.
 
 # The Holy Grail's band slot carries its STOP, because "SL will be swing low"
 # (rule 6) has two defensible readings and the choice is worth more than any
@@ -1015,6 +1024,7 @@ def main() -> None:
         "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
         "hg_tags": HG_TAGS,
         "pair_tags": PAIR_TAGS, "pair_labels": PAIR_LABEL,
+        "ath_tags": ATH_TAGS, "ath_labels": ATH_LABELS,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
         "darvas_windows": DARVAS_TAGS,

@@ -41,6 +41,14 @@ PAIRS = [
     ("MD", "M/D", "monthly over DAILY closes, skipping the weekly"),
     ("MW", "M/W", "monthly over WEEKLY closes"),
     ("QW", "Q/W", "quarterly over WEEKLY closes, skipping the monthly"),
+    # ADDED 2026-09-05 so the ATH filter can be asked on them (see
+    # registry.ATH_STACKS). They are registered as plain pairs too, without the
+    # filter, because otherwise a good ATH-on-Q/M row cannot be read: there
+    # would be nothing to say whether the credit belongs to the filter or to the
+    # Q/M stack underneath it. Every ATH row on the board now has its own
+    # unfiltered control.
+    ("QM", "Q/M", "quarterly over MONTHLY closes"),
+    ("QD", "Q/D", "quarterly over DAILY closes, skipping monthly and weekly"),
 ]
 
 
@@ -69,12 +77,35 @@ def _stack_frames(symbol: str, variant: str):
         return frames.weekly(day), [frames.monthly(day)]
     if variant == "QW":                       # quarterly over weekly, skipping monthly
         return frames.weekly(day), [frames.quarterly(day)]
+    # Q/M TRADES ON MONTHLY BARS, which is the coarsest base on the board and
+    # behaves unlike the rest: ~245 bars since 2006, and the stop is the entry
+    # MONTH's low, so the risk-per-share is large and sizing puts very few
+    # shares on. Expect few trades and wide outcomes; read its trade count
+    # before reading its return.
+    if variant == "QM":                       # quarterly over monthly
+        return frames.monthly(day), [frames.quarterly(day)]
+    if variant == "QD":                       # quarterly over daily, skipping two
+        return day, [frames.quarterly(day)]
     raise ValueError(variant)
 
 
 def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
-                 length: int = LENGTH, band: float = BAND) -> pd.DataFrame:
+                 length: int = LENGTH, band: float = BAND,
+                 ath_band: float | None = None) -> pd.DataFrame:
     """entry_ok/exit_ok on the base bars, higher TFs via forming-bar EMAs.
+
+    ath_band mirrors backtest.ema_stack_signal: when set, only bars within that
+    fraction of the running all-time high can trigger an ENTRY, and exits are
+    left alone -- a rule that refuses to sell what it has already bought is not
+    a filter, it is a trap. The running high is a cummax INCLUDING the current
+    bar, which is knowable at its close, unlike the high still to come.
+
+    ONE DELIBERATE DIFFERENCE FROM backtest.py, added 2026-09-05: the high is
+    taken over the BASE frame's closes, not the daily ones. A weekly-traded rule
+    therefore compares a weekly close against the highest weekly close. That is
+    what pine/ema_ath_band.pine draws -- "switch the chart to weekly and you get
+    the weekly 20 EMA and the weekly all-time high" -- so the backtest and the
+    chart stay the same rule. On a daily base the two definitions coincide.
 
     Same conventions as backtest.ema_stack_signal: the base EMA includes the
     current bar's close (TradingView convention); each higher-timeframe EMA is
@@ -110,6 +141,10 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
         exit_ok |= close < asof * lower
         completed_counts.append(pos)
 
+    if ath_band is not None:
+        peak = base["close"].cummax().to_numpy()
+        entry_ok = entry_ok & (close >= peak * (1 - ath_band))
+
     out = base.copy()
     out["entry_ok"] = entry_ok
     out["exit_ok"] = exit_ok
@@ -119,14 +154,15 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
 
 def simulate_variant(symbol: str, variant: str,
                      stop_on_close: bool = True,
-                     band: float = BAND) -> list[dict]:
+                     band: float = BAND,
+                     ath_band: float | None = None) -> list[dict]:
     """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly.
 
     stop_on_close=True is the class convention (everything checked at bar
     closes only); False is the pre-2026-08-28 broker convention.
     """
     base, highers = _stack_frames(symbol, variant)
-    signal = stack_signal(base, highers, band=band)
+    signal = stack_signal(base, highers, band=band, ath_band=ath_band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
     open_, high, low, close = (signal[c].to_numpy()

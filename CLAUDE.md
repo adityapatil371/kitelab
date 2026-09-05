@@ -88,18 +88,19 @@ current", and a day of published numbers was invalid.
 
 One thing the machinery cannot enforce: **every rule you add raises the bar for
 all of them.** The luck hurdle counts how many variants clear a 95% test against
-the ~5% that clear it by chance, so a 14th strategy makes "one of them looks
+the ~5% that clear it by chance, so a 20th strategy makes "one of them looks
 good" less impressive, not more. It also multiplies the grid — 400 new cells per
 variant at the current axes.
 
 ## The grid, and what its axes mean
 
-**5,720 cells** (was 8,800 before the EMA band went), keyed
+**7,600 cells** (19 variants x 400; the two single-name asset universes get one
+priority ordering, not five), keyed
 `strategy|variant|universe|risk|capital|fill|start|priority`:
 
 | axis | values | source |
 |---|---|---|
-| strategy·variant | 13 (7 families) | `registry.py` |
+| strategy·variant | 19 (7 families) | `registry.py` |
 | universe | `all` / `large` / `mid` / `small`, + BITCOIN / GOLD | liquidity buckets, below |
 | risk | 0.5%, 1% | `RISKS` — the one lever known to reorder the table |
 | capital | ₹2L, ₹1cr | `CAPITALS` — ₹1cr added to test the size cap |
@@ -168,6 +169,36 @@ edit — a label typo included — now invalidates every cache.
 `scripts/universe_bias.py` derives its `NAMES` from the registry instead of a
 hand-kept list of stems, for the same reason. It still reads caches by path,
 bypassing the staleness check, so run it only after a full rebuild.
+
+## The ATH filter, asked on five stacks (2026-09-05)
+
+`eath` was one row — the M/W/D stack plus "only buy within 10% of the running
+all-time high". It is now five, one per entry in `registry.ATH_STACKS`
+(M/W/D, M/W, Q/M, Q/D, W/D), because one stack could not answer the family's own
+question. Two things were built to make that possible:
+
+- **Q/M and Q/D did not exist.** Added to `timeframes._stack_frames` and to
+  `PAIRS`. Q/M trades on **monthly** bars — the coarsest base on the board, ~100
+  of them, and the stop is the entry month's low, so risk-per-share is large and
+  trade counts are tiny (149 across 999 stocks). Read its count before its return.
+- **`timeframes.stack_signal` had no ATH support**; the filter lived only in
+  `backtest.py`, which is why the family had one row. It takes `ath_band` now,
+  entries only. The running high is over the **base frame's own closes**, so a
+  weekly row compares a weekly close to the highest weekly close — matching
+  `pine/ema_ath_band.pine` rather than diverging from it.
+
+**`pair|QM` and `pair|QD` are controls, not strategies.** Every ATH row needs its
+own unfiltered twin or its score cannot be read — credit is unattributable
+between the filter and the stack under it. Do not add an ATH stack without one.
+
+**What it found.** Against its own control at all-999 / ₹2L / 1% / 2018, the
+filter adds +12.3pp (M/W/D), +11.6pp (W/D), +4.3pp (Q/D) and +4.2pp (Q/M), and
+subtracts **−11.7pp** from M/W. Every daily-traded stack improves; the one
+weekly stack gets worse. The filter is doing the job the band used to do — on
+daily bars it screens out chop around the EMA, and on weekly bars, where there
+was little chop, it only removes good trades. It rescues nothing: the best ATH
+row reaches 4 of 5 gates, and the validated set is still the three weekly EMA
+pairs.
 
 ## Validation — the "is this real" layer
 
@@ -276,11 +307,11 @@ neither.
   to memorise, and holding back stocks cost power without buying validity. What
   *was* chosen here is now shorter still: the Turtle's weekly gate, and which
   variant to headline. The 2% band was the third, and it is gone (below).
-- **So the live exposure is multiple testing, not contamination.** 13 variants
-  ranked and a winner reported; at a 95% bar chance alone clears ~0.65 of them.
-  Removing the EMA band cut the board from 22, which lowers the raw hurdle but
-  should also raise `n_eff` — the six bands were the most correlated cluster on
-  the board, and the Nyholt correction was discounting them heavily.
+- **So the live exposure is multiple testing, not contamination.** 19 variants
+  ranked and a winner reported; at a 95% bar chance alone clears ~1.0 of them,
+  and the hurdle is t > 1.32. It moves with the board: 22 variants at hurdle
+  1.23, then 13 at 1.13 when the EMA band went, then 19 at 1.32 when the ATH
+  family widened. `n_eff` 6.2 of 19, average correlation 0.42.
   `kitelab.validation` measures this directly and the page shows the hurdle above
   the table — quote that, not a single headline number.
 - **Two biases survive the merge and neither is fixed by it.** The old 101 are
@@ -300,7 +331,7 @@ Practitioner controls, not train/test:
 | question | where |
 |---|---|
 | is this edge distinguishable from luck on its own trades? | `scripts.bootstrap` |
-| did 13 variants buy me a winner by chance? | the luck hurdle in `validation_summary` |
+| did 19 variants buy me a winner by chance? | the luck hurdle in `validation_summary` |
 | did it beat simply owning the same stocks? | `scripts.validate`, the vs-Hold column |
 | does it hold in **disjoint** periods? | walk-forward, `scripts.validate` |
 | does it hold across regimes? | `START_YEARS` axis on the grid |
