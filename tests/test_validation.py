@@ -205,8 +205,11 @@ class EffectiveTrials(unittest.TestCase):
 
     def test_a_mixed_board_lands_between_the_extremes(self):
         """Two correlated clusters plus independent noise: the real shape of
-        this project's 24 variants (EMA-band and Turtle families each
-        correlated within themselves, weakly related to each other)."""
+        this project's board (the EMA and Turtle families each correlated
+        within themselves, weakly related to each other). The synthetic
+        cluster sizes here are deliberately NOT tied to the live registry --
+        this tests effective_trials' arithmetic, which must hold at any board
+        width, not the width the board happens to have today."""
         months = pd.period_range("2010-01", periods=96, freq="M")
         rng = np.random.default_rng(1)
         cluster_a = rng.normal(size=len(months))

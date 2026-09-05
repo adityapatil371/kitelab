@@ -329,7 +329,7 @@ function buildScenario() {
    candle's own low and the last confirmed multi-bar pivot. The rule is genuinely
    ambiguous, the class's own notes support the candle while the phrase itself
    reads as the pivot, and neither wins: publishing one was presenting a coin
-   flip as a finding. See HG_VARIANTS in scripts/dashboard_data.py. */
+   flip as a finding. See HG_VARIANTS in kitelab/registry.py. */
 const variantsOf = skey =>
   skey === "dv" ? (DATA.darvas_windows || []) :
   skey === "hg" ? (DATA.hg_tags || []) :
@@ -347,7 +347,14 @@ const settingLabel = (skey, v) =>
   skey === "pair" ? (DATA.pair_labels || {})[v] || v :
   skey === "e1" ? "no higher timeframe" :
   skey === "eath" ? "within 10% of the high" :
-  (v * 100).toFixed(0) + "% band";
+  /* THE BAND IS OFF THE PAGE, 2026-09-05. This cell names what distinguishes
+     one row from the others in its family; the EMA stack families now have a
+     single row each, so there is nothing to name and it shows an em dash. It
+     read "2% band" while the sweep existed and "0% band" for the few minutes
+     between removing the sweep and removing the wording -- both stated a
+     setting the reader could not change and no longer had a choice about.
+     The percentage form stays live for the day BANDS is widened again. */
+  (v ? (v * 100).toFixed(0) + "% band" : "—");
 
 const keyFor = (skey, v) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
@@ -568,10 +575,10 @@ function exportCsv() {
    of these read the DAILY mark-to-market curve unless stated. */
 const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
-  setting: "The variant within that rule -- band width, channel pair, or stop reading.",
+  setting: "What distinguishes this row from the others in its family -- channel pair, timeframe pair, or stop reading. An em dash means the family has only one row on the board, so there is nothing to distinguish: the EMA stack families trade the bare 20-EMA cross and have no setting of their own.",
   validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, wins a majority of walk-forward windows, survives a cost margin, and clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. TAILORED TO THIS SCENARIO since 2026-09-05 -- beats-buy-&-hold and walk-forward recompute for your current Universe/Priority/Capital; distinguishable-from-shuffled-prices, survives-a-cost-margin and the luck hurdle recompute for your current Universe (Priority/Capital cannot move them -- see the Credibility column's own formula for why). Validated here means validated FOR WHAT'S ON SCREEN, not one fixed baseline, on every one of its five checks. Default sort: validated rows first, MAR breaking ties within each group.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
-  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first among 24 and still lose to doing nothing. One of the five gates behind Validated. Tracks the full scenario (Universe/Priority/Capital), same as Walk-fwd -- unlike Credibility, which tracks Universe only (Priority/Capital cannot move it, see its own column formula).",
+  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first on this whole board and still lose to doing nothing. One of the five gates behind Validated. Tracks the full scenario (Universe/Priority/Capital), same as Walk-fwd -- unlike Credibility, which tracks Universe only (Priority/Capital cannot move it, see its own column formula).",
   maxdd:   "Drawdown = the lowest value of (equity / running peak - 1), in percent -- the deepest fall from any peak the account reached, not necessarily the final one. Sometimes called \"max drawdown\".",
   mar:     "MAR = CAGR / |drawdown|. Return per unit of worst pain, and what breaks ties among Validated rows.",
   walkFrac:"Positive DISJOINT 3-year windows / total windows, for THIS row's current Universe/Priority/Capital (not Risk or Year -- risk mainly scales a window's size, not its sign, and walk-forward already covers every year through its own windows). One of the five gates behind Validated (needs a majority). The dashboard's own start-year axis is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it. Live since 2026-09-05: this recomputes as you change Universe/Priority/Capital, unlike Credibility.",
@@ -734,10 +741,13 @@ function renderCompare() {
       `ordering returns the same number.`;
   }
 
-  /* THE ONE NUMBER THAT QUALIFIES EVERY ROW ABOVE IT. 24 variants were tried
-     and ranked; at a 95% bar chance alone clears ~1.2 of them, so counting
-     how many "look good" means nothing without knowing what an edgeless
-     menu of the same size would produce. This is scripts.bootstrap's closing
+  /* THE ONE NUMBER THAT QUALIFIES EVERY ROW ABOVE IT. Every variant on the
+     board is tried and ranked; at a 95% bar chance alone clears about 5% of
+     them, so counting how many "look good" means nothing without knowing what
+     an edgeless menu of the same size would produce. The counts are read from
+     the payload, never written here -- the board was 24 variants when this was
+     written and 13 after 2026-09-05, and a hardcoded number would have gone
+     quietly wrong on both of those days. This is scripts.bootstrap's closing
      paragraph, always visible on Compare rather than CLI-only -- see
      kitelab.validation.multiple_testing_summary. Independent of every
      control above: it describes the whole board, not the current scenario.
@@ -747,10 +757,13 @@ function renderCompare() {
      every row once trade counts passed a few thousand (law of large
      numbers: any historically positive average survives nearly every
      reshuffle), so it stopped telling strategies apart. n_eff/avg
-     correlation is Nyholt's eigenvalue correction for how related the 24
-     variants actually are -- 6 EMA bands moving together are much closer to
-     ONE trial than six, and treating them as fully independent sets the
-     hurdle too high. */
+     correlation is Nyholt's eigenvalue correction for how related the
+     variants actually are -- four Turtle windows moving together are much
+     closer to ONE trial than four, and treating them as fully independent
+     sets the hurdle too high. (Until 2026-09-05 the clearest example was the
+     six EMA bands, which is why the correction was built; removing the band
+     removed that cluster, so n_eff should now sit CLOSER to the number of
+     variants tried than it used to.) */
   const mt = DATA.validation_summary;
   const mtNote = $("cmp-multitest");
   if (!mt) { mtNote.hidden = true; }

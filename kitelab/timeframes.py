@@ -21,7 +21,11 @@ import pandas as pd
 from . import backtest, frames, indicators, sizing
 
 LENGTH = 20
-BAND = 0.02
+# Zero since 2026-09-05, moved in step with kitelab.backtest.BAND and
+# kitelab.registry.BANDS -- the two must agree or the M/W/D and Q/M/W rows on the
+# board would be reading different rules under the same name. See registry.BANDS
+# for why the band went and what went with it.
+BAND = 0.0
 
 VARIANTS = [
     ("QMW", "Q/M/W", "quarterly + monthly stacks, traded on WEEKLY closes, stop = entry week's low"),

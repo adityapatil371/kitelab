@@ -72,20 +72,53 @@ class Strategy:
 
 # --------------------------------------------------------- the strategies ----
 
-BANDS = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05]
-SOLO_BAND = 0.02
+# NO BAND, from 2026-09-05. Every EMA family on the board now trades the bare
+# 20-EMA cross: in when the close clears the line, out when it falls back
+# through it.
+#
+# WHAT `band` WAS. Hysteresis -- enter only when price is `band` ABOVE every EMA,
+# exit only when it is `band` BELOW one of them, so the two lines bracket a dead
+# zone where nothing happens. kitelab/backtest.py:61 records what it bought:
+# without it entry and exit share one knife-edge, and price hovering around an
+# EMA churned the account -- median holding period 3 sessions on a strategy
+# filtered by MONTHLY EMAs, and 20% of trades re-entering the same stock the next
+# day. That churn is now paid again, deliberately.
+#
+# WHAT ELSE GOES WITH IT. The 0-5% sweep was this project's only
+# parameter-plateau control: "is 2% a plateau or a lucky spike?" was answered by
+# six adjacent settings moving together, and with one setting there is nothing to
+# compare. That question is no longer measured anywhere -- see CLAUDE.md, which
+# no longer lists it. The offsetting gain is real though: the 2% band was one of
+# only three things this project ever actually fitted (config.Config.merged), so
+# this removes a fitted parameter rather than adding one.
+#
+# Kept as a list, so restoring the sweep is one edit here and a rebuild.
+BANDS = [0.0]
+
+# The band for the EMA families that never swept it -- one-higher-TF, daily-only
+# and near-the-high. Was 0.02, moved with BANDS so every EMA rule on the board
+# reads the same cross rather than three of them keeping a buffer the other two
+# lost. Their cache names do not encode the band (EMA_WD, EMA_daily_only,
+# EMA_ath10), so this line changes what they trade without changing what they are
+# called -- which is why signals._SUPPORT now stamps this file.
+SOLO_BAND = 0.0
+
+# NOT an EMA band and not touched by the above: how far below its own all-time
+# high a stock may be and still be bought. It is the whole definition of the
+# `eath` family -- set it to 0 and that family becomes a duplicate of `ema`.
 ATH_BAND = 0.10
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
 
-# RETIRED 2026-09-05, EMA M/W/D at 0% band. BANDS is shared with Q/M/W, where
-# 0% is one of the stronger settings on the board -- this is a family-specific
-# cut, not a change to BANDS itself. Consistently the worst variant tested:
-# median MAR -0.14 across all 50 priority x risk x start-year combinations,
-# positive in only 7 of them, and its best case across every combination is
-# still a losing 0.23. Not a parameter worth a slot on a board meant to
-# compare strategies someone would actually trade.
-EMA_MWD_RETIRED = {0.0}
+# EMA_MWD_RETIRED IS GONE, 2026-09-05, and this is the uncomfortable half of
+# removing the band. It held {0.0}: M/W/D at a 0% band was cut from the board
+# EARLIER THE SAME DAY as consistently the worst variant tested -- median MAR
+# -0.14 across all 50 priority x risk x start-year combinations, positive in only
+# 7 of them, best case a losing 0.23. With BANDS = [0.0] that guard would delete
+# the M/W/D family outright, so it is removed and the variant returns as the ONLY
+# M/W/D row on the board. Nothing has re-measured it: the -0.14 stands until a
+# rebuild says otherwise, and the Validated gate is what should be read on that
+# row rather than its rank.
 
 # RETIRED 2026-09-05, the candle-stop reading. Both readings of the class's
 # ambiguous "SL will be swing low" were kept on the board deliberately (see
@@ -110,7 +143,7 @@ FAMILY_LABELS = {
 # The variant each family shows wherever only one can be shown -- the per-stock
 # page, and the breadth sweep. Not "the best": the DEFAULT, chosen once so that
 # the breadth curves compare families rather than each family's luckiest setting.
-PRIMARY = {"ema": 0.02, "qmw": 0.02, "pair": "WD", "e1": "daily",
+PRIMARY = {"ema": 0.0, "qmw": 0.0, "pair": "WD", "e1": "daily",
            "eath": "near-high", "dv": "20-10", "hg": "swing"}
 
 
@@ -136,17 +169,18 @@ def _padded(key: str, band: float):
 def _build_registry() -> list[Strategy]:
     out: list[Strategy] = []
     for band in BANDS:
-        # Band 2% keeps the historical cache names, so the one setting that has
-        # been on the board longest does not force a needless rebuild.
+        # Band 2% keeps the historical cache names -- it is off the board as of
+        # 2026-09-05 (see BANDS), so this branch is currently dead, but it is
+        # what lets the old caches be reused unchanged if the sweep comes back.
         stem = "" if band == 0.02 else f"_b{band*100:g}"
-        # See EMA_MWD_RETIRED: M/W/D at this band is cut, Q/M/W at the same
-        # band is not -- BANDS is shared between the two families, and 0% is
-        # one of Q/M/W's stronger settings even though it is M/W/D's worst.
-        if band not in EMA_MWD_RETIRED:
-            out.append(Strategy("ema", band, f"EMA · M/W/D · {band:.0%} band",
-                                f"EMA{stem}", "backtest.py",
-                                lambda s, b=band: backtest.simulate(s, band=b)))
-        out.append(Strategy("qmw", band, f"EMA · Q/M/W · {band:.0%} band",
+        # "no band" rather than "0% band": the latter reads as a setting someone
+        # chose among others, and since 2026-09-05 there are no others. The
+        # variant itself stays a float, because tag() and the page depend on it.
+        note = f"{band:.0%} band" if band else "no band"
+        out.append(Strategy("ema", band, f"EMA · M/W/D · {note}",
+                            f"EMA{stem}", "backtest.py",
+                            lambda s, b=band: backtest.simulate(s, band=b)))
+        out.append(Strategy("qmw", band, f"EMA · Q/M/W · {note}",
                             f"QMW{stem}", "timeframes.py", _padded("QMW", band)))
     # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a
     # trade list built before that is a different strategy under the same label.

@@ -64,7 +64,15 @@ NEXT_OPEN_FILLS = False
 # around an EMA triggers an exit and a re-entry every few days -- the median holding
 # period was 3 sessions on a strategy filtered by MONTHLY EMAs, and 20% of trades
 # re-entered the same stock the very next day.
-BAND = 0.02
+#
+# SET TO ZERO 2026-09-05, so this default now buys none of that. The band was
+# removed from every EMA family on the board (kitelab.registry.BANDS carries the
+# decision), and a module default of 0.02 would have meant `simulate("HAL")` from
+# a REPL silently trading a different rule than the same strategy's published row
+# -- the kind of gap between the code and the board this project has already been
+# burned by. The paragraph above is kept as the record of what the buffer bought,
+# because that churn is what comes back.
+BAND = 0.0
 
 # Zerodha equity DELIVERY charges, from zerodha.com/charges (checked 2026-08-23).
 # These trades hold overnight, so delivery rates apply, not intraday.
