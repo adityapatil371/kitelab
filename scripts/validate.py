@@ -2,8 +2,9 @@
 
     python -m scripts.validate                    # every test, primary variants
     python -m scripts.validate --only walkforward top-n
-    python -m scripts.validate --all-variants     # all 24, not one per family
-    python -m scripts.validate --permutations 20
+    python -m scripts.validate --all-variants     # every variant on the board, not one per family
+    python -m scripts.validate --permutations 50
+    python -m scripts.validate --realistic        # the build's execution state, not on paper
 
 DIFFERENT FROM tests/. Those check that the CODE does what it was told, which is
 necessary and says nothing about whether a strategy makes money. These are the
@@ -12,27 +13,33 @@ unit test in the project and still be a curve fit.
 
 Six tests, and each answers a question the compare table cannot:
 
-  BENCHMARK      Did the rule beat simply owning the same stocks? The only
-                 comparison that matters, and the one missing from the headline
-                 table -- a rule can rank first among 24 and still lose to doing
-                 nothing.
-  WALK-FORWARD   Does it hold in DISJOINT periods? The dashboard's start-year
-                 axis is cumulative -- every window ends today, so one strong
-                 stretch flatters them all. These windows do not overlap.
+  BENCHMARK      Did the rule beat simply owning the same stocks? An
+                 equal-weight PORTFOLIO of the universe from the start year
+                 (not the median stock -- see kitelab.validation.buy_and_hold
+                 for the 8.5-vs-17.0 gap that changed on 2026-09-07).
+  WALK-FORWARD   Does it hold in DISJOINT periods? One fixed calendar of
+                 3-year windows from 2006 for every rule, and a window is a
+                 win only if the rule beat holding the stocks over it.
   TOP-N          Delete the best few trades. If the edge dies, it was a lottery
                  ticket, not a rule. Aimed squarely at the Turtle, whose return
                  is already known to live in a thin tail.
   BREAKEVEN COST How much friction does the edge survive? A rule that dies at
                  0.3% a side is untradeable whatever its backtest says.
-  CORRELATION    Are 24 variants 24 bets, or three? If they take the same
-                 trades, the multiple-testing count is overstated and
+  CORRELATION    Are the variants that many bets, or three? If they take the
+                 same trades, the multiple-testing count is overstated and
                  "diversifying across rules" is an illusion.
-  PERMUTATION    Run the rule on SHUFFLED returns -- same distribution, no
-                 structure. Anything it earns there is fitted noise. The
-                 sharpest test here, and the slowest.
+  PERMUTATION    Run the rule on a market whose DAYS are shuffled -- same
+                 distribution, same cross-section, no sequence. Anything it
+                 earns there is fitted noise. The sharpest test here, and the
+                 slowest: 200 rounds over a random 60-stock sample per rule.
 
-Reads the cached trades the dashboard uses, so it describes the rules as
-published rather than a re-simulation that might differ.
+WHAT ACCOUNT THIS RUNS. By default, ON PAPER: the cached trade lists as
+built -- no spread, no market impact, no size cap -- with every account-level
+number (benchmark comparison, walk-forward, top-N, breakeven, the permutation
+CAGRs) from portfolio.run at Rs2L, 1% risk, most-liquid-first. The dashboard
+computes the same checks on the SPREAD-ADJUSTED lists under the build's
+Realistic-fills state (costs on, one order <= 1% of daily turnover), so its
+numbers are lower; `--realistic` applies that state here so the two agree.
 
 THE MATH LIVES IN kitelab/validation.py, not here -- scripts/dashboard_data.py
 puts the same numbers on the dashboard and needed to call the same functions
@@ -46,12 +53,14 @@ import statistics
 
 import numpy as np
 
-from kitelab import config, registry
+from kitelab import config, registry, slippage
 from kitelab.validation import (
-    CAPITAL, RISK, TOP_N, WINDOW_YEARS,
-    breakeven_cost, buy_and_hold, cagr_of, correlate, load, monthly_returns,
-    permutation_test, walk_forward, without_best,
+    ALPHA, CAPITAL, PERMUTATION_ROUNDS, PERMUTATION_SAMPLE, RISK, TOP_N, WINDOW_YEARS,
+    breakeven_cost, buy_and_hold, cagr_of, correlate, hold_by_window, load,
+    monthly_returns, permutation_test, walk_forward, without_best,
 )
+
+START_YEAR = 2018      # the reference year the page quotes (scripts.dashboard_data.START_DEFAULT)
 
 
 def main() -> None:
@@ -61,8 +70,13 @@ def main() -> None:
                     choices=["benchmark", "walkforward", "top-n", "cost",
                              "correlation", "permutation"])
     ap.add_argument("--all-variants", action="store_true")
-    ap.add_argument("--permutations", type=int, default=10)
+    ap.add_argument("--permutations", type=int, default=PERMUTATION_ROUNDS)
     ap.add_argument("--seed", type=int, default=20260903)
+    ap.add_argument("--start-year", type=int, default=START_YEAR,
+                    help="benchmark start year (default: the page's reference year)")
+    ap.add_argument("--realistic", action="store_true",
+                    help="spread-adjust the cached trades and run the build's "
+                         "costs-and-cap execution state instead of on paper")
     args = ap.parse_args()
     want = set(args.only) if args.only else {"benchmark", "walkforward", "top-n",
                                              "cost", "correlation", "permutation"}
@@ -75,22 +89,33 @@ def main() -> None:
               [registry.find(f, registry.primary(f)) for f in registry.families()])
     picked = [s for s in picked if s is not None]
 
+    if args.realistic:
+        from .dashboard_data import REALISTIC_PARTICIPATION
+        slippage.ENABLED = True
+        slippage.MAX_PARTICIPATION = REALISTIC_PARTICIPATION
+        slippage.reset()
+
     loaded = {}
     for s in picked:
         t = load(s, universe)
         if t:
-            loaded[s.label] = (s, t)
+            loaded[s.label] = (s, [slippage.apply_spread(x) for x in t] if args.realistic else t)
     if not loaded:
         raise SystemExit("\n  No cached trades. Run: python -m scripts.refresh\n")
 
-    print(f"\n  {len(universe)} stocks, Rs{CAPITAL:,} at {RISK:.0%} risk. "
-          f"{len(loaded)} rules.\n")
+    state = ("realistic fills: spread, impact and the size cap on" if args.realistic
+             else "on paper: no spread, no impact, no size cap")
+    print(f"\n  {len(universe)} stocks, Rs{CAPITAL:,} at {RISK:.0%} risk, most-liquid-first. "
+          f"{len(loaded)} rules. {state}.\n")
 
     # ---- benchmark -------------------------------------------------------
     if "benchmark" in want:
-        bh = buy_and_hold(universe)
+        bh = buy_and_hold(universe, start_year=args.start_year)
         print("  DID IT BEAT SIMPLY OWNING THE STOCKS?")
-        print(f"    equal-weight buy and hold, median stock: {bh:.1f}% a year\n")
+        print(f"    equal-weight portfolio of all {len(universe)} from 1 Jan {args.start_year}, "
+              f"late listings joining at their first close: {bh:.1f}% a year")
+        print("    (the rules' CAGR below is over their whole history; the page compares\n"
+              "     each start year against its own benchmark)\n")
         print(f"    {'rule':<34}{'CAGR':>9}{'vs hold':>10}")
         print("    " + "-" * 51)
         beat = 0
@@ -105,18 +130,23 @@ def main() -> None:
     # ---- walk-forward ----------------------------------------------------
     if "walkforward" in want:
         print(f"  DOES IT HOLD IN DISJOINT {WINDOW_YEARS}-YEAR WINDOWS?")
-        print("    (the dashboard's start-year axis is cumulative; these do not overlap)\n")
+        print("    (one fixed calendar from 2006; a window is a WIN only if the rule beat\n"
+              "     equal-weight buy-and-hold of the universe over that same window)\n")
+        hold = hold_by_window(universe)
         for label, (s, t) in loaded.items():
-            rows = walk_forward(t)
-            if not rows:
+            wf = walk_forward(t, hold=hold)
+            if not wf["windows"]:
                 continue
-            vals = [c for _, _, c in rows if c is not None]
-            pos = sum(1 for c in vals if c > 0)
-            spans = "  ".join(f"{a}-{b}:{c:>6.1f}" if c is not None else f"{a}-{b}:    --"
-                              for a, b, c in rows)
             print(f"    {label}")
-            print(f"      {spans}")
-            print(f"      positive in {pos}/{len(vals)} windows\n")
+            for w in wf["windows"]:
+                cagr = f"{w['cagr']:>6.1f}" if w["cagr"] is not None else "    --"
+                bench = f"{w['hold']:>6.1f}" if w["hold"] is not None else "    --"
+                verdict = ("partial, not counted" if w["partial"] else
+                           "under 20 trades" if w["cagr"] is None else
+                           "WIN" if w["win"] else "lost to hold")
+                print(f"      {w['from']} to {w['to']}  rule {cagr}  hold {bench}  {verdict}")
+            print(f"      won {wf['wins']} of {wf['total_windows']} counted windows"
+                  f"{'  (majority)' if wf['wins'] * 2 > wf['total_windows'] else ''}\n")
 
     # ---- top-N -----------------------------------------------------------
     if "top-n" in want:
@@ -164,21 +194,24 @@ def main() -> None:
     # ---- permutation -----------------------------------------------------
     if "permutation" in want:
         print("  DOES IT STILL WORK WHEN THE STRUCTURE IS REMOVED?")
-        print("    Each stock's daily returns shuffled -- same distribution, no")
-        print(f"    sequence. {args.permutations} rounds on a 60-stock sample.\n")
-        print(f"    {'rule':<34}{'real':>8}{'shuffled median':>17}{'beat by':>9}")
-        print("    " + "-" * 68)
+        print("    The calendar's days shuffled, the same way for every stock -- same")
+        print(f"    distribution, same cross-section, no sequence. {args.permutations} rounds "
+              f"on a random {PERMUTATION_SAMPLE}-stock sample.\n")
+        print(f"    {'rule':<34}{'real':>8}{'shuffled median':>17}{'beat by':>9}{'p':>8}")
+        print("    " + "-" * 76)
         for label, (s, t) in loaded.items():
-            observed, got = permutation_test(s, universe, args.permutations, rng)
+            observed, got, pool = permutation_test(s, universe, args.permutations, rng, trades=t)
             if observed is None or not got:
                 print(f"    {label:<34}{'--':>8}")
                 continue
             med = statistics.median(got)
             worse = sum(1 for g in got if g >= observed)
-            flag = "" if worse * 4 <= len(got) else "   <-- NOT DISTINGUISHABLE"
+            p = (worse + 1) / (len(got) + 1)
+            flag = "" if p <= ALPHA else "   <-- NOT DISTINGUISHABLE"
             print(f"    {label:<34}{observed:>7.1f}%{med:>16.1f}%"
-                  f"{observed - med:>8.1f}{flag}")
-        print("\n    A rule that earns as much on shuffled prices as on real ones")
+                  f"{observed - med:>8.1f}{p:>8.3f}{flag}")
+        print(f"\n    p = (rounds at least as good + 1) / (rounds + 1); distinguishable at p <= {ALPHA}.")
+        print("    A rule that earns as much on shuffled prices as on real ones")
         print("    has found no structure -- it is fitting noise.\n")
 
 
