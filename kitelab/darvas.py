@@ -38,9 +38,15 @@ Without that shift a bar could break a high it had itself just set.
 The weekly gate is shifted the same way, and then some. Two separate guards
 against reading the future:
   - its own channel is shift(1), so the week is not compared to itself;
-  - the week CONSULTED is the last one that has actually finished. On a Wednesday
-    the current week's bar is still forming and its close is not known, so using
-    it would let Thursday's decision depend on Friday's price.
+  - the week CONSULTED is the PREVIOUS calendar week, on every day of the
+    current one -- Friday included. On a Wednesday the current week's bar is
+    still forming and its close is not known, so using it would let Thursday's
+    decision depend on Friday's price. On the Friday itself the week's close IS
+    known at that close, and the gate still does not read it; it waits until
+    Monday. That is one session of lag on Fridays, conservative rather than
+    lookahead, and it is what the code does -- an earlier draft of this
+    paragraph called it "the last one that has actually finished", which on a
+    Friday it is not (corrected 2026-09-07).
 The gate is tested at ENTRY only. Once in, the exit is the daily channel alone --
 the position is not closed just because the weekly condition later lapses.
 
@@ -83,12 +89,17 @@ def channels(symbol: str, entry_len: int = ENTRY_LEN,
 
 
 def weekly_gate(day: pd.DataFrame, weekly_len: int = WEEKLY_LEN) -> np.ndarray:
-    """Per DAILY bar: was the last COMPLETED week closed above its 20-week line?
+    """Per DAILY bar: did the PREVIOUS calendar week close above its 20-week line?
 
     Two guards against reading the future. The weekly line is shift(1), so a
     week is never compared with itself; and the week CONSULTED is the previous
-    one, because on a Wednesday the current week has not closed and using it
-    would let Thursday's decision depend on Friday's price.
+    one on every day of the current week, because on a Wednesday the current
+    week has not closed and using it would let Thursday's decision depend on
+    Friday's price. On a Friday the current week's close is known and is still
+    not read -- `prev = pos - 1` with no special case for the week's last
+    session -- so the gate runs one session late on Fridays. Conservative, not
+    lookahead, and stated here so nobody reads "completed" as "closed by
+    today" (2026-09-07).
     """
     week = frames.weekly(day)
     close = week["close"].to_numpy(dtype=float)

@@ -42,10 +42,23 @@ low, and with the DI-crossover note that says "STOPLOSS: signal candle low". The
 two-bar variant fits marginally better and is not offered: a 0.14% edge over 39
 trades is noise, and a rule stated three times beats a curve fit.
 
-stop="pivot" keeps the wide reading; it is not the default here, but it IS a
-defensible reading of the phrase and the dashboard publishes both. Fitting the
-sheet is not the same as trading well, and over the 101 in-sample stocks at
-2,00,000 and 1% risk the two produce different trades from identical signals:
+stop="pivot" keeps the wide reading. It is a defensible reading of the phrase
+and it stays available as a parameter, but as of 2026-09-07 it is OFF THE
+BOARD: the one Holy Grail row (registry.HG_VARIANTS) trades stop="signal_low".
+Until that date the board row traded "pivot" while this docstring called the
+signal low "the standing rule" and CLAUDE.md said the stop is the entry
+candle's own low for every strategy in the project -- the code, its own record
+and the project's convention disagreed three ways. The measurement above is
+the reason the signal low wins: 0.80% median error against the class's marked
+stops, against 5.82% for the pivot, and a stop five times too wide put on
+positions a fifth of the size. (For this strategy "the entry candle" is the
+signal candle -- the one whose high is the buy-stop; the bar the order fills
+on is not the candle the rule reads.)
+
+Fitting the sheet is not the same as trading well, and over the old 101
+in-sample stocks at 2,00,000 and 1% risk the two produced different trades
+from identical signals (measured 2026-09-02, before the universe merge and
+before the void-and-close rules of 2026-09-07 below; historical):
 
     stop           distance   expectancy   win rate   avg win/loss    MAR
     signal_low        4.63%     +0.561R      41.1%    2.95R/-1.11R    0.14
@@ -54,8 +67,16 @@ sheet is not the same as trading well, and over the 101 in-sample stocks at
 The wide stop banks more often and smaller; the tight one is refused more often
 for being too small to place (387 trades against 266) and starves the account of
 cash sooner (495 skips against 268). Both lose. Neither reading rescues this
-rule, which is why choosing between them is a question about the class's wording
-and not about which number to quote.
+rule.
+
+THREE THINGS THE WALK DOES SINCE 2026-09-07, each recorded at the line that
+does it in simulate(): a setup whose stop is traded through while the buy-stop
+waits is void rather than entered already breached; the stop AND the target
+are read at closes, not the stop at closes and the target intrabar; and the
+entry bar itself is checked, so a fill that closes at or below its stop is out
+the same session. Each was chosen to cost the rule rather than flatter it, and
+the one that was ambiguous (a bar that trades through the trigger and below
+the stop) was measured both ways before the costlier reading was kept.
 
 Trades come out in the shape backtest.simulate produces, so portfolio.run, the
 dashboard and the reports take them unchanged.
@@ -228,8 +249,10 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
     rules="raschke"    the original: ADX 30 and rising, first pullback only,
                        and the pullback bar need not close above the line
     rules="class"      the spreadsheet's paraphrase
-    stop="signal_low"  the signal candle's low -- the standing rule here
-    stop="pivot"       the last confirmed multi-bar swing low, for comparison
+    stop="signal_low"  the signal candle's low -- the standing rule, and since
+                       2026-09-07 what the board row trades
+    stop="pivot"       the last swing low confirmed by the signal bar, kept
+                       for comparison; off the board
     """
     frame = setups(frames.daily(symbol), rules, trend, span)
     if len(frame) < 3 * span + EMA_LENGTH:
@@ -252,29 +275,64 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
             position += 1
             continue
 
+        # The stop is fixed the moment the setup exists -- the signal candle's
+        # low, or the last confirmed pivot low -- so it can be watched WHILE the
+        # buy-stop waits, not only after it fills. The pivot reading takes the
+        # last pivot confirmed by the SIGNAL bar's close; it used to take the
+        # one confirmed by the entry bar, which the entry bar's own low could
+        # be the confirming bar for -- a value not known until after the fill.
+        low_at = _confirmed(lows, span, position)
+        if stop == "pivot":
+            if low_at is None:
+                position += 1
+                continue
+            stop_price = float(low[low_at])
+        else:
+            # `position` is the SIGNAL candle. The stop belongs to it, not to
+            # the bar its high eventually breaks on.
+            stop_price = float(low[position])
+
         # Rule 6: entry is the signal candle's high, taken when a later bar
         # trades through it. A gap straight over the level fills at the open.
+        #
+        # A SETUP WHOSE STOP HAS ALREADY BEEN TRADED THROUGH IS VOID
+        # (2026-09-07). Until this date the wait loop looked only at highs, so
+        # a bar that fell below the stop and a later bar that broke the trigger
+        # produced a trade entered with its stop already breached -- the
+        # structure the stop was defending had failed before the position
+        # existed. 4.7% of trades on a 200-symbol sample under the pivot stop;
+        # under the signal-low stop the board now trades, 32.5% of triggered
+        # setups on a 120-symbol sample. Those setups are abandoned here.
+        #
+        # THE TRIGGER BAR ITSELF is not voided: 20.4% of triggered setups trade
+        # both through the trigger and below the stop on that one bar, and the
+        # order inside the bar is unknowable. A resting buy-stop fills either
+        # way, and what the trader then holds is judged like every other
+        # position here -- by the close (below). Treating those as void was
+        # measured too, on the same 120 symbols under the signal-low stop:
+        # 1,169 trades at +0.635R against 1,345 at +0.498R, 14% more net. It
+        # would have FLATTERED the rule, mostly by discarding the 78% of those
+        # bars that close back above the stop and go on to lose; the reading
+        # that follows the order mechanics is also the one that costs, and it
+        # is the one kept.
         trigger = high[position]
         entry_index = None
         for step in range(position + 1, min(position + 1 + wait, total)):
             if high[step] >= trigger:
                 entry_index = step
                 break
-        if entry_index is None:                 # the high never broke; setup lapsed
+            if low[step] < stop_price:          # breached before it ever filled
+                break
+        if entry_index is None:                 # lapsed, or voided
             position += 1
             continue
         entry_price = max(trigger, float(open_[entry_index]))
 
-        low_at = _confirmed(lows, span, entry_index)
         high_at = _confirmed(highs, span, entry_index)
-        if high_at is None or (stop == "pivot" and low_at is None):
+        if high_at is None:
             position += 1
             continue
 
-        # `position` is the SIGNAL candle; entry_index is the bar its high broke
-        # on. The stop belongs to the signal candle, not the fill.
-        stop_price = (float(low[position]) if stop == "signal_low"
-                      else float(low[low_at]))
         target = float(high[high_at])
         risk = entry_price - stop_price
         # A target already behind us is not a target, and a stop above entry is
@@ -291,16 +349,30 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
         # Rule 3 then rule 4: bank TARGET_FRACTION at the previous swing high,
         # trail the rest on swing lows as they confirm. The stop is checked first,
         # so a bar that breaks both is charged the worse of the two.
+        #
+        # BOTH AT CLOSES, FROM THE ENTRY BAR (2026-09-07). Until this date the
+        # stop was judged at closes but the target INTRABAR (a high touching it
+        # banked at the level), and the loop started the bar AFTER entry, so the
+        # entry bar was checked for neither: 10.6% of trades had the target
+        # touched on the entry bar and nothing banked, and the entry bar could
+        # close below the stop without the trade noticing. Now stop and target
+        # are both read at the close -- the class convention, stop_on_close=True
+        # in backtest.simulate and darvas.simulate, everything judged on
+        # end-of-bar data -- and the walk starts ON the entry bar, so a fill
+        # that closes at or below its stop is out that same session at intraday
+        # rates, as every other producer here does. The close-based target
+        # forgoes the bars that touch the level and close under it, which is
+        # the direction the convention is meant to err in.
         banked_index = banked_price = None
         trail = stop_price
         exit_at = None
-        for step in range(entry_index + 1, total):
+        for step in range(entry_index, total):
             if close[step] <= trail:
                 exit_at = (step, float(close[step]),
                            "stop" if banked_index is None else "trailing stop")
                 break
-            if banked_index is None and high[step] >= target:
-                banked_index, banked_price = step, max(target, float(open_[step]))
+            if banked_index is None and close[step] >= target:
+                banked_index, banked_price = step, float(close[step])
             if banked_index is not None:
                 moved = _confirmed(lows, span, step)
                 if moved is not None:

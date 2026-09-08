@@ -94,11 +94,22 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
                  ath_band: float | None = None) -> pd.DataFrame:
     """entry_ok/exit_ok on the base bars, higher TFs via forming-bar EMAs.
 
-    ath_band mirrors backtest.ema_stack_signal: when set, only bars within that
-    fraction of the running all-time high can trigger an ENTRY, and exits are
-    left alone -- a rule that refuses to sell what it has already bought is not
-    a filter, it is a trap. The running high is a cummax INCLUDING the current
-    bar, which is knowable at its close, unlike the high still to come.
+    ath_band mirrors backtest.ema_stack_signal: when set, `near_ath` marks the
+    bars within that fraction of the running all-time high and simulate_variant
+    refuses a fresh ENTRY where it is False; exits are left alone -- a rule that
+    refuses to sell what it has already bought is not a filter, it is a trap.
+    The running high is a cummax INCLUDING the current bar, which is knowable
+    at its close, unlike the high still to come.
+
+    THE FILTER IS A FILTER, NOT AN ENTRY (2026-09-07). Until this date the
+    filter was AND-ed into entry_ok here, ahead of the walk's rising-edge test,
+    so a stack that was already up produced a "fresh" signal the moment price
+    climbed back within the band -- no EMA cross, just the filter switching
+    on. On 250 stocks from 2018 the M/W ATH row took 59% of its trades and 71%
+    of its net that way, Q/M 83% and 73%. entry_ok is now the bare stack
+    whatever ath_band is; `near_ath` is its own column (all True without a
+    band) and the walk skips the crosses it declines. Same fix, same date, in
+    backtest.ema_stack_signal.
 
     ONE DELIBERATE DIFFERENCE FROM backtest.py, added 2026-09-05: the high is
     taken over the BASE frame's closes, not the daily ones. A weekly-traded rule
@@ -143,11 +154,14 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
 
     if ath_band is not None:
         peak = base["close"].cummax().to_numpy()
-        entry_ok = entry_ok & (close >= peak * (1 - ath_band))
+        near_ath = close >= peak * (1 - ath_band)
+    else:
+        near_ath = np.ones(len(close), dtype=bool)
 
     out = base.copy()
     out["entry_ok"] = entry_ok
     out["exit_ok"] = exit_ok
+    out["near_ath"] = near_ath
     out["top_tf_done"] = completed_counts[-1]  # completed bars of the HIGHEST TF
     return out
 
@@ -165,6 +179,7 @@ def simulate_variant(symbol: str, variant: str,
     signal = stack_signal(base, highers, band=band, ath_band=ath_band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
+    near_ath = signal["near_ath"].to_numpy(dtype=bool)
     open_, high, low, close = (signal[c].to_numpy()
                                for c in ("open", "high", "low", "close"))
     # Stamp each trade on the session it was DECIDED on -- the session whose close
@@ -178,8 +193,11 @@ def simulate_variant(symbol: str, variant: str,
     trades: list[dict] = []
     position = 0
     while position < total:
+        # Rising edge on the UNFILTERED stack, then the ATH filter may decline
+        # the cross. A declined cross is gone: the stack has to break and cross
+        # again before this stock is looked at next (2026-09-07).
         fresh = entry_ok[position] and position > 0 and not entry_ok[position - 1]
-        if not fresh:
+        if not fresh or not near_ath[position]:
             position += 1
             continue
         entry_price = float(close[position])

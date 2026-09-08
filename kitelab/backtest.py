@@ -61,9 +61,10 @@ NEXT_OPEN_FILLS = False
 # Hysteresis: enter only when price is BAND above every EMA, exit only when it is BAND
 # below one of them. The gap between those two lines is a dead zone where nothing
 # happens. Without it, entry and exit share a single knife-edge, so price hovering
-# around an EMA triggers an exit and a re-entry every few days -- the median holding
-# period was 3 sessions on a strategy filtered by MONTHLY EMAs, and 20% of trades
-# re-entered the same stock the very next day.
+# around an EMA triggers an exit and a re-entry every few days -- when the band
+# was first measured, the median holding period was 3 sessions on a strategy
+# filtered by MONTHLY EMAs, and 20% of trades re-entered the same stock the very
+# next day.
 #
 # SET TO ZERO 2026-09-05, so this default now buys none of that. The band was
 # removed from every EMA family on the board (kitelab.registry.BANDS carries the
@@ -72,6 +73,11 @@ NEXT_OPEN_FILLS = False
 # -- the kind of gap between the code and the board this project has already been
 # burned by. The paragraph above is kept as the record of what the buffer bought,
 # because that churn is what comes back.
+#
+# AND IT CAME BACK WORSE THAN RECORDED. Re-measured 2026-09-07 at band 0 on the
+# board's rules: 29-31% of trades re-enter the same stock the next bar on M/W/D,
+# W/D, Q/M/W and M/W alike, and the median hold is 3-4 bars. The 20% above was
+# the pre-band figure on the old universe; the number to quote is the new one.
 BAND = 0.0
 
 # Zerodha equity DELIVERY charges, from zerodha.com/charges (checked 2026-08-23).
@@ -182,11 +188,26 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
     stack="mwd"    monthly and weekly must agree with daily (the class rule)
     stack="daily"  the daily 20 EMA alone -- the control that says what the two
                    higher timeframes are actually worth
-    ath_band       when set, only bars within this fraction of the running
-                   all-time high can trigger an entry. The high is a running max
-                   INCLUDING today, which is knowable at the close; exits are
-                   left alone, because a rule that refuses to sell what it has
-                   already bought is not a filter, it is a trap.
+    ath_band       when set, `near_ath` marks the bars within this fraction of
+                   the running all-time high, and simulate refuses a fresh
+                   entry on any bar where it is False. The high is a running
+                   max of the CLOSE INCLUDING today, which is knowable at the
+                   close; exits are left alone, because a rule that refuses to
+                   sell what it has already bought is not a filter, it is a
+                   trap.
+
+    THE FILTER IS A FILTER, NOT AN ENTRY (2026-09-07). Until this date
+    `near_ath` was AND-ed into entry_ok here, BEFORE simulate's rising-edge
+    test `entry_ok[p] and not entry_ok[p-1]`. So when the stack was already up
+    and price merely climbed back within 10% of its high, entry_ok flipped
+    false-to-true and a "fresh" signal fired with no EMA cross at all -- the
+    filter had become a second entry rule. Measured on 250 stocks from 2018:
+    the M/W ATH rows took 59% of their trades and 71% of their net from such
+    cross-less entries, Q/M 83% and 73%. Now entry_ok is the bare stack
+    whatever ath_band is, `near_ath` is its own column (all True when no band
+    is asked for), and the walk skips a cross the filter declines. Every ATH
+    trade is therefore a trade its unfiltered twin also takes -- same symbol,
+    same entry stamp -- which is what makes the pair readable.
     """
     day = frames.daily(symbol).reset_index(drop=True)
     week = frames.weekly(day)
@@ -237,10 +258,12 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
     if ath_band is not None:
         # Running all-time high of the CLOSE, today included. Buying only within
         # a band of it is a strength filter, not a lookahead: the high so far is
-        # known at the close, unlike the high that is still to come.
+        # known at the close, unlike the high that is still to come. NOT folded
+        # into entry_ok -- see the docstring for what that did until 2026-09-07.
         peak = day["close"].cummax().to_numpy()
         out["near_ath"] = close >= peak * (1 - ath_band)
-        out["entry_ok"] = out["entry_ok"] & out["near_ath"]
+    else:
+        out["near_ath"] = True
     # How many COMPLETED higher-timeframe bars existed. An EMA-20 resting on 3 monthly
     # bars is what TradingView draws, but it is not worth much -- surfaced, not hidden.
     out["weeks_done"] = week_pos
@@ -271,6 +294,10 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     signal = ema_stack_signal(symbol, length, band, stack, ath_band)
     entry_ok = signal["entry_ok"].to_numpy()
     exit_ok = signal["exit_ok"].to_numpy()
+    # The ATH filter, as its own column (2026-09-07). Hand-built signal frames
+    # (tests.support.signal_frame) predate it and carry no filter.
+    near_ath = (signal["near_ath"].to_numpy(dtype=bool) if "near_ath" in signal.columns
+                else np.ones(len(signal), dtype=bool))
     open_, high, low, close = (signal[c].to_numpy() for c in ("open", "high", "low", "close"))
     stamps = signal["ts"].tolist()
     total = len(signal)
@@ -278,8 +305,12 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     trades: list[dict] = []
     position = 0
     while position < total:
+        # The rising edge is taken on the UNFILTERED stack, so a filter cannot
+        # manufacture an edge of its own; the filter then gets to decline the
+        # cross, and a declined cross is gone -- the stack must break and cross
+        # again before the rule looks at this stock next.
         fresh_signal = entry_ok[position] and position > 0 and not entry_ok[position - 1]
-        if not fresh_signal:
+        if not fresh_signal or not near_ath[position]:
             position += 1
             continue
 

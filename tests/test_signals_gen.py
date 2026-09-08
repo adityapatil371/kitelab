@@ -49,15 +49,20 @@ class EmaStack(unittest.TestCase):
             solo = backtest.ema_stack_signal("X", stack="daily")
         self.assertGreaterEqual(int(solo["entry_ok"].sum()), int(stack["entry_ok"].sum()))
 
-    def test_the_all_time_high_band_only_restricts_entries(self):
-        """A filter that also blocked EXITS would refuse to sell what it had
-        already bought, which is a trap rather than a filter."""
+    def test_the_all_time_high_band_is_its_own_column(self):
+        """Since 2026-09-07 the filter touches NEITHER entry_ok nor exit_ok: it
+        is the `near_ath` column, and simulate declines crosses where it is
+        False. Folding it into entry_ok let the filter switching on look like
+        a fresh cross (tests.test_ath_filter has the full story); a filter that
+        blocked EXITS would refuse to sell what it had already bought."""
         rows = RISE[:60] + [(160 - i, 161 - i, 159 - i, 160 - i) for i in range(60)]
         with daily_bars(bars(rows)):
             plain = backtest.ema_stack_signal("X")
             near = backtest.ema_stack_signal("X", ath_band=0.02)
-        self.assertLessEqual(int(near["entry_ok"].sum()), int(plain["entry_ok"].sum()))
-        self.assertEqual(int(near["exit_ok"].sum()), int(plain["exit_ok"].sum()))
+        self.assertEqual(near["entry_ok"].tolist(), plain["entry_ok"].tolist())
+        self.assertEqual(near["exit_ok"].tolist(), plain["exit_ok"].tolist())
+        self.assertTrue(bool(plain["near_ath"].all()))
+        self.assertLess(int(near["near_ath"].sum()), len(rows))
 
     def test_months_and_weeks_done_never_decrease(self):
         with daily_bars(bars(RISE)):

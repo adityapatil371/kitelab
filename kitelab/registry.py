@@ -2,13 +2,16 @@
 
 WHY THIS EXISTS. Adding a strategy used to mean editing five separate places:
 signal_lists in scripts.dashboard_data, STRATEGY_LABELS, PRIMARY, the page's
-label map, and kitelab.signals._CODE. Four of those are cosmetic. The fifth is
-not -- _CODE is the list of modules hashed into every cache stamp, and
-holygrail.py was missing from it. The Holy Grail rules were rewritten at 16:33
-on 2026-09-02; the dashboard built at 15:32 went on serving trades from the
-superseded code, and refresh reported "already current" because the digest it
-compared could not see the file. Every Holy Grail number published that day was
-invalid, and nothing in the project could have said so.
+label map, and a hand-kept module list in kitelab.signals (then called _CODE;
+gone since 2026-09-03 -- signals._SUPPORT now lists only the support modules
+every producer reads through, and the producers come from here). Four of
+those were cosmetic. The fifth was not -- that list was what got hashed into
+every cache stamp, and holygrail.py was missing from it. The Holy Grail rules
+were rewritten at 16:33 on 2026-09-02; the dashboard built at 15:32 went on
+serving trades from the superseded code, and refresh reported "already
+current" because the digest it compared could not see the file. Every Holy
+Grail number published that day was invalid, and nothing in the project could
+have said so.
 
 So a Strategy declares THE MODULE THAT PRODUCES ITS TRADES, and signals.stamp()
 derives the code digest from this list rather than from a hand-kept constant. A
@@ -16,10 +19,11 @@ strategy that is on the board is in the stamp by construction. The 2026-09-02
 bug is now unrepresentable rather than merely fixed.
 
 ADDING ONE. Append a Strategy (or call register()). It then appears in the
-compare table, the breadth sweep and scripts.bootstrap without another edit,
+compare table, kitelab.validation and scripts.bootstrap without another edit,
 and -- this is the point of testing new rules against old ones -- it is measured
-on the SAME stocks, the SAME baskets and the SAME account as everything already
-there, so the comparison is between rules rather than between setups.
+on the SAME stocks and the SAME account as everything already there, so the
+comparison is between rules rather than between setups. (The breadth sweep and
+the per-strategy baskets it drew went on 2026-09-03; see CLAUDE.md.)
 
     register(key="mine", variant="v1", label="My rule",
              cache="MyRule_v1", module="myrules.py",
@@ -49,10 +53,12 @@ class Strategy:
     """One row of the compare table, and everything needed to produce it.
 
     key      the family, e.g. "ema". Families share a label and a page row.
-    variant  the discriminator inside the family -- a band (0.02), a channel
-             pair ("20-10"), a stop reading ("swing"). Kept as the ORIGINAL
-             type, not stringified: the grid key formatter (tag) renders 0.02
-             as "0.02" and "20-10" as itself, and the page relies on both.
+    variant  the discriminator inside the family -- a band (0.0, the only one
+             since BANDS lost its sweep on 2026-09-05), a stack ("WD"), a
+             channel pair ("20-10"), a stop reading ("swing"). Kept as the
+             ORIGINAL type, not stringified: the grid key formatter (tag)
+             renders the float as "0.0" and "20-10" as itself, and the page
+             relies on both.
     cache    cache stem WITHOUT the universe suffix. Renaming it forces a
              rebuild, which is the correct move whenever a rule changes meaning.
     module   the file under kitelab/ that produces the trades. Feeds the cache
@@ -82,7 +88,9 @@ class Strategy:
 # without it entry and exit share one knife-edge, and price hovering around an
 # EMA churned the account -- median holding period 3 sessions on a strategy
 # filtered by MONTHLY EMAs, and 20% of trades re-entering the same stock the next
-# day. That churn is now paid again, deliberately.
+# day when first measured; re-measured at band 0 on 2026-09-07 it is 29-31% on
+# M/W/D, W/D, Q/M/W and M/W, median hold 3-4 bars. That churn is now paid
+# again, deliberately.
 #
 # WHAT ELSE GOES WITH IT. The 0-5% sweep was this project's only
 # parameter-plateau control: "is 2% a plateau or a lucky spike?" was answered by
@@ -124,6 +132,12 @@ ATH_BAND = 0.10
 # for MWD, pair|<key> for the rest -- so every row here can be read against the
 # same stack without the filter. That pairing is the point; do not add an ATH
 # stack without its control.
+#
+# And since 2026-09-07 the pairing is exact: every trade an ATH row takes is a
+# trade its control takes (same symbol, same entry stamp), because the filter
+# now only DECLINES crosses rather than manufacturing entries of its own when
+# price climbs back inside the band. tests.test_ath_filter pins that subset
+# property; backtest.ema_stack_signal carries the measurement that forced it.
 ATH_STACKS = ["MWD", "MW", "QM", "QD", "WD"]
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
@@ -138,19 +152,30 @@ DARVAS_GATED = [True, False]
 # rebuild says otherwise, and the Validated gate is what should be read on that
 # row rather than its rank.
 
-# RETIRED 2026-09-05, the candle-stop reading. Both readings of the class's
-# ambiguous "SL will be swing low" were kept on the board deliberately (see
-# kitelab/holygrail.py) so that publishing one was not presenting a coin
-# flip as a finding. That reasoning holds for choosing which one to feature
-# as THE headline number; it does not hold for a board whose purpose is
-# comparing strategies someone would use in real life. Under the same
-# validation this board runs on everything else, candle is the second-worst
-# variant tested (median MAR -0.06, positive in only 8 of 50 combinations,
-# best case 0.08) -- it does not clear MIN_TRADES-worth of doubt, it clears
-# none. stop="signal_low" is still implemented and documented in
-# holygrail.py for anyone who wants to run it directly; it is not deleted,
-# only off the comparison board.
-HG_VARIANTS = [("swing", "pivot")]
+# THE ONE HOLY GRAIL ROW TRADES THE SIGNAL CANDLE'S LOW, from 2026-09-07.
+#
+# What it was. On 2026-09-05 the candle-stop reading was retired from the
+# board and the row left trading stop="pivot" (the last confirmed 5-bar swing
+# low, a median 13.4% below entry), on the grounds that under this board's
+# validation candle was the second-worst variant tested (median MAR -0.06,
+# positive in 8 of 50 combinations, best case 0.08). That left the project
+# saying three different things: CLAUDE.md, that the stop is the entry
+# candle's own low uniformly across every strategy; holygrail.py's own
+# docstring, that the signal low is "the standing rule" and the board
+# publishes both; and this line, trading the pivot alone.
+#
+# What it is. The row trades stop="signal_low", so the uniform convention is
+# true of the whole board. The reason is holygrail.py's own measurement
+# against all 39 stops marked in the class sheet: the signal candle's low
+# misses them by a median 0.80%, the 5-bar pivot by 5.82% -- five times too
+# wide, and positions a fifth of the size. Ranking better on the board is not
+# a reason to trade a stop the rule does not describe. "pivot" stays a
+# parameter of holygrail.simulate for anyone who wants the comparison.
+#
+# The variant key "swing" and the cache stem "HolyGrail_swing" are unchanged
+# on purpose -- the page and the build key on them -- and the cache is
+# invalidated anyway, because this file is in the stamp (signals._SUPPORT).
+HG_VARIANTS = [("swing", "signal_low")]
 
 FAMILY_LABELS = {
     "ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W", "pair": "EMA · one higher TF",
@@ -163,8 +188,9 @@ FAMILY_LABELS = {
 }
 
 # The variant each family shows wherever only one can be shown -- the per-stock
-# page, and the breadth sweep. Not "the best": the DEFAULT, chosen once so that
-# the breadth curves compare families rather than each family's luckiest setting.
+# Detail view. Not "the best": the DEFAULT, chosen once so that a family is
+# compared by one stated setting rather than by its luckiest one. (It also fed
+# the breadth sweep until that went on 2026-09-03.)
 # Stack -> display label, DERIVED from the timeframes tables rather than
 # retyped, so a pair renamed there cannot leave a stale label here. MWD is in
 # VARIANTS; the rest are in PAIRS.
