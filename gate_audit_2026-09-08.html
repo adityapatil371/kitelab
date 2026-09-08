@@ -1,0 +1,608 @@
+<title>Why Nothing Passes the Gate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --paper:#F5F6F8; --surface:#FFFFFF; --surface-2:#EDEFF3;
+    --ink:#14181F; --muted:#5A6472; --faint:#8A94A3;
+    --rule:#DCE0E6; --rule-strong:#BEC6D1;
+    --accent:#27406B; --accent-soft:#E4E9F2;
+    --neg:#9E3B2E; --neg-soft:#F0DFDB;
+    --pos:#2C6A4E; --pos-soft:#DDEBE3;
+    --warn:#8A6212;
+    --shadow:0 1px 2px rgba(20,24,31,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#12151A; --surface:#191D24; --surface-2:#1F242C;
+      --ink:#E6E9EE; --muted:#9AA4B2; --faint:#727D8C;
+      --rule:#2A303A; --rule-strong:#3A4250;
+      --accent:#8FB0E8; --accent-soft:#1D2634;
+      --neg:#E08472; --neg-soft:#2E1F1C;
+      --pos:#6FBF95; --pos-soft:#17251E;
+      --warn:#D6A84A;
+      --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#12151A; --surface:#191D24; --surface-2:#1F242C;
+    --ink:#E6E9EE; --muted:#9AA4B2; --faint:#727D8C;
+    --rule:#2A303A; --rule-strong:#3A4250;
+    --accent:#8FB0E8; --accent-soft:#1D2634;
+    --neg:#E08472; --neg-soft:#2E1F1C;
+    --pos:#6FBF95; --pos-soft:#17251E;
+    --warn:#D6A84A;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:16px; line-height:1.62; margin:0;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 28px 96px}
+  .col{max-width:64ch}
+
+  /* ---------- masthead ---------- */
+  header{padding:64px 0 0}
+  .eyebrow{
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 20px;
+  }
+  h1{
+    font-family:Newsreader,Georgia,serif; font-weight:500;
+    font-size:clamp(38px,5.4vw,60px); line-height:1.06; letter-spacing:-.015em;
+    margin:0 0 20px; text-wrap:balance; max-width:16ch;
+  }
+  .standfirst{
+    font-family:Newsreader,Georgia,serif; font-size:20px; line-height:1.5;
+    color:var(--muted); margin:0 0 40px; max-width:56ch;
+  }
+  .standfirst em{color:var(--ink); font-style:italic}
+
+  /* ---------- verdict strip ---------- */
+  .verdict{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    border-top:2px solid var(--ink); border-bottom:1px solid var(--rule);
+    margin:0 0 56px;
+  }
+  .verdict div{padding:20px 22px 22px 0}
+  .verdict div + div{border-left:1px solid var(--rule); padding-left:22px}
+  .vnum{
+    font-family:"IBM Plex Mono",monospace; font-size:30px; font-weight:500;
+    letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1.1;
+    display:block; margin-bottom:6px;
+  }
+  .vnum.neg{color:var(--neg)}
+  .vlabel{font-size:13px; color:var(--muted); line-height:1.4; display:block}
+
+  /* ---------- sections ---------- */
+  section{padding-top:8px; margin-bottom:60px}
+  .marker{
+    display:flex; align-items:baseline; gap:14px;
+    border-top:1px solid var(--rule-strong); padding-top:14px; margin-bottom:22px;
+  }
+  .marker .src{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.06em;
+    color:var(--accent); white-space:nowrap;
+  }
+  h2{
+    font-family:Newsreader,Georgia,serif; font-weight:500; font-size:30px;
+    line-height:1.18; letter-spacing:-.01em; margin:0; text-wrap:balance;
+  }
+  h3{
+    font-family:"IBM Plex Sans",sans-serif; font-weight:600; font-size:14.5px;
+    letter-spacing:.01em; margin:34px 0 12px; color:var(--ink);
+  }
+  p{margin:0 0 17px}
+  .col p:last-child{margin-bottom:0}
+  strong{font-weight:600}
+  .num{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; font-size:.94em}
+  .neg{color:var(--neg)} .pos{color:var(--pos)}
+
+  .lede{font-size:17.5px; line-height:1.55; color:var(--ink)}
+  .lede strong{
+    background:linear-gradient(transparent 62%,var(--accent-soft) 62%);
+    padding-bottom:1px;
+  }
+
+  /* ---------- tables ---------- */
+  .tablewrap{overflow-x:auto; margin:28px 0 8px; padding-bottom:2px}
+  table{border-collapse:collapse; width:100%; min-width:520px; font-size:14px}
+  caption{
+    caption-side:top; text-align:left; font-size:13px; color:var(--muted);
+    padding-bottom:10px; line-height:1.45;
+  }
+  th,td{padding:9px 14px 9px 0; text-align:right; white-space:nowrap}
+  th:first-child,td:first-child{text-align:left; padding-right:24px}
+  thead th{
+    font-family:"IBM Plex Mono",monospace; font-weight:500; font-size:11px;
+    letter-spacing:.07em; text-transform:uppercase; color:var(--muted);
+    border-bottom:1px solid var(--rule-strong); padding-bottom:8px; vertical-align:bottom;
+  }
+  tbody td{border-bottom:1px solid var(--rule); font-variant-numeric:tabular-nums}
+  tbody td:not(:first-child){font-family:"IBM Plex Mono",monospace}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr.total td{
+    border-top:1px solid var(--rule-strong); border-bottom:none;
+    font-weight:600; padding-top:11px;
+  }
+  .note{font-size:13px; color:var(--muted); line-height:1.5; margin-top:12px; max-width:64ch}
+
+  /* ---------- distribution bars ---------- */
+  .dist{display:flex; flex-direction:column; gap:11px; margin:28px 0 4px}
+  .distrow{display:grid; grid-template-columns:64px 1fr 78px; align-items:center; gap:14px}
+  .distrow .name{
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--muted);
+  }
+  .distrow .val{
+    font-family:"IBM Plex Mono",monospace; font-size:13px; text-align:right;
+    font-variant-numeric:tabular-nums; color:var(--neg);
+  }
+  .bar{display:flex; height:20px; border-radius:2px; overflow:hidden; background:var(--surface-2)}
+  .bar span{display:block; height:100%}
+  .s-ahead{background:var(--pos)}
+  .s-near{background:var(--pos-soft)}
+  .s-mid{background:var(--neg-soft)}
+  .s-far{background:var(--neg)}
+  .key{
+    display:flex; flex-wrap:wrap; gap:6px 20px; margin-top:16px;
+    font-size:12.5px; color:var(--muted);
+  }
+  .key b{display:inline-flex; align-items:center; gap:7px; font-weight:400}
+  .key i{width:11px; height:11px; border-radius:2px; display:block; flex:none}
+
+  /* ---------- chart ---------- */
+  figure{margin:30px 0 8px}
+  .chart{
+    background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+    padding:18px 20px 14px; overflow-x:auto; box-shadow:var(--shadow);
+  }
+  .chart svg{display:block; width:100%; min-width:560px; height:auto}
+  figcaption{font-size:13px; color:var(--muted); margin-top:12px; line-height:1.5; max-width:64ch}
+  .ax{fill:var(--muted); font-family:"IBM Plex Mono",monospace; font-size:11px}
+  .axl{fill:var(--muted); font-family:"IBM Plex Sans",sans-serif; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase}
+  .anno{fill:var(--ink); font-family:"IBM Plex Sans",sans-serif; font-size:12px}
+  .annom{fill:var(--muted); font-family:"IBM Plex Sans",sans-serif; font-size:11.5px}
+  .grid{stroke:var(--rule); stroke-width:1}
+  .ref{stroke:var(--rule-strong); stroke-width:1; stroke-dasharray:3 4}
+  .ln{fill:none; stroke-width:2.25; stroke-linejoin:round; stroke-linecap:round}
+
+  /* ---------- callout ---------- */
+  .callout{
+    border-left:2px solid var(--accent); background:var(--surface);
+    padding:20px 24px; margin:30px 0; border-radius:0 3px 3px 0;
+    box-shadow:var(--shadow);
+  }
+  .callout p{margin:0; font-size:15.5px}
+  .callout p + p{margin-top:12px}
+  .callout .h{
+    font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--accent); display:block; margin-bottom:9px;
+  }
+
+  /* ---------- recommendations ---------- */
+  ol.recs{list-style:none; counter-reset:r; padding:0; margin:26px 0 0}
+  ol.recs li{
+    counter-increment:r; position:relative; padding-left:40px; margin-bottom:24px;
+    max-width:64ch;
+  }
+  ol.recs li::before{
+    content:counter(r); position:absolute; left:0; top:1px;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--accent);
+    border:1px solid var(--rule-strong); border-radius:50%;
+    width:24px; height:24px; display:grid; place-items:center;
+  }
+  ol.recs .t{font-weight:600; display:block; margin-bottom:3px}
+  ol.recs p{margin:0; font-size:15px; color:var(--muted)}
+  ol.recs p .num{color:var(--ink)}
+
+  /* ---------- repro ---------- */
+  .repro{border-top:1px solid var(--rule-strong); padding-top:22px; margin-top:8px}
+  .repro dl{
+    display:grid; grid-template-columns:auto 1fr; gap:9px 22px;
+    margin:16px 0 0; font-size:13.5px;
+  }
+  .repro dt{font-family:"IBM Plex Mono",monospace; color:var(--accent); white-space:nowrap}
+  .repro dd{margin:0; color:var(--muted)}
+  footer{
+    margin-top:56px; padding-top:20px; border-top:1px solid var(--rule);
+    font-size:12.5px; color:var(--faint); line-height:1.6;
+  }
+  @media (max-width:640px){
+    .wrap{padding:0 20px 72px}
+    header{padding-top:44px}
+    .verdict div + div{border-left:none; border-top:1px solid var(--rule); padding-left:0}
+    .distrow{grid-template-columns:56px 1fr 68px; gap:10px}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">kitelab · walk-forward diagnostics · 2026-09-08</p>
+  <h1>Why nothing passes the gate</h1>
+  <p class="standfirst">Four diagnostics on the strict-majority walk-forward check. The gate is
+  not too strict — it is a coin flip that <em>ought</em> to be passing hundreds of cells. It
+  passes almost none because the rules genuinely lose to owning the same stocks.</p>
+
+  <div class="verdict">
+    <div>
+      <span class="vnum neg">−17.8</span>
+      <span class="vlabel">Median CAGR points per year by which a rule trails equal-weight hold, over 5,820 window comparisons</span>
+    </div>
+    <div>
+      <span class="vnum">49.8%</span>
+      <span class="vlabel">Rate at which the gate passes a rule with <em>no edge whatsoever</em></span>
+    </div>
+    <div>
+      <span class="vnum">22 <span style="color:var(--muted);font-size:19px">/ 950</span></span>
+      <span class="vlabel">Cells that actually pass, against roughly 473 expected by chance alone</span>
+    </div>
+    <div>
+      <span class="vnum">0.09</span>
+      <span class="vlabel">CAGR points per year explained by the known net-vs-gross cost bug</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="marker">
+    <span class="src">scripts.wf_ceiling</span>
+    <h2>The gate is passable. Nothing passes it.</h2>
+  </div>
+  <div class="col">
+    <p class="lede">The first suspicion was that the check was rigged against every rule —
+    that a strict majority of seven three-year windows against each window's own equal-weight
+    hold was <strong>unpassable by construction</strong>. It is not.</p>
+    <p>A hindsight-perfect selector — one that, in each window independently, is handed
+    whichever of the 190 cells turned out best — clears the majority in every universe. So the
+    bar can be reached. But look at the slack: in <span class="num">all</span> and
+    <span class="num">large</span>, that omniscient selector wins exactly the four windows it
+    needs and not one more. Only four of the seven windows were <em>ever</em> won by any cell
+    on the board.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Per universe: what a perfect selector achieves, what the best real cell achieved,
+      and how many cells clear the strict majority.</caption>
+      <thead>
+        <tr>
+          <th>Universe</th><th>Cells</th><th>Windows<br>counted</th><th>Majority<br>needed</th>
+          <th>Ceiling<br>wins</th><th>Slack</th><th>Best real<br>cell</th><th>Cells<br>passing</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>all</td><td>190</td><td>7</td><td>4</td><td>4</td><td class="neg">0</td><td>3</td><td>0</td></tr>
+        <tr><td>large</td><td>190</td><td>7</td><td>4</td><td>4</td><td class="neg">0</td><td>2</td><td>0</td></tr>
+        <tr><td>mid</td><td>190</td><td>7</td><td>4</td><td>7</td><td>3</td><td>3</td><td>0</td></tr>
+        <tr><td>small</td><td>190</td><td>7</td><td>4</td><td>5</td><td>1</td><td>3</td><td>0</td></tr>
+        <tr><td>recent</td><td>190</td><td>3</td><td>2</td><td>3</td><td>1</td><td>2</td><td>22</td></tr>
+        <tr class="total"><td>Total</td><td>950</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>22</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>On the 22.</strong> Every passing cell sits in <span class="num">recent</span>,
+  whose stocks did not exist before 2018, so it offers three comparable windows and "strict
+  majority" means two of three. An exact sign-flip test on two-of-three returns p = 0.375. These
+  are not passes; they are the smallest sample on the board behaving like a small sample.</p>
+
+  <div class="callout">
+    <span class="h">Ruled out</span>
+    <p><strong>Cash drag is not the explanation.</strong> The suspicion that a partly-invested rule
+    cannot beat an always-invested benchmark does not survive measurement: across 380 grid cells per
+    universe from 2018, median exposure is <span class="num">98.1–99.8%</span> of days invested and
+    the median account holds <span class="num">0.0–0.8%</span> in cash. These accounts are
+    effectively fully invested. The shortfall is <em>which</em> stocks are held and when — not money
+    left idle.</p>
+  </div>
+</section>
+
+<section>
+  <div class="marker">
+    <span class="src">scripts.wf_excess</span>
+    <h2>Not near misses. Blowouts.</h2>
+  </div>
+  <div class="col">
+    <p class="lede">The gate throws away almost everything it is given: each window collapses to a
+    single win/lose bit. Replacing that bit with the actual margin — rule CAGR minus hold CAGR, in
+    percentage points per year — changes the character of the result completely.
+    <strong>The rules are not sitting just under the line.</strong></p>
+    <p>Across all 5,820 comparable window comparisons the median rule trails equal-weight
+    buy-and-hold by <span class="num neg">17.8</span> points of CAGR per year. Only
+    <span class="num">2.6%</span> of comparisons land within two points of the benchmark, while
+    <span class="num">69.0%</span> trail it by more than ten.</p>
+  </div>
+
+  <div class="dist">
+    <div class="distrow">
+      <span class="name">all</span>
+      <span class="bar"><span class="s-ahead" style="width:15.9%"></span><span class="s-near" style="width:1.9%"></span><span class="s-mid" style="width:7.3%"></span><span class="s-far" style="width:75.0%"></span></span>
+      <span class="val">−21.8</span>
+    </div>
+    <div class="distrow">
+      <span class="name">large</span>
+      <span class="bar"><span class="s-ahead" style="width:11.7%"></span><span class="s-near" style="width:2.2%"></span><span class="s-mid" style="width:18.0%"></span><span class="s-far" style="width:68.2%"></span></span>
+      <span class="val">−14.9</span>
+    </div>
+    <div class="distrow">
+      <span class="name">mid</span>
+      <span class="bar"><span class="s-ahead" style="width:17.3%"></span><span class="s-near" style="width:3.2%"></span><span class="s-mid" style="width:14.1%"></span><span class="s-far" style="width:65.5%"></span></span>
+      <span class="val">−15.8</span>
+    </div>
+    <div class="distrow">
+      <span class="name">small</span>
+      <span class="bar"><span class="s-ahead" style="width:18.2%"></span><span class="s-near" style="width:2.3%"></span><span class="s-mid" style="width:8.2%"></span><span class="s-far" style="width:71.3%"></span></span>
+      <span class="val">−23.4</span>
+    </div>
+    <div class="distrow">
+      <span class="name">recent</span>
+      <span class="bar"><span class="s-ahead" style="width:20.7%"></span><span class="s-near" style="width:4.6%"></span><span class="s-mid" style="width:15.0%"></span><span class="s-far" style="width:59.6%"></span></span>
+      <span class="val">−14.8</span>
+    </div>
+    <div class="distrow">
+      <span class="name" style="color:var(--ink)">pooled</span>
+      <span class="bar"><span class="s-ahead" style="width:16.3%"></span><span class="s-near" style="width:2.6%"></span><span class="s-mid" style="width:12.1%"></span><span class="s-far" style="width:69.0%"></span></span>
+      <span class="val" style="font-weight:600">−17.8</span>
+    </div>
+  </div>
+  <div class="key">
+    <b><i class="s-ahead"></i>ahead of hold</b>
+    <b><i class="s-near"></i>behind by ≤ 2 pts</b>
+    <b><i class="s-mid"></i>behind by 2–10 pts</b>
+    <b><i class="s-far"></i>behind by &gt; 10 pts</b>
+    <b>right column: median margin, CAGR points per year</b>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Cell-level summary. A cell is one strategy × priority × capital; its mean margin is
+      averaged over that cell's comparable windows.</caption>
+      <thead>
+        <tr><th>Universe</th><th>Comparisons</th><th>Median<br>margin</th><th>Ahead</th>
+        <th>Cells with a<br>positive mean</th><th>Best cell's<br>mean margin</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>all</td><td>1,330</td><td class="neg">−21.8</td><td>15.9%</td><td>0 / 190</td><td class="neg">−4.8</td></tr>
+        <tr><td>large</td><td>1,300</td><td class="neg">−14.9</td><td>11.7%</td><td>0 / 190</td><td class="neg">−4.4</td></tr>
+        <tr><td>mid</td><td>1,300</td><td class="neg">−15.8</td><td>17.3%</td><td>0 / 190</td><td class="neg">−4.0</td></tr>
+        <tr><td>small</td><td>1,330</td><td class="neg">−23.4</td><td>18.2%</td><td>0 / 190</td><td class="neg">−4.7</td></tr>
+        <tr><td>recent</td><td>560</td><td class="neg">−14.8</td><td>20.7%</td><td>4 / 190</td><td class="pos">+4.6</td></tr>
+        <tr class="total"><td>Pooled</td><td>5,820</td><td class="neg">−17.8</td><td>16.3%</td><td>4 / 950</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Quartiles of the pooled margin: q1 <span class="num">−27.6</span>,
+  median <span class="num">−17.8</span>, q3 <span class="num">−6.5</span>; range
+  <span class="num">−85.9</span> to <span class="num">+60.5</span>. Not one cell in any universe
+  reaches an exact sign-flip p ≤ 0.05 — though with seven windows the smallest attainable p is
+  0.0078, and with three it is 0.125.</p>
+</section>
+
+<section>
+  <div class="marker">
+    <span class="src">scripts.wf_power</span>
+    <h2>The gate passes half of all worthless rules</h2>
+  </div>
+  <div class="col">
+    <p class="lede">"Wins a strict majority of seven windows" is a sign test whose critical value
+    sits at the median of its own null. Under a coin-flip null, P(X ≥ 4) = 64/128 —
+    <strong>exactly one half</strong>. This is not a 5% test; it is a 50% test.</p>
+    <p>To measure it rather than assert it: draw seven window margins from a normal with a known
+    true edge and the board's own noise — the median within-cell standard deviation of the real
+    margins is <span class="num">15.2</span> points per year, across the 740 cells with a full
+    seven-window history — then apply three designs to identical draws, 20,000 rules per edge size.</p>
+  </div>
+
+  <figure>
+    <div class="chart">
+      <svg viewBox="0 0 720 400" role="img" aria-label="Pass rate against true edge for three test designs. The current gate passes 49.8 percent of rules with zero edge; a 5 percent sign-flip test or t-test needs a 20 point edge for 80 percent power.">
+        <line class="grid" x1="56" y1="24"  x2="690" y2="24"></line>
+        <line class="grid" x1="56" y1="106" x2="690" y2="106"></line>
+        <line class="grid" x1="56" y1="188" x2="690" y2="188"></line>
+        <line class="grid" x1="56" y1="270" x2="690" y2="270"></line>
+        <line class="grid" x1="56" y1="352" x2="690" y2="352"></line>
+
+        <text class="ax" x="46" y="28"  text-anchor="end">100</text>
+        <text class="ax" x="46" y="110" text-anchor="end">75</text>
+        <text class="ax" x="46" y="192" text-anchor="end">50</text>
+        <text class="ax" x="46" y="274" text-anchor="end">25</text>
+        <text class="ax" x="46" y="356" text-anchor="end">0</text>
+
+        <line class="ref" x1="56" y1="89.6" x2="690" y2="89.6"></line>
+        <text class="annom" x="60" y="83">80% power</text>
+
+        <text class="ax" x="56"    y="372" text-anchor="middle">0</text>
+        <text class="ax" x="161.7" y="372" text-anchor="middle">5</text>
+        <text class="ax" x="267.3" y="372" text-anchor="middle">10</text>
+        <text class="ax" x="373"   y="372" text-anchor="middle">15</text>
+        <text class="ax" x="478.7" y="372" text-anchor="middle">20</text>
+        <text class="ax" x="584.3" y="372" text-anchor="middle">25</text>
+        <text class="ax" x="690"   y="372" text-anchor="middle">30</text>
+
+        <text class="axl" x="373" y="392" text-anchor="middle">True edge — CAGR points per year</text>
+        <text class="axl" x="14" y="188" text-anchor="middle" transform="rotate(-90 14 188)">Pass rate %</text>
+
+        <polyline class="ln" stroke="var(--pos)" points="56,337.2 77.1,331.0 98.3,323.8 119.4,315.3 140.5,304.4 161.7,292.0 182.8,279.2 225.1,243.8 267.3,207.0 309.6,168.6 373,114.2 478.7,54.2 584.3,30.2 690,25.0"></polyline>
+        <polyline class="ln" stroke="var(--accent)" stroke-dasharray="5 4" points="56,336.3 77.1,329.4 98.3,321.8 119.4,313.3 140.5,301.2 161.7,289.0 182.8,274.6 225.1,238.8 267.3,200.5 309.6,161.8 373,106.7 478.7,49.9 584.3,28.9 690,24.7"></polyline>
+        <polyline class="ln" stroke="var(--neg)" points="56,188.7 77.1,170.3 98.3,151.3 119.4,133.9 140.5,116.2 161.7,101.1 182.8,88.3 225.1,65.0 267.3,47.9 309.6,37.8 373,29.3 478.7,24.7 584.3,24 690,24"></polyline>
+
+        <circle cx="56" cy="188.7" r="4.5" fill="var(--neg)"></circle>
+        <text class="anno" x="68" y="185">49.8% pass with zero edge</text>
+
+        <circle cx="478.7" cy="49.9" r="4" fill="var(--accent)"></circle>
+        <circle cx="478.7" cy="54.2" r="4" fill="var(--pos)"></circle>
+
+        <g>
+          <rect x="424" y="262" width="266" height="84" rx="3" fill="var(--surface-2)" stroke="var(--rule)"></rect>
+          <line class="ln" stroke="var(--neg)" x1="440" y1="284" x2="470" y2="284"></line>
+          <text class="anno" x="480" y="288">Current gate — majority of 7</text>
+          <line class="ln" stroke="var(--pos)" x1="440" y1="306" x2="470" y2="306"></line>
+          <text class="anno" x="480" y="310">Sign-flip test, α = 0.05</text>
+          <line class="ln" stroke="var(--accent)" stroke-dasharray="5 4" x1="440" y1="328" x2="470" y2="328"></line>
+          <text class="anno" x="480" y="332">Paired t-test, α = 0.05</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>The gate looks sensitive only because its false-positive rate is 50%. Where the two
+    honest tests start near 5% at zero edge, the gate starts at half. Read the left edge before
+    reading the slopes.</figcaption>
+  </figure>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Pass rate by true edge, 20,000 simulated rules per row, seven windows,
+      σ = 15.2 points per year.</caption>
+      <thead>
+        <tr><th>True edge (pts/yr)</th><th>Current gate</th><th>Sign-flip @ 5%</th><th>t-test @ 5%</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0 — no edge at all</td><td class="neg">49.8%</td><td>4.5%</td><td>4.8%</td></tr>
+        <tr><td>2</td><td>61.2%</td><td>8.6%</td><td>9.2%</td></tr>
+        <tr><td>5</td><td>76.5%</td><td>18.3%</td><td>19.2%</td></tr>
+        <tr><td>10</td><td>92.7%</td><td>44.2%</td><td>46.2%</td></tr>
+        <tr><td>15</td><td>98.4%</td><td>72.5%</td><td>74.8%</td></tr>
+        <tr><td>20</td><td>99.8%</td><td>90.8%</td><td>92.1%</td></tr>
+        <tr class="total"><td>Edge needed for 80% power</td><td>6</td><td>20</td><td>20</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <span class="h">The instrument problem</span>
+    <p>Seven numbers cannot support a test. At this noise level you may have a
+    <strong>50% false-positive rate</strong>, or you may have a test that needs a
+    <span class="num">20</span>-point annual edge before it notices. There is no threshold that
+    gives you neither — the sample size forbids it.</p>
+    <p>And that is what makes the headline result so stark. At a 50% pass rate, roughly
+    <span class="num">378</span> of the 760 cells with a full seven-window history should have
+    passed on luck alone. <strong>Zero did.</strong> In <span class="num">recent</span>, ~95 of 190
+    were expected and 22 arrived. Systematic underperformance on this scale is far harder to
+    achieve by accident than passing would have been.</p>
+  </div>
+</section>
+
+<section>
+  <div class="marker">
+    <span class="src">scripts.wf_cost_gap</span>
+    <h2>The cost bug is real, and it is worth 0.09 points</h2>
+  </div>
+  <div class="col">
+    <p class="lede">One known defect could in principle have manufactured this whole result: the
+    cell's CAGR is computed <em>net</em> of costs while equal-weight hold is computed
+    <em>gross</em> of them. The rule pays the Zerodha schedule on every round trip; the benchmark
+    has never paid a rupee. <strong>Every margin on the board is biased against the rule.</strong></p>
+    <p>It needs no rebuild to price. Buy-and-hold buys each member once and sells once, so the fee
+    is a single multiplicative haircut on that member's terminal wealth — identical across members
+    and independent of the price path. Net wealth is gross wealth times a constant, so the corrected
+    CAGR follows in closed form from figures the dashboard already carries.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Correcting the benchmark. Proportional delivery charges (STT, exchange transaction,
+      SEBI, stamp duty, GST) read live from <span class="num">kitelab.backtest</span>: 0.1187% on
+      the buy, 0.1037% on the sell. Spread is swept because the <span class="num">fill</span> grid
+      axis can switch it on.</caption>
+      <thead>
+        <tr><th>Round-trip spread</th><th>Wealth<br>retained</th><th>Median hold<br>gross</th>
+        <th>Median hold<br>net</th><th>Benchmark<br>overstated by</th><th>Median margin<br>corrected</th>
+        <th>Share of gap<br>explained</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0.0% — board default</td><td>99.778%</td><td>24.60</td><td>24.51</td><td>0.093</td><td class="neg">−15.17</td><td>0.61%</td></tr>
+        <tr><td>0.6% — liquid name</td><td>99.181%</td><td>24.60</td><td>24.26</td><td>0.343</td><td class="neg">−14.92</td><td>2.25%</td></tr>
+        <tr><td>2.0% — punitive stress</td><td>97.802%</td><td>24.60</td><td>23.68</td><td>0.925</td><td class="neg">−14.34</td><td>6.06%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Margins here are medians over the 950 cell means (<span class="num">−15.27</span>
+  uncorrected), not over the 5,820 individual comparisons (<span class="num">−17.8</span>) — the two
+  aggregations differ, and the correction is negligible against either. The Rs 15.34 per-scrip demat
+  fee is deliberately excluded: <span class="num">validation._hold</span> is scale-free at Rs 1 per
+  member, so a fixed rupee charge has no meaning inside it. The bug should still be fixed — it is
+  simply not the explanation.</p>
+</section>
+
+<section>
+  <div class="marker">
+    <span class="src">conclusions</span>
+    <h2>What follows</h2>
+  </div>
+  <div class="col">
+    <p class="lede">The walk-forward gate was suspected of being an unfair instrument. It is an
+    unfair instrument — but in the opposite direction to the one assumed, and its unfairness
+    <em>flatters</em> rules rather than condemning them. Correcting it will not rescue the board.</p>
+  </div>
+
+  <ol class="recs">
+    <li>
+      <span class="t">Stop treating a walk-forward failure as a threshold problem</span>
+      <p>No redesign of the majority rule recovers these strategies. The best cell on the whole
+      board, in the universe with the most data, still averages <span class="num">−4.8</span> points
+      a year against simply owning the same stocks. The gate is not what stands between these rules
+      and a pass.</p>
+    </li>
+    <li>
+      <span class="t">Replace seven windows with daily excess returns</span>
+      <p>The binding constraint is sample size, not threshold choice. Going to daily rule-minus-hold
+      returns replaces 7 observations with roughly <span class="num">5,000</span>, which is what
+      makes an honest 5% test possible at a detectable effect size. This is the one change with real
+      leverage — and it needs a stored daily hold curve, which does not exist yet.</p>
+    </li>
+    <li>
+      <span class="t">Fix the net-vs-gross asymmetry anyway</span>
+      <p>It is worth <span class="num">0.09</span> points a year, but it is a genuine defect in a
+      comparison the whole project rests on, and leaving a known bias in place because it happens to
+      be small is how small biases survive into contexts where they are not.</p>
+    </li>
+    <li>
+      <span class="t">Report the margin, not the win count</span>
+      <p>The win/lose bit discards the information that mattered most here. "Wins 3 of 7" and
+      "trails by 22 points a year" are the same cell; only one of them tells you what happened.</p>
+    </li>
+  </ol>
+
+  <div class="callout" style="border-left-color:var(--warn)">
+    <span class="h" style="color:var(--warn)">Scope</span>
+    <p>These are in-sample figures on a survivorship-biased universe — the roughly 4.9 points a year
+    of survivorship bias documented in the project notes sits inside both the rule and the benchmark,
+    so it does not create the gap, but no number here is a forecast. Independence across windows is
+    assumed in the power simulation, and it is an optimistic assumption: real windows share a market
+    factor, so true power is somewhat worse than reported.</p>
+  </div>
+</section>
+
+<section class="repro">
+  <p class="eyebrow" style="margin-bottom:6px">Reproduce</p>
+  <p class="note" style="margin-top:0">All four diagnostics read the built
+  <span class="num">dashboard.json</span> only. No prices, no rebuild, no network; each runs in
+  seconds.</p>
+  <dl>
+    <dt>python3 -m scripts.wf_ceiling</dt>
+    <dd>Is the gate passable? Hindsight-perfect selector vs the strict majority.</dd>
+    <dt>python3 -m scripts.wf_excess</dt>
+    <dd>Margins rather than win/lose bits, with an exact sign-flip test per cell.</dd>
+    <dt>python3 -m scripts.wf_power</dt>
+    <dd>Simulated power and false-positive rate for three test designs.</dd>
+    <dt>python3 -m scripts.wf_cost_gap</dt>
+    <dd>Prices the net-vs-gross benchmark asymmetry in closed form.</dd>
+  </dl>
+</section>
+
+<footer>
+  Source: <span class="num">dashboard.json</span> built 2026-09-08 09:28 IST · 19 strategies ×
+  5 priorities × 2 capitals × 5 liquidity universes · fixed three-year calendar windows from
+  2006-01-01 · benchmark is equal-weight buy-and-hold of the same universe over the same window.
+  Outputs in <span class="num">/work/kitelab/output/</span>.
+</footer>
+
+</div>
