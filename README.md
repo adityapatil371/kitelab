@@ -1,8 +1,10 @@
 # kitelab
 
-A local historical-data workbench for manual backtesting, built on Kite Connect.
-
-Stage 1 only: data acquisition and timeframe construction. No screener, no chart UI yet.
+A local backtesting workbench for rules-based swing trading on NSE equities, built
+on Kite Connect. Data acquisition, cleaning, ~1,000-stock strategy simulation, an
+account-level grid, a validation layer and a local dashboard. `CLAUDE.md` is the
+current description of the system; this file keeps the setup steps and the
+sections marked as still accurate there.
 
 ## Setup
 
@@ -14,7 +16,9 @@ Edit `config.local.toml` and fill in your `api_key` and `api_secret` from
 <https://developers.kite.trade/apps>. That file is gitignored — keep the values in it
 and nowhere else.
 
-Dependencies are already installed in `.venv`. If you ever need to rebuild it:
+On the host, dependencies live in `.venv`; inside the dev container that venv
+is a dead symlink and plain `python3` (3.12, pandas installed) is the interpreter
+for everything below. If you ever need to rebuild the venv:
 
 ```
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
@@ -47,7 +51,8 @@ redirect URL. Nothing in this project asks for or stores your password, PIN, or 
 It decides for itself what work is needed: cleans raw files that arrived since the
 last clean, and rebuilds `dashboard.json` if the universe, the price data or the
 strategy code has moved. When nothing has changed it prints "already current" in a
-second, which matters because a full rebuild is ~30 minutes.
+second, which matters because a full rebuild is long (time it before quoting a
+number; `output/rebuild_*.log` records the last one).
 
 ### 3. Look at it — needs neither
 
@@ -100,9 +105,10 @@ pure 15-minute derivation instead.
 ## The 2026-08-03 session change
 
 NSE introduced a Closing Auction Session on 3 August 2026. For stocks covered by it —
-currently those with active derivatives contracts, which includes all four symbols here
-— continuous trading now ends at **15:15**, and an auction from 15:15 to 15:35 sets the
-official closing price.
+currently those with active derivatives contracts, a minority of the ~1,000-stock
+universe — continuous trading now ends at **15:15**, and an auction from 15:15 to
+15:35 sets the official closing price. `expected_bars` is applied uniformly, so on
+the stocks the auction does not cover the last 15-minute slot is simply absent.
 
 |                | before 2026-08-03 | from 2026-08-03 |
 |----------------|-------------------|-----------------|
@@ -144,8 +150,11 @@ now applies that gap-versus-volume test automatically to anything it flags.
   almost certainly listed debt. `frames.base_15m` drops any intraday bar that predates
   the first native daily bar and prints what it dropped.
 - **Survivorship bias.** The universe comes from the current instrument list, so
-  delisted companies are invisible. Not an issue for four hand-picked symbols; it
-  becomes one the moment you screen a broad universe.
+  delisted companies are invisible. With ~1,000 stocks screened from that list it
+  is the largest known bias in every number here (estimated ~4.9pp/yr on
+  2026-09-03), and nothing in the repo corrects for it. Since 2026-09-07 the
+  validation layer at least tests each rule against random entries on the same
+  survivors, so the drift they carry is no longer credited to the rule.
 - **HYUNDAI has little history** — listed October 2024, so roughly 23 monthly bars.
   Monthly analysis on it is not meaningful.
 - **Expired derivatives are unrecoverable.** Kite only returns instrument tokens for

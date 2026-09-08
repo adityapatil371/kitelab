@@ -3,18 +3,20 @@
     python -m scripts.dashboard_data
     python -m scripts.dashboard_data --stocks-only   # skip Bitcoin/GOLD
 
-Writes data/dashboard.json for http://localhost:8765/dashboard (served by
-python -m scripts.dashboard). The page is a pure viewer -- every control selects
-among these precomputed results, nothing is simulated in the browser.
+Writes dashboard.json into CLEAN for ./run_dashboard.sh. Nothing is simulated
+in the browser: every control selects among these precomputed results. The
+page does derive a few things from precomputed parts (vs Hold, the Validated
+verdict, the walk-forward fraction), so it is a viewer, not a "pure" one.
 
 Everything is combinable with everything:
     grid        one-account simulations for every registered strategy
-                (kitelab.registry) x universe (all 500 and three liquidity
-                buckets, sizes counted from config, never hardcoded)
-                x risk x signal priority x start year
-    assets      the six non-equity instruments -- Bitcoin, the two indices and
-                three MCX commodities -- run through the SAME registry as the
-                equities, so a newly added strategy is tested on them too
+                (kitelab.registry) x universe (the whole universe, three
+                liquidity buckets and the post-cut listings, sizes counted
+                from config, never hardcoded) x risk x capital x signal
+                priority x start year
+    assets      the non-equity instruments in ASSETS (BITCOIN, GOLD) run
+                through the SAME registry as the equities, so a newly added
+                strategy is tested on them too
 
 Everything here is displayed. Sections the page did not read were removed on
 2026-09-03: scaleout, scaleout_r, tradestats, timeframes and nifty were computed
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import json
 import os
 import re
@@ -85,9 +88,10 @@ RISKS = [0.5, 1.0]
 # And a single draw of ten cannot be read as a measurement anyway: at that size
 # the EMA stack ranges from 3.5% to 28.1% a year on luck alone.
 #
-# The question it was asking -- how many stocks does a rule need? -- is answered
-# properly by the breadth sweep below, which draws many baskets at nine sizes and
-# reports p10/median/p90 instead of one number.
+# The question it was asking -- how many stocks does a rule need? -- was then
+# handed to a breadth sweep, removed in turn on 2026-09-03. What both found (a
+# small account cannot fund what a wide scan offers) now sits on every grid row
+# as skipped_cash / skipped_tiny_* / exposure.
 
 START_YEARS = [2006, 2012, 2018, 2022, 2024]
 START_DEFAULT = 2018
@@ -211,7 +215,6 @@ ASSET_EXCLUDED = {
     "NIFTY BANK": "spot index, not a tradeable contract -- needs the NFO futures series",
 }
 ASSETS = [("BITCOIN", "30m", 0.0010), ("GOLD", "1d", 0.0005)]
-STEP = 10
 BANDS = registry.BANDS
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
 # computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
@@ -238,7 +241,6 @@ PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
 #         says what monthly and weekly are actually worth.
 #   eath  the full M/W/D stack, but only buying within 10% of the running
 #         all-time high.
-SOLO_BAND = registry.SOLO_BAND
 ATH_BAND = registry.ATH_BAND
 # The eath family stopped being one row on 2026-09-05 -- see registry.ATH_STACKS
 # for why five. Published like PAIR_TAGS so the page enumerates the family from
@@ -297,10 +299,6 @@ DARVAS_WINDOWS = registry.DARVAS_WINDOWS
 DARVAS_GATED = registry.DARVAS_GATED
 DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
                for g in DARVAS_GATED for a, b in DARVAS_WINDOWS]
-DARVAS_DEFAULT = "20-10"
-
-# The one setting each strategy shows on the per-stock page.
-PRIMARY = registry.PRIMARY
 
 
 def tag(band) -> str:
@@ -361,6 +359,11 @@ def _round(v, places=2):
     return None if v is None else round(float(v), places)
 
 
+def _t_taken(taken):
+    got = validation.clustered_t(taken) if taken else None
+    return None if not got or got.get("t_stat") is None else round(float(got["t_stat"]), 2)
+
+
 def run_payload(r):
     longest, current = underwater_stats(r["curve"])
     eps = [{"peak": str(e["peak_day"].date()), "trough": str(e["trough_day"].date()),
@@ -392,6 +395,18 @@ def run_payload(r):
             "exposure": exposure_pct(r["curve"], r.get("cash_curve")),
             # how much of the account is waiting rather than working
             "skipped_cash": r["skipped_cash"],
+            # The rest of the refusals, split since 2026-09-07 (audit D4):
+            # "unaffordable" alone understated cash starvation by more than
+            # half -- W/D all/2L/1%/2018 had 40,898 skipped_cash and 53,252
+            # more refused as cash SCRAPS under the fee floor. Both are "for
+            # want of cash"; the page now says so.
+            "skipped_tiny_cash": r.get("skipped_tiny_cash", 0),
+            "skipped_tiny_risk": r.get("skipped_tiny_risk", 0),
+            "skipped_size": r.get("skipped_size", 0),
+            # Credibility on the trades THIS account took, not on every signal
+            # the rule ever printed (audit A2: the paper t of the headline rows
+            # was 17-20; on the ~400 trades the 2L account took it was 1.2-1.5).
+            "t_taken": (_t_taken(r["taken"])),
             "median_cash": keep(r.get("median_cash_pct")),
             "full_pct": keep(r.get("fully_invested_pct")),
             "episodes": eps,
@@ -450,27 +465,20 @@ def capture_ratio(trades: list[dict]):
     return round(value, 4)
 
 
-def positions(trades: list[dict]) -> list[dict]:
-    """One position at a time per symbol -- what a TRADE-LEVEL view should count.
-
-    The ATH breakout fires again while it is already long, so 1,146 of its 2,031
-    signals overlap an open trade in the same stock and the same rally was being
-    counted several times in every win rate, profit factor, expectancy and total.
-    The one-account grid was always honest about this (it holds one position per
-    stock and reports the rest as skipped_busy); only the trade-level views were not.
-
-    A no-op for every other strategy: EMA, Q/M/W, W/D/H and Darvas all walk forward
-    from each exit, so they cannot overlap. Verified 2026-08-31 -- 0 dropped from
-    9,224 / 3,011 / 18,296 / 6,908 / 3,197.
-
-    NOT applied to the grid. The account decides for itself what it can hold, and
-    de-duplicating its input would change which signals it is ever offered.
-    """
-    return strategies.drop_overlaps(trades)
-
-
 def trade_stats(trades: list[dict]) -> dict:
+    """Trade-level quality of one rule's signal list, one position per stock.
+
+    RUPEE FIELDS ARE ON THE PRODUCER'S PAPER BOOK, which since 2026-09-07 is
+    the largest capital on the board (sizing.CAPITAL = Rs1cr, 1% risk) so the
+    cache never drops a signal the biggest account could take (audit A11).
+    They are therefore ~100x the pre-2026-09-07 figures and describe no
+    account on the page. The R-multiple fields beside them are scale-free and
+    are what to read; the page captions the rupee ones.
+    """
     nets = [t["net_profit"] for t in trades]
+    rs = [t["r_multiple"] for t in trades if t.get("risk_taken")]
+    r_wins = [r for r in rs if r > 0]
+    r_losses = [r for r in rs if r <= 0]
     wins = [n for n in nets if n > 0]
     losses = [n for n in nets if n <= 0]
     running = peak = 0.0
@@ -482,6 +490,10 @@ def trade_stats(trades: list[dict]) -> dict:
     avg_win = sum(wins) / len(wins) if wins else 0.0
     avg_loss = sum(losses) / len(losses) if losses else 0.0
     return {"trades": len(trades), "wins": len(wins), "losses": len(losses),
+            "paper_capital": float(sizing.CAPITAL), "paper_risk_pct": 100 * sizing.RISK_PCT,
+            "expectancy_r": round(sum(rs) / len(rs), 3) if rs else None,
+            "avg_win_r": round(sum(r_wins) / len(r_wins), 2) if r_wins else None,
+            "avg_loss_r": round(sum(r_losses) / len(r_losses), 2) if r_losses else None,
             "total_win": round(sum(wins)), "total_loss": round(sum(losses)),
             "avg_win": round(avg_win), "avg_loss": round(avg_loss),
             "expectancy": round(sum(nets) / len(nets)) if nets else 0,
@@ -521,27 +533,6 @@ def to_native(obj, path="payload", found=None):
     return obj
 
 
-def slim_trades(trades: list[dict]) -> list[dict]:
-    return [{"e": pd.Timestamp(t["entry_ts"]).strftime("%Y-%m-%d"),
-             "x": pd.Timestamp(t["exit_ts"]).strftime("%Y-%m-%d"),
-             "ep": round(t["entry_price"], 2), "xp": round(t["exit_price"], 2),
-             "st": round(t["stop"], 2), "sh": round(t["shares"], 4),
-             "net": round(t["net_profit"]), "why": t["exit_reason"]}
-            for t in sorted(trades, key=lambda t: t["entry_ts"], reverse=True)]
-
-
-def close_series(daily: pd.DataFrame) -> dict:
-    d, c = [], []
-    for i, rec in enumerate(daily.itertuples(index=False)):
-        if i % STEP and i != len(daily) - 1:
-            continue
-        d.append(rec.ts.strftime("%Y-%m-%d"))
-        c.append(round(float(rec.close), 2))
-    return {"d": d, "c": c}
-
-
-# --------------------------------------------------------------- main ----
-
 def signal_lists(over=None, suffix="all", label="") -> dict:
     """Every registered strategy, over one universe.
 
@@ -566,7 +557,26 @@ def signal_lists(over=None, suffix="all", label="") -> dict:
 # old cache from before a shape change is refused rather than served with a
 # missing key -- kitelab.signals only knows the universe/data/code moved, not
 # that the payload it is guarding grew a field.
-_VALIDATION_CACHE = "_validation_summary_v7"
+_VALIDATION_CACHE = "_validation_summary_v9"
+
+
+def benchmarks(cfg, uni_members: dict) -> tuple[dict, dict]:
+    """Equal-weight buy-and-hold per (universe, start year), and per
+    walk-forward calendar window per universe. A few seconds over the price
+    files; computed once per build and cached with the validation record.
+
+    Keys: hold_by_scenario["<uni>|<start_year>"]; hold_by_universe[uni] is the
+    {"2006-2009": cagr, ...} dict kitelab.validation.walk_forward_grid expects.
+    """
+    by_scenario, by_universe = {}, {}
+    for uni_key, members in uni_members.items():
+        members = cfg.merged if members is None else sorted(members)
+        for year in START_YEARS:
+            got = validation.buy_and_hold(members, start_year=year)
+            by_scenario[f"{uni_key}|{year}"] = (None if got is None
+                                                else round(float(got), 1))
+        by_universe[uni_key] = validation.hold_by_window(members)
+    return by_scenario, by_universe
 
 
 def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
@@ -614,7 +624,9 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
     list to fit that contract rather than changing kitelab/signals.py for
     one caller.
     """
-    cached = signals.load(_VALIDATION_CACHE, cfg.merged)
+    # account=True: this record depends on validation.py and portfolio.py,
+    # not only on which trades exist (2026-09-07).
+    cached = signals.load(_VALIDATION_CACHE, cfg.merged, account=True)
     if cached is not None:
         print("  validation: cached, reusing", flush=True)
         return cached[0]
@@ -622,8 +634,14 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
     print("  validation (benchmark, walk-forward x every scenario, top-N, cost, "
           "correlation, permutation, bootstrap):", flush=True)
     rng = np.random.default_rng(20260903)
-    hold_cagr = validation.buy_and_hold(cfg.merged)
     uni_members = {k: v[1] for k, v in universes.items()}
+    # THE BENCHMARK IS PART OF THE SCENARIO (2026-09-07, audit A1). One
+    # whole-history, all-universe, median-stock number (11.9) was reused for
+    # every universe and start year on the page; an equal-weight PORTFOLIO of
+    # the same 999 from 2018 compounds at ~17.0. Both dimensions the page can
+    # change -- universe and start year -- now have their own benchmark, and
+    # every walk-forward window has its own too.
+    hold_by_scenario, hold_by_universe = benchmarks(cfg, uni_members)
     per_strategy: dict = {}
     monthly_by_key: dict = {}
     bootstrap_rows: list = []
@@ -631,8 +649,12 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
     for i, strat in enumerate(registry.REGISTRY, 1):
         key = f"{strat.key}|{tag(strat.variant)}"
         trades = trades_by_key.get((strat.key, strat.variant), [])
+        # Rounds passed explicitly so scripts.preflight can lower the module
+        # constant for its shape-only smoke build (200 rounds x 19 variants x
+        # 5 universes over 3 symbols ran for many minutes on 2026-09-07).
         summary = validation.validation_summary(
-            strat, trades, cfg.merged, rng, hold_cagr=hold_cagr)
+            strat, trades, cfg.merged, rng,
+            permutation_rounds=validation.PERMUTATION_ROUNDS)
         print(f"    {key:<26} {i}/{len(registry.REGISTRY)}"
               + ("" if summary else f" -- skipped, under {validation.MIN_TRADES} trades"),
               flush=True)
@@ -642,7 +664,7 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
         # account grid actually does (portfolio.run handles busy/cash
         # skipping itself), unlike the fixed rule-level checks above.
         summary["walk_forward_by_scenario"] = validation.walk_forward_grid(
-            trades, uni_members, PRIORITIES, CAPITALS)
+            trades, uni_members, PRIORITIES, CAPITALS, hold_by_universe)
         # Credibility, Beats-shuffled-prices and Survives-cost, live per
         # Universe -- see fixed_checks_by_universe's docstring for why
         # Priority/Capital cannot move any of them. "all" is the same trades
@@ -650,7 +672,8 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
         # rather than resampling/re-simulating it a second time.
         fixed_by_universe = validation.fixed_checks_by_universe(
             strat, trades, cfg.merged,
-            {k: v for k, v in uni_members.items() if k != "all"}, rng)
+            {k: v for k, v in uni_members.items() if k != "all"}, rng,
+            permutation_rounds=validation.PERMUTATION_ROUNDS)
         if summary["bootstrap"] is not None:
             fixed_by_universe["all"] = {
                 "credibility": summary["bootstrap"], "breakeven": summary["breakeven"],
@@ -665,6 +688,7 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
 
     correlation = validation.correlation_summary(monthly_by_key)
     summary = validation.multiple_testing_summary(bootstrap_rows, monthly_by_key)
+    summary["hold_cagr_by_scenario"] = hold_by_scenario
     for key, row in per_strategy.items():
         row["most_correlated"] = correlation.get(key)
         # CLEARS_HURDLE is no longer resolved here: since Credibility itself
@@ -677,7 +701,7 @@ def build_validation(cfg, trades_by_key: dict, universes: dict) -> dict:
 
     out = {"validation": per_strategy, "summary": summary,
            "trade_stats": trade_stats_out}
-    signals.save(_VALIDATION_CACHE, [out], cfg.merged)
+    signals.save(_VALIDATION_CACHE, [out], cfg.merged, account=True)
     return out
 
 
@@ -690,6 +714,14 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = config.load()
+    asset_symbols = [] if args.stocks_only else [a[0] for a in ASSETS]
+    # STAMP FIRST, CERTIFY LAST (2026-09-07, audit B2/B3). The stamp records
+    # the code and price files that PRODUCED these numbers, so it is taken
+    # before anything is computed and compared again after; if the two differ
+    # the file is written without a stamp and status() reports it stale. The
+    # assets' price files are part of it -- they were not until today, so a
+    # GOLD refetch left the page reporting current.
+    stamp_before = signals.stamp(list(cfg.merged) + asset_symbols, account=True)
 
     print("  signal lists (cached where possible):", flush=True)
     base = signal_lists(cfg.merged)
@@ -698,9 +730,10 @@ def main() -> None:
     # 2026-08-31 (kitelab.config.EXCLUDED) and every label that said "199" would
     # otherwise have quietly gone on saying it.
     # The 101/399 in-sample/holdout split was dropped on 2026-09-03 and every
-    # universe below is cut from the merged 500 (config.Config.merged, which
-    # carries the argument). cfg.in_sample / cfg.out_of_sample still exist, so
-    # scripts.universe_bias can still ask what the old split measured.
+    # universe below is cut from config.Config.merged, which carries the
+    # argument. The split's last traces (cfg.in_sample / cfg.out_of_sample and
+    # scripts.universe_bias) were deleted on 2026-09-07; what it measured is
+    # recorded in CLAUDE.md.
     # Liquidity buckets, so a rule can be judged on the stocks it would actually
     # be run on. Median daily traded value over each stock's whole history --
     # the same measure and the same cut points scripts.screen_universe uses to
@@ -737,17 +770,27 @@ def main() -> None:
                     turn[sym] = float(np.median(v))
             except SystemExit:
                 pass
+        # RECENT (added 2026-09-07, audit A5): stocks with no positive-turnover
+        # bar before the cut. Until then they were in "all" and in NO bucket
+        # -- 170 of 999, so 73 + 116 + 640 = 829 and "small caps" silently
+        # excluded every post-2017 listing, the cohort most exposed to
+        # survivorship. The four sets now partition `symbols`.
+        recent = {s for s in symbols if s not in turn}
         return ({s for s, t in turn.items() if t < 5e7},
                 {s for s, t in turn.items() if 5e7 <= t < 25e7},
-                {s for s, t in turn.items() if t >= 25e7})
+                {s for s, t in turn.items() if t >= 25e7},
+                recent)
 
     # As of START_DEFAULT, the reference year every headline is quoted at. One
     # classification rather than one per start year: the universe key is part of
     # every grid key, so per-year buckets would multiply the grid and make two
     # cells labelled "large" mean different sets of stocks.
-    small, mid, large = buckets(cfg.merged, asof=START_DEFAULT)
-    print(f"  liquidity: {len(small)} small/micro, {len(mid)} mid, "
-          f"{len(large)} large", flush=True)
+    small, mid, large, recent = buckets(cfg.merged, asof=START_DEFAULT)
+    assert len(small) + len(mid) + len(large) + len(recent) == len(cfg.merged), \
+        "liquidity buckets must partition the universe"
+    print(f"  liquidity (pre-{START_DEFAULT} turnover): {len(small)} small/micro, "
+          f"{len(mid)} mid, {len(large)} large, {len(recent)} listed after the cut",
+          flush=True)
     # The three liquidity buckets, and ALL of them. "large" was missing until
     # 2026-09-02: 46 small plus 18 mid is 64 of 101, so the 37 most liquid names
     # -- the ones easiest to actually trade -- were the only group with no view
@@ -756,7 +799,8 @@ def main() -> None:
     universes = {"all": (f"All {len(cfg.merged)} stocks", None),
                  "large": (f"{len(large)} large caps", large),
                  "mid": (f"{len(mid)} mid caps", mid),
-                 "small": (f"{len(small)} small caps", small)}
+                 "small": (f"{len(small)} small caps", small),
+                 "recent": (f"{len(recent)} listed after {START_DEFAULT - 1}", recent)}
 
     def execution(costs: bool, cap: bool):
         """Impact and the size limit live in portfolio.run, so they are globals."""
@@ -1005,6 +1049,14 @@ def main() -> None:
             fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS, START_YEARS)
             a_bar.close()
             universes.update({k: (v[0], v[1]) for k, v in asset_universes.items()})
+            # The single-name universes' benchmark is the instrument itself,
+            # from each start year -- so "vs Hold" on a BITCOIN row compares
+            # against holding Bitcoin, not the 999-stock median it used to.
+            for sym in assets:
+                for year in START_YEARS:
+                    got = validation.buy_and_hold([sym], start_year=year)
+                    validation_out["summary"]["hold_cagr_by_scenario"][f"{sym}|{year}"] = (
+                        None if got is None else round(float(got), 1))
 
     payload = {
         # IST, and labelled: the build machine may be on any clock.
@@ -1034,6 +1086,9 @@ def main() -> None:
         "fills": [m for m in FILL_MODES if m[0] in GRID_FILLS],
         "grid": grid, "waterfall": waterfall,
         "assets": assets,
+        # Stages this build skipped, so the page can say so instead of
+        # rendering an empty tab as if it were a result (audit B3).
+        "partial": ["assets"] if args.stocks_only else [],
         # Is each rule's number real, or a curve fit? Keyed "skey|tag(variant)",
         # matching the Compare row id built in web/dashboard.html. Computed once
         # per strategy over the merged universe -- see build_validation().
@@ -1052,22 +1107,33 @@ def main() -> None:
     # the line it wants, so opening a detail costs one disk read rather than the
     # browser holding every curve it might one day show. The index is small
     # enough to sit in the payload.
+    # Written to a spool and renamed AFTER the JSON (audit B5): the old order
+    # truncated the curves file first, so a failure before the JSON landed left
+    # the old index pointing into the new file and /api/curve served a byte
+    # slice of the wrong curve, which parsed and drew. Offsets and lengths are
+    # both in BYTES now (the length was in characters, harmless only while the
+    # file happened to be pure ASCII), and the file's digest travels in the
+    # payload so the server can refuse a curves file that is not this build's.
     detail_path = OUT.with_name("dashboard.curves.jsonl")
+    detail_spool = detail_path.with_suffix(".jsonl.partial")
     index: dict = {}
     offset = 0
-    with open(detail_path, "w") as fh:
+    curves_hash = hashlib.sha256()
+    with open(detail_spool, "wb") as fh:
         for key, cell in grid.items():
             if not cell:
                 continue
             blob = json.dumps({"curve": cell.pop("curve", None),
-                               "episodes": cell.pop("episodes", None)})
-            line = blob + "\n"
+                               "episodes": cell.pop("episodes", None)}).encode()
+            line = blob + b"\n"
             index[key] = [offset, len(blob)]
             fh.write(line)
-            offset += len(line.encode())
+            curves_hash.update(line)
+            offset += len(line)
     payload["curve_index"] = index
+    payload["curves_sha256"] = curves_hash.hexdigest()
     print(f"  curves -> {detail_path.name} "
-          f"({detail_path.stat().st_size/1e6:.0f} MB, {len(index):,} entries)")
+          f"({detail_spool.stat().st_size/1e6:.0f} MB, {len(index):,} entries)")
 
     leaked: list = []
     payload = to_native(payload, "payload", leaked)
@@ -1088,16 +1154,28 @@ def main() -> None:
     # the new one and never a half of either.
     spool = OUT.with_suffix(".json.partial")
     spool.write_text(json.dumps(payload))
+    os.replace(detail_spool, detail_path)
     os.replace(spool, OUT)
     print(f"\n  written: {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
 
-    # Record WHICH UNIVERSE these numbers describe, in a small file beside the big
-    # one. Without it the page can only say "built <date>", which is how a
-    # dashboard built over 192 stocks went on being served after 91 of them were
-    # excluded. dashboard_server.status() reads this and warns on the page.
-    dashboard_server.write_stamp(cfg.merged, payload["built"])
-    print(f"  stamped: {dashboard_server.STAMP_PATH.name} "
-          f"({len(cfg.merged)} symbols)")
+    # Record WHAT these numbers describe, in a small file beside the big one.
+    # Without it the page can only say "built <date>", which is how a
+    # dashboard built over 192 stocks went on being served after 91 of them
+    # were excluded. dashboard_server.status() reads this and warns on the page.
+    # The stamp is the one taken BEFORE the build; if the code or the price
+    # files moved meanwhile the file is left uncertified (inputs=None) and
+    # status() says so, rather than certifying stale numbers as current.
+    stamp_after = signals.stamp(list(cfg.merged) + asset_symbols, account=True)
+    moved = stamp_after != stamp_before
+    dashboard_server.write_stamp(cfg.merged, payload["built"],
+                                 inputs=None if moved else stamp_before,
+                                 partial=payload["partial"], assets=asset_symbols)
+    if moved:
+        print("  NOT CERTIFIED: the code or the price files changed while this "
+              "was building. The page will report it stale; rebuild.")
+    else:
+        print(f"  stamped: {dashboard_server.STAMP_PATH.name} "
+              f"({len(cfg.merged)} symbols + {len(asset_symbols)} assets)")
 
 
 if __name__ == "__main__":

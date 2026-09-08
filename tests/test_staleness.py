@@ -35,10 +35,16 @@ def snapshot(symbols_built=None, inputs="match", data_exists=True, stamp_exists=
     if stamp_exists:
         built_over = now if symbols_built is None else symbols_built
         body = {"symbols": built_over, "built": "2026-09-03 10:00 IST"}
+        # account=True since 2026-09-07: the dashboard is stamped against the
+        # account and validation modules too, and status() refuses a stamp
+        # taken over the narrower signal-cache set (reason "narrow-stamp").
         if inputs == "match":
-            body["inputs"] = signals.stamp(sorted(built_over))
+            body["inputs"] = signals.stamp(sorted(built_over), account=True)
         elif inputs == "moved":
-            body["inputs"] = dict(signals.stamp(sorted(built_over)), code="deadbeef")
+            body["inputs"] = dict(signals.stamp(sorted(built_over), account=True),
+                                  code="deadbeef")
+        elif inputs == "narrow":
+            body["inputs"] = signals.stamp(sorted(built_over))
         # inputs == "absent" leaves the key out entirely
         dashboard_server.STAMP_PATH.write_text(json.dumps(body))
     try:
@@ -68,6 +74,15 @@ class Status(unittest.TestCase):
         self.assertTrue(got["stale"])
         self.assertEqual(got.get("reason"), "inputs")
         self.assertIn("STRATEGY CODE", got["message"])
+
+    def test_a_stamp_over_the_signal_modules_only_is_stale(self):
+        """A pre-2026-09-07 dashboard: same universe, same files, but its
+        stamp never looked at portfolio.py or validation.py, so it cannot be
+        checked against them."""
+        with snapshot(inputs="narrow"):
+            got = dashboard_server.status()
+        self.assertTrue(got["stale"])
+        self.assertEqual(got.get("reason"), "narrow-stamp")
 
     def test_a_stamp_without_input_tracking_is_stale_not_assumed_good(self):
         """An unrecorded input is an unknown one, and an unknown must not be

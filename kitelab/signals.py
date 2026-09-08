@@ -66,7 +66,31 @@ _WARNED: set[str] = set()
 # with a different file in the hole. The cost is that any edit to registry.py --
 # a label typo included -- invalidates every cache, which is the safe direction.
 _SUPPORT = ["frames.py", "sizing.py", "indicators.py", "slippage.py",
-            "levels.py", "strategies.py", "trailing.py", "registry.py"]
+            "levels.py", "strategies.py", "trailing.py", "registry.py",
+            "config.py", "screener.py"]
+
+# ACCOUNT modules -- everything that turns a cached trade list into a number on
+# the page, and that NO signal cache depends on. ADDED 2026-09-07. The audit
+# that day touched portfolio.py, curves.py, validation.py, contracts.py,
+# config.py and scripts/dashboard_data.py one at a time on an isolated copy and
+# the dashboard digest stayed at 7d6c0c509c7698fc for every one of them; only
+# backtest.py moved it. So an edit to the account engine (every CAGR, MAR and
+# drawdown cell), the curve metrics (Sharpe, Sortino, exposure), the five
+# validation gates, the futures lot table, or the grid axes themselves
+# (RISKS, CAPITALS, START_YEARS, the bucket cuts) left `refresh` reporting
+# "already current" over superseded numbers -- the 2026-09-02 holygrail.py
+# failure again, one layer up.
+#
+# Two stamps, not one, because the two artefacts depend on different things. A
+# signal cache is valid across a portfolio.py edit (it holds trades, not
+# returns), and refusing it would force the slow half of every rebuild for
+# nothing. dashboard.json is not, so it is stamped with `account=True` and
+# refuses itself when any of these move. config.py is in _SUPPORT rather than
+# here because EXCLUDED, DEMERGERS and HISTORY_STARTS change which trades exist;
+# screener.py likewise, because timeframes reaches it (tests/test_stamps.py
+# walks the build's import graph and fails on any module left out).
+_ACCOUNT = ["portfolio.py", "curves.py", "validation.py", "contracts.py",
+            "../scripts/dashboard_data.py"]
 
 
 def _code_files() -> list[str]:
@@ -88,9 +112,20 @@ def _digest(parts) -> str:
     return h.hexdigest()[:16]
 
 
-def stamp(symbols) -> dict:
-    """What this cache depends on: the universe, the price files, the strategy code."""
-    symbols = sorted(symbols)
+def stamp(symbols, account: bool = False) -> dict:
+    """What this artefact depends on: the universe, the price files, the code.
+
+    `account=False` (signal caches): producer modules + _SUPPORT.
+    `account=True` (dashboard.json): those plus _ACCOUNT, so the dashboard
+    refuses itself when the account engine, the curve metrics, the validation
+    gates or the grid axes move. See _ACCOUNT for the 2026-09-07 measurement.
+
+    `symbols` should include every instrument whose price file the artefact
+    read -- for the dashboard that means the assets (BITCOIN, GOLD) as well as
+    the stock universe, which write_stamp omitted until 2026-09-07: a GOLD
+    refetch left the page reporting current.
+    """
+    symbols = sorted(set(symbols))
     data = []
     for s in symbols:
         for suffix in ("day", "15minute", "30minute"):
@@ -99,10 +134,20 @@ def stamp(symbols) -> dict:
                 st = p.stat()
                 data.append((p.name, st.st_size, st.st_mtime_ns))
     here = Path(__file__).resolve().parent
-    code = [(n, here.joinpath(n).stat().st_mtime_ns)
-            for n in _code_files() if here.joinpath(n).exists()]
-    return {"universe": _digest(symbols), "n_symbols": len(symbols),
-            "data": _digest(data), "n_files": len(data), "code": _digest(code)}
+    files = _code_files() + (_ACCOUNT if account else [])
+    code = [(n, here.joinpath(n).resolve().stat().st_mtime_ns)
+            for n in files if here.joinpath(n).exists()]
+    out = {"universe": _digest(symbols), "n_symbols": len(symbols),
+           "data": _digest(data), "n_files": len(data), "code": _digest(code)}
+    if account:
+        out["account"] = True
+    return out
+
+
+def stamped_files(account: bool = False) -> list[str]:
+    """The module paths a stamp covers, relative to kitelab/. For tests that
+    assert every module on the numbers path is covered (tests/test_stamps.py)."""
+    return sorted(set(_code_files()) | (set(_ACCOUNT) if account else set()))
 
 
 def _explain(want: dict, got: dict) -> str:
@@ -117,13 +162,19 @@ def _explain(want: dict, got: dict) -> str:
     return "its stamp does not match"
 
 
-def save(name: str, trades: list[dict], symbols) -> None:
+def save(name: str, trades: list[dict], symbols, account: bool = False) -> None:
+    """`account=True` stamps against the wider _ACCOUNT set too -- for a
+    cache whose contents depend on the account/validation modules (the
+    dashboard's validation record), not just on which trades exist. Added
+    2026-09-07: that record was stamped narrowly, so a validation.py edit
+    left it served as current."""
     CACHE.mkdir(parents=True, exist_ok=True)
     (CACHE / f"{name}.pkl").write_bytes(
-        pickle.dumps({"stamp": stamp(symbols), "trades": trades}))
+        pickle.dumps({"stamp": stamp(symbols, account=account), "trades": trades}))
 
 
-def load(name: str, symbols, allow_legacy: bool = True) -> list[dict] | None:
+def load(name: str, symbols, allow_legacy: bool = True,
+         account: bool = False) -> list[dict] | None:
     """Cached trades, or None if there is no usable cache.
 
     None means "rebuild me". A legacy cache (written before stamping) is returned
@@ -144,7 +195,7 @@ def load(name: str, symbols, allow_legacy: bool = True) -> list[dict] | None:
             _WARNED.add(name)
         return blob
 
-    want, got = stamp(symbols), blob.get("stamp", {})
+    want, got = stamp(symbols, account=account), blob.get("stamp", {})
     if got != want:
         if name not in _WARNED:
             print(f"[kitelab] {name}: STALE cache -- {_explain(want, got)}. Rebuilding.")

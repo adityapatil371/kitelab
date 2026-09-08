@@ -48,6 +48,8 @@ import shutil
 import sys
 import tempfile
 
+import pandas as pd
+
 from kitelab import config, dashboard_server, signals
 
 
@@ -74,6 +76,51 @@ def _page_keys() -> set[str]:
     return keys
 
 
+def _one_per_bucket(symbols, n: int, asof: int) -> list[str]:
+    """The most liquid stock from each liquidity bucket, then the rest by
+    turnover. Two of the three symbols the old `merged[:3]` picked (HAL, IRFC)
+    had no pre-2018 bars, so every bucket subset in the smoke build was empty
+    (audit E4). Same cut points and the same point-in-time rule as
+    scripts.dashboard_data's buckets()."""
+    import numpy as np
+    from kitelab import frames
+    cut = pd.Timestamp(f"{asof}-01-01")
+    turn: dict[str, float] = {}
+    for sym in symbols:
+        try:
+            d = frames.daily(sym)
+        except SystemExit:
+            continue
+        v = (d.loc[d["ts"] < cut, "close"] * d.loc[d["ts"] < cut, "volume"]).to_numpy(float)
+        v = v[v > 0]
+        turn[sym] = float(np.median(v)) if len(v) else -1.0
+    buckets = {"large": [s for s, t in turn.items() if t >= 25e7],
+               "mid": [s for s, t in turn.items() if 5e7 <= t < 25e7],
+               "small": [s for s, t in turn.items() if 0 <= t < 5e7],
+               "recent": [s for s, t in turn.items() if t < 0]}
+    chosen: list[str] = []
+    for names in buckets.values():
+        if names and len(chosen) < n:
+            chosen.append(max(names, key=lambda s: turn[s]))
+    for s in sorted(turn, key=lambda s: -turn[s]):
+        if len(chosen) >= n:
+            break
+        if s not in chosen:
+            chosen.append(s)
+    return chosen
+
+
+def _small_config(real, chosen):
+    """A copy of the loaded config whose universe is `chosen`, whatever list
+    fields the Config dataclass currently has."""
+    fields = {f.name for f in dataclasses.fields(real)}
+    over = {"symbols": chosen}
+    for name in ("extended", "holdout", "unseen"):
+        if name in fields:
+            over[name] = []
+    return dataclasses.replace(real, **over)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,13 +131,25 @@ def main() -> None:
                     help="show the build's own progress output")
     args = ap.parse_args()
 
+    from kitelab import validation
     from scripts import dashboard_data as dd
 
     real = config.load()
     if len(real.merged) < args.symbols:
         sys.exit(f"universe has only {len(real.merged)} symbols")
-    small = dataclasses.replace(real, symbols=real.merged[:args.symbols],
-                                extended=[], holdout=[], unseen=[])
+    chosen = _one_per_bucket(real.merged, args.symbols, dd.START_DEFAULT)
+    small = _small_config(real, chosen)
+    # UNDER MIN_TRADES EVERY VALIDATION FUNCTION RETURNS None/EMPTY, which is
+    # what keeps a 3-symbol build green -- and what let a broken per-universe
+    # branch pass preflight until 2026-09-07 (audit E4): on HAL/HINDZINC/IRFC
+    # five variants fell under 30 trades and every bucket subset was empty, so
+    # fixed_checks_by_universe and walk_forward_grid never ran their bodies.
+    # Lowered here, in the smoke build only, so the branches execute.
+    validation.MIN_TRADES = 5
+    # Shape, not values: ten shuffles exercise the permutation branch; the
+    # real build's PERMUTATION_ROUNDS over 3 symbols x 19 variants x 5
+    # universes took the "40-second" smoke build past ten minutes.
+    validation.PERMUTATION_ROUNDS = 10
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="kitelab-preflight-"))
     saved = (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, config.load)
@@ -127,6 +186,33 @@ def main() -> None:
     wanted, got = _page_keys(), set(payload)
     missing = sorted(wanted - got)
     dead = sorted(got - wanted)
+    # THE BRANCHES THAT USED TO BE SKIPPED (audit E4): with MIN_TRADES lowered
+    # and one symbol per bucket, every per-universe validation record and
+    # every per-scenario benchmark must exist. Shape only, never values.
+    problems: list[str] = []
+    vs = payload.get("validation_summary") or {}
+    holds = vs.get("hold_cagr_by_scenario") or {}
+    for uni in payload.get("universes", {}):
+        for year in payload.get("start_years", []):
+            if f"{uni}|{year}" not in holds:
+                problems.append(f"hold_cagr_by_scenario lacks {uni}|{year}")
+    for key in ("alpha", "hurdle", "expected_best", "expected_by_chance", "tried"):
+        if key not in vs:
+            problems.append(f"validation_summary lacks {key}")
+    equity = [u for u in payload.get("universes", {}) if u not in payload.get("single_name", [])]
+    n_fcu = sum(1 for rec in payload.get("validation", {}).values()
+                for u in equity if u in (rec.get("fixed_checks_by_universe") or {}))
+    if payload.get("validation") and n_fcu == 0:
+        problems.append("fixed_checks_by_universe is empty for every variant and universe")
+    n_wf = sum(1 for rec in payload.get("validation", {}).values()
+               for wf in (rec.get("walk_forward_by_scenario") or {}).values()
+               if wf.get("windows"))
+    if payload.get("validation") and n_wf == 0:
+        problems.append("walk_forward_by_scenario has no windows anywhere")
+    if problems:
+        for msg in problems:
+            print(f"  FAIL       {msg}")
+        missing = missing + ["(validation shape)"]
 
     print(f"  payload:   {len(payload)} keys, {len(payload.get('grid', {})):,} grid cells")
     if dead:

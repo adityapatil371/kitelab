@@ -136,7 +136,17 @@ def main() -> None:
     else:
         print("\n  cleaned data is current with the raw downloads")
 
-    # ---- 2. is the dashboard behind the cleaned data? ---------------------
+    # ---- 2. clean FIRST, then ask whether the dashboard is behind -----------
+    # Until 2026-09-07 the staleness verdict was taken here, BEFORE cleaning:
+    # the stamp still matched the old clean files, cleaning then rewrote them
+    # (moving their mtimes), and the rebuild below was gated on the stale
+    # verdict. A refresh after a backfill printed "Refresh complete", exit 0,
+    # with a warning line, and never rebuilt in one run (audit B4). Cleaning
+    # is idempotent (clean_data.write_if_changed compares frames), so running
+    # it before the verdict costs nothing when there is nothing to clean.
+    if not args.check and (dirty or args.force):
+        run("scripts.clean_data", f"{dirty} file(s) need cleaning" if dirty
+            else "--force")
     verdict = dashboard_server.status()
     if verdict.get("stale"):
         print(f"\n  DASHBOARD REBUILD NEEDED\n      {verdict.get('message', '')}")
@@ -153,9 +163,6 @@ def main() -> None:
         return
 
     started = time.time()
-    if dirty or args.force:
-        run("scripts.clean_data", f"{dirty} file(s) need cleaning" if dirty
-            else "--force")
     if verdict.get("stale") or args.force:
         # THE GATE. scripts.preflight runs this same build over three symbols in
         # about forty seconds, so a fault that appears only when main() actually
@@ -183,8 +190,10 @@ def main() -> None:
     print(f"\n  Refresh complete in {(time.time() - started) / 60:.1f} min.")
     after = dashboard_server.status()
     if after.get("stale"):
-        print(f"  WARNING: the dashboard still reports itself stale -- "
-              f"{after.get('message', '')}\n")
+        # Should be unreachable now that cleaning precedes the verdict; kept as
+        # the contract check it always claimed to be, and made a failure.
+        raise SystemExit(f"  FAILED: the dashboard still reports itself stale -- "
+                         f"{after.get('message', '')}\n")
     else:
         print(f"  Dashboard is current: {after.get('n_now')} stocks, "
               f"built {after.get('built')}.\n")

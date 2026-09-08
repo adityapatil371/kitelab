@@ -142,6 +142,7 @@ svg{display:block;width:100%;overflow:visible}
 
 <main>
   <div class="banner" id="stale"></div>
+  <div class="banner" id="partial"></div>
 
   <div class="view" id="v-compare">
     <div class="card">
@@ -159,7 +160,8 @@ svg{display:block;width:100%;overflow:visible}
         every strategy that passes all of them, whatever its other numbers say; see the banner above
         and click any column to sort by it instead. <b>Captured</b> is the share of the rule's own
         signals the account could afford; when it is low you are reading a cash constraint as much as
-        a rule. Ulcer, Sharpe and Sortino move to the Detail view, where there is room to explain what
+        a rule. A row reading <b>no trades</b> is a cell the build computed and the account could
+        not act on. Ulcer, Sharpe and Sortino move to the Detail view, where there is room to explain what
         each adds over MAR. Click a row for its detail.</p>
     </div>
   </div>
@@ -448,29 +450,73 @@ function fixedChecksFor(val) {
    universe) and track Universe ONLY, because none of the three ever calls
    portfolio.run() -- Priority and Capital cannot move any of them, unlike
    the account-level three. See fixedChecksFor() and fixedChecksLive(). */
+/* THE BENCHMARK FOR "vs Hold" (2026-09-07): equal-weight buy & hold of the
+   universe on screen from the first close on/after 1 Jan of the start year
+   on screen to the end of data (a member listed later joins at its first
+   close), gross of costs. Keyed "<universe>|<start year>" -- the two axes
+   that move it. Until 2026-09-07 every row read one per-strategy `hold_cagr`
+   computed at a single start year over the strategy's own span, so a 2024
+   row was compared against a 2018 hold and the gate could flip on the
+   benchmark's span rather than the rule's. Single-name universes carry their
+   own key ("BITCOIN|2018") rather than falling back to the stock universe. */
+function holdFor(uni, year) {
+  const vs = DATA.validation_summary;
+  const table = vs && vs.hold_cagr_by_scenario;
+  if (!table) return null;
+  const v = table[`${uni}|${year}`];
+  return v == null ? null : v;
+}
+
+/* Every field a row carries, for a cell the account never traded. */
+function emptyRow(id, skey, v, label, val, holdCagr) {
+  return { id, skey, v, family: label, setting: settingLabel(skey, v),
+           r: null, val, noTrades: true,
+           cagr: null, maxdd: null, mar: null, ulcer: null, final: null,
+           taken: null, sharpe: null, sortino: null, exposure: null,
+           capture: null, full: null, wiped: false, vsHold: null, holdCagr,
+           walkFrac: null, walkText: null, tStat: null, tTaken: null,
+           fixedGates: null, beatsHold: null, walkForwardMajority: null,
+           clearsHurdle: null, validated: null, gatesPassed: null,
+           gatesTotal: null, rankKey: null };
+}
+
 function rows() {
   const out = [];
   const prio = S.prio || DATA.priority_default;
   const capital = DATA.capitals[S.cap];
   const hurdle = DATA.validation_summary ? DATA.validation_summary.hurdle : null;
+  const holdCagr = holdFor(S.uni, S.year);
   for (const [skey, label] of Object.entries(DATA.strategies))
     for (const v of variantsOf(skey)) {
       const r = DATA.grid[keyFor(skey, v)];
-      if (!r) continue;
       const id = skey + "|" + v;
       const val = valFor(id);
+      /* A NULL CELL IS A ROW, NOT A GAP (2026-09-07). The build writes null
+         where the account took no trade at all -- one lot of MCX gold costs
+         more margin than a Rs2L account holds, or a quarterly stack found
+         nothing in a two-year span. Omitting the row made "the account
+         could afford nothing" look like "this variant was never gridded",
+         which is a different fault with a different fix. It renders as
+         dashes with a "no trades" note and sorts to the bottom under every
+         column, because it has no value on any of them. */
+      if (!r) { out.push(emptyRow(id, skey, v, label, val, holdCagr)); continue; }
       const fc = fixedChecksFor(val);
       const boot = fc.credibility;
       const fixedGates = fc.fixed_gates;
       const mar = r.mar;
-      const vsHold = (val && val.hold_cagr != null && !r.wiped && r.cagr != null)
-        ? r.cagr - val.hold_cagr : null;
+      const vsHold = (holdCagr != null && !r.wiped && r.cagr != null)
+        ? r.cagr - holdCagr : null;
       const liveWf = val
         ? (val.walk_forward_by_scenario || {})[scenarioKey(S.uni, prio, capital)] : null;
       const walkFrac = (liveWf && liveWf.total_windows)
-        ? liveWf.positive_windows / liveWf.total_windows : null;
+        ? liveWf.wins / liveWf.total_windows : null;
       const beatsHold = vsHold != null ? vsHold > 0 : null;
-      const walkForwardMajority = walkFrac != null ? walkFrac >= 0.5 : null;
+      /* STRICT majority (2026-09-07): 3 of 6 is a tie, not a pass. Was
+         `>= 0.5`, which passed a rule that beat its hold in exactly half of
+         the windows. Partial windows are shown in Detail but never counted,
+         so total_windows is the count of full windows with a verdict. */
+      const walkForwardMajority = (liveWf && liveWf.total_windows)
+        ? liveWf.wins * 2 > liveWf.total_windows : null;
       const clearsHurdle = (boot && boot.t_stat != null && hurdle != null)
         ? boot.t_stat > hurdle : null;
       const gateVals = [fixedGates && fixedGates.distinguishable,
@@ -478,15 +524,19 @@ function rows() {
                         beatsHold, walkForwardMajority, clearsHurdle];
       const validated = gateVals.every(g => g != null) ? gateVals.every(g => g === true) : null;
       out.push({ id, skey, v, family: label,
-                 setting: settingLabel(skey, v), r, val,
+                 setting: settingLabel(skey, v), r, val, noTrades: false,
                  cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar,
                  ulcer: r.ulcer, final: r.final, taken: r.taken,
                  sharpe: r.sharpe, sortino: r.sortino, exposure: r.exposure,
                  capture: r.signals ? 100 * r.taken / r.signals : null,
                  full: r.full_pct, wiped: r.wiped,
-                 vsHold, walkFrac,
-                 walkText: liveWf ? `${liveWf.positive_windows}/${liveWf.total_windows}` : null,
+                 vsHold, holdCagr, walkFrac,
+                 walkText: liveWf ? `${liveWf.wins}/${liveWf.total_windows}` : null,
                  tStat: boot ? boot.t_stat : null,
+                 /* The credibility t on the trades THIS account took, from the
+                    grid cell -- as opposed to tStat, which is on every trade
+                    the rule signalled before cash decided. */
+                 tTaken: r.t_taken == null ? null : r.t_taken,
                  fixedGates, beatsHold, walkForwardMajority, clearsHurdle, validated,
                  gatesPassed: gateVals.filter(g => g === true).length,
                  gatesTotal: gateVals.length,
@@ -520,20 +570,25 @@ const EXPORT_COLS = [
   ["Setting",   r => r.setting],
   ["Validated", r => r.validated == null ? null : (r.validated ? "yes" : "no")],
   ["Gates passed", r => r.gatesPassed == null ? null : `${r.gatesPassed}/${r.gatesTotal}`],
-  ["CAGR %",    r => r.wiped ? "wiped" : r.cagr],
+  ["CAGR %",    r => r.noTrades ? "no trades" : r.wiped ? "wiped" : r.cagr],
   ["vs Hold pp", r => r.vsHold],
+  // The benchmark itself, so the difference can be checked in the sheet.
+  ["Hold CAGR %", r => r.holdCagr],
   ["Drawdown %", r => r.maxdd],
   ["MAR",       r => r.mar],
-  ["Walk-fwd positive", r => r.walkText],
+  ["Walk-fwd wins", r => r.walkText],
   ["Credibility (t-stat)", r => r.tStat],
+  ["Credibility on trades taken (t)", r => r.tTaken],
   ["Trades",    r => r.taken],
   ["Captured %", r => r.capture == null ? null : Math.round(r.capture)],
   // Kept in the export, not the visible table -- see the FORMULA notes for
   // why these five were demoted 2026-09-04 (Final/Invested are redundant
   // with CAGR and Captured; Ulcer/Sharpe/Sortino belong to Detail, where
-  // there is room to explain what they add over MAR).
+  // there is room to explain what they add over MAR). "Invested" is
+  // `exposure` -- share of days with money at work -- here and everywhere.
   ["Final",     r => r.final],
   ["Invested %", r => r.exposure],
+  ["Fully deployed %", r => r.full],
   ["Ulcer",     r => r.ulcer],
   ["Sharpe",    r => r.sharpe],
   ["Sortino",   r => r.sortino],
@@ -582,29 +637,45 @@ function exportCsv() {
 const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
   setting: "What distinguishes this row from the others in its family -- channel pair, timeframe pair, or stop reading. An em dash means the family has only one row on the board, so there is nothing to distinguish: the EMA stack families trade the bare 20-EMA cross and have no setting of their own.",
-  validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, wins a majority of walk-forward windows, survives a cost margin, and clears the correlation-adjusted luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. TAILORED TO THIS SCENARIO since 2026-09-05 -- beats-buy-&-hold and walk-forward recompute for your current Universe/Priority/Capital; distinguishable-from-shuffled-prices, survives-a-cost-margin and the luck hurdle recompute for your current Universe (Priority/Capital cannot move them -- see the Credibility column's own formula for why). Validated here means validated FOR WHAT'S ON SCREEN, not one fixed baseline, on every one of its five checks. Default sort: validated rows first, MAR breaking ties within each group.",
+  validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, wins a strict majority of walk-forward windows, survives a cost margin, and clears the family-wise luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. Beats-buy-&-hold recomputes for your current Universe and start year, walk-forward for your current Universe/Priority/Capital. The other three -- distinguishable-from-shuffled-prices, survives-a-cost-margin, the luck hurdle -- recompute for your current Universe only, and always at ₹2L / 1% risk / most-liquid-first whatever Capital, Risk and Priority are on screen: they run on the rule's trade list before any account simulation, so the account settings cannot move them. Default sort: validated rows first, MAR breaking ties within each group.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
-  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the same stocks over the same span. The only comparison that matters -- a rule can rank first on this whole board and still lose to doing nothing. One of the five gates behind Validated. Tracks the full scenario (Universe/Priority/Capital), same as Walk-fwd -- unlike Credibility, which tracks Universe only (Priority/Capital cannot move it, see its own column formula).",
+  vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the stocks in this universe from the selected start year to the end of data, gross of costs; the rule is net of costs. A stock listed after the start year joins the hold at its first close. The only comparison that matters -- a rule can rank first on this whole board and still lose to doing nothing. One of the five gates behind Validated (needs > 0). The benchmark moves with Universe and start year; the rule's CAGR moves with everything.",
   maxdd:   "Drawdown = the lowest value of (equity / running peak - 1), in percent -- the deepest fall from any peak the account reached, not necessarily the final one. Sometimes called \"max drawdown\".",
   mar:     "MAR = CAGR / |drawdown|. Return per unit of worst pain, and what breaks ties among Validated rows.",
-  walkFrac:"Positive DISJOINT 3-year windows / total windows, for THIS row's current Universe/Priority/Capital (not Risk or Year -- risk mainly scales a window's size, not its sign, and walk-forward already covers every year through its own windows). One of the five gates behind Validated (needs a majority). The dashboard's own start-year axis is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it. Live since 2026-09-05: this recomputes as you change Universe/Priority/Capital, unlike Credibility.",
-  tStat:   "A one-sample t-statistic (mean net R multiple ÷ its standard error) on this rule's own trades, block-resampled 5,000 times. Scale-invariant, unlike a compounded-CAGR version tried first: that one correlated 0.82 with log(trade count) across this board, rewarding \"fires a lot of signals\" nearly as much as \"has a real edge\" -- more trades correctly narrows a t-stat's standard error instead of inflating its point estimate. LIVE per Universe since 2026-09-05 (it runs on the trade list before any account simulation, so unlike Validated's other live checks, Priority/Risk/Capital cannot move it -- only which stocks are in scope can). On a single-instrument view this falls back to the All-stocks figure, shown dimmed. Clears the luck hurdle (shown in the banner above the table, itself corrected for how correlated the variants are) to help decide Validated.",
+  walkFrac:"Windows won / windows counted. Fixed 3-year CALENDAR windows shared by every rule (2006-2009, 2009-2012, ... ), each judged against that window's own equal-weight hold of the same universe; a window is won when the rule's CAGR beats the hold's. One of the five gates behind Validated: it needs a STRICT majority (wins × 2 > windows counted), so 3 of 6 fails. A trailing window spanning under two years of data is partial -- shown in Detail, not counted -- and a window with under 20 trades has no verdict and is not counted either. For THIS row's current Universe/Priority/Capital (not Risk or Year -- risk mainly scales a window's size, not its sign, and the windows already cover every year). The start-year axis above is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it.",
+  tStat:   "Mean net R per trade, minus what random entries on the same stocks would earn (same holding length, same stop rule, same spread -- the drift term), divided by a standard error that treats all trades entered in one calendar quarter as one bet. In t units: above about 2 is hard to get by chance on one rule; the banner above the table says how high it must be once every rule on the board has had its go. Two things the plain version got wrong, both fixed 2026-09-07: it counted 150,000 overlapping trades as 150,000 independent draws, and it credited the rule with the market's own upward drift. Scale-invariant, unlike a compounded-CAGR version: more trades narrow the standard error instead of inflating the point estimate. LIVE per Universe (it runs on the rule's trade list before any account simulation, at ₹2L / 1% / most-liquid-first whatever is on screen, so Priority/Risk/Capital cannot move it -- only which stocks are in scope can). On a single-instrument view this falls back to the All-stocks figure, shown dimmed. Detail shows the same number on the trades THIS account took (t_taken), alongside the unclustered and undrifted versions.",
   ulcer:   "Ulcer Index = sqrt(mean(drawdown^2)) across every day. Unlike drawdown it counts how LONG you were underwater, not just how deep it got. Detail view only -- see that page for the reasoning.",
   sharpe:  "Sharpe = mean(daily return) / stdev(daily return) x sqrt(252). Population stdev; these are the realised returns, not a sample. Empty when volatility is zero. Detail view only.",
   sortino: "Sortino = mean(daily return) / downside deviation x sqrt(252), where downside deviation = sqrt(sum(min(r,0)^2) / N) over ALL N days. Upside volatility is not risk. Detail view only.",
-  exposure:"Invested = share of days where cash < equity, i.e. money was at work. 99% means permanently fully committed. Detail view only, alongside Captured, which answers the more direct version of the same question.",
+  exposure:"Invested = share of days with at least one open position, i.e. money was at work (the payload's `exposure`). 99% means nearly always in the market. Detail and export only, alongside Fully deployed (share of days with under 5% of equity in cash -- the account could not have taken one more signal) and Captured, which answers the more direct version of the same question.",
   final:   "Closing account value. Export and Detail only -- redundant with CAGR once you know the years and starting capital, which are already in the scenario line above the table.",
   taken:   "Trades the account could actually fund. Compare with signals offered: the gap is cash starvation.",
-  capture: "Captured = trades taken / signals offered. The rest were refused for want of cash, an open position in the same stock, or a position too small to place.",
+  capture: "Captured = trades taken / signals offered. The rest were refused for want of cash, because the position the cash or the risk budget allowed fell under the ₹5.5k floor, or because one order would have exceeded the size cap (1% of the stock's daily turnover). Detail breaks the refusals down by reason.",
+};
+
+/* Numbers that appear in Detail and the export but have no column of their own.
+   Printed under the table with the column formulas, so a reader can find the
+   definition of anything on the page in one place. */
+const GLOSSARY = {
+  "drift_r":   "What random entries earn: the mean net R that entries at random dates on the same stocks would have made, with the same holding length, the same stop rule (the entry day's low) and the same spread. A rising market pays a random buyer; Credibility subtracts this so the rule is credited only with what it adds over that.",
+  "t_iid":     "The old Credibility statistic: mean net R ÷ (stdev ÷ √n), every trade counted as an independent draw. Shown for comparison only -- it overstates the evidence when hundreds of trades open in the same quarter on the same move.",
+  "t_cluster": "Mean net R ÷ a cluster-robust standard error, where a cluster is every trade entered in one calendar quarter. Still credits the rule with market drift; t_stat is this minus drift_r in the numerator.",
+  "t_stat":    "(mean_r − drift_r) ÷ cluster-robust standard error. THE gate statistic behind the luck hurdle.",
+  "t_taken":   "t_stat's clustered construction on the trades THIS account actually took at the scenario on screen (no drift term -- the pool is the account's own fills). Below 30 trades it is empty. When it is far below the row's Credibility, the account's cash constraint, not the rule, chose the trades.",
+  "n_clusters":"Distinct calendar quarters with at least one entry -- the effective number of independent bets the clustered standard error is built on.",
+  "hurdle":    "The t a single rule must clear for the whole board to keep a 5% family-wise false-positive rate: the normal quantile at 1 − alpha ÷ n_eff, where n_eff is the number of effectively independent rules on the board (correlated variants count as fractions of one).",
+  "expected_best": "What the BEST of n_eff independent rules with no edge at all would score, on average. Reported for scale; it is not the gate.",
+  "Fully deployed": "Share of days with under 5% of equity in cash -- days on which one more signal could not have been taken however good it looked.",
 };
 
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
-  ["setting", "Setting",  r => r.setting, "l"],
+  ["setting", "Setting",  r => !r.noTrades ? r.setting
+                                : (r.setting === "—" ? "no trades" : `${r.setting} · no trades`), "l"],
   ["validated", "Validated", r => r.validated == null ? "—"
                                 : (r.validated ? "✓" : "✗")
                                   + (r.gatesTotal != null ? ` ${r.gatesPassed}/${r.gatesTotal}` : "")],
-  ["cagr",    "CAGR",     r => cagrText(r.r)],
+  ["cagr",    "CAGR",     r => r.r ? cagrText(r.r) : "—"],
   /* "Is it real", not just "how big" -- computed once per strategy, fixed
      scenario, see valFor()/FORMULA above. Missing (an em dash) below the
      30-trade floor kitelab.validation applies, same as an insufficient
@@ -627,9 +698,14 @@ function sortedRows() {
      would sort above, which is exactly backwards. */
   const val = r => { const v = r[S.sort];
     return v == null ? (S.desc ? -Infinity : Infinity) : v; };
-  list.sort((a, b) => typeof a[S.sort] === "string"
-    ? a[S.sort].localeCompare(b[S.sort]) * (S.desc ? -1 : 1)
-    : (val(b) - val(a)) * (S.desc ? 1 : -1));
+  list.sort((a, b) => {
+    /* A cell with no trades has nothing to sort on under ANY column, so it
+       sits at the bottom whichever way the table is ordered. */
+    if (!!a.noTrades !== !!b.noTrades) return a.noTrades ? 1 : -1;
+    return typeof a[S.sort] === "string"
+      ? a[S.sort].localeCompare(b[S.sort]) * (S.desc ? -1 : 1)
+      : (val(b) - val(a)) * (S.desc ? 1 : -1);
+  });
   return list;
 }
 
@@ -668,11 +744,14 @@ function renderCompare() {
     if (S.sel === r.id) tr.className = "sel";
     tr.addEventListener("click", () => { S.sel = r.id; S.view = "detail"; render(); });
     const c0 = tr.insertCell(); c0.className = "rank l"; c0.textContent = i + 1;
+    if (r.noTrades) tr.title = "The account took no trade on this rule at this scenario -- "
+      + "nothing affordable, or nothing signalled in the span. Every column is empty for want "
+      + "of a value, not for want of a computation.";
     for (const [key, , fmt, cls] of COLS) {
       const td = tr.insertCell();
       td.textContent = fmt(r);
       td.className = cls || "num";
-      if (key === "cagr") td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
+      if (key === "cagr" && r.r) td.classList.add(r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up");
       if (key === "vsHold" && r.vsHold != null) td.classList.add(r.vsHold >= 0 ? "up" : "down");
       /* Validated and Walk-fwd are LIVE since 2026-09-05 -- both always
          describe the CURRENT Universe/Priority/Capital (Walk-fwd also
@@ -775,17 +854,17 @@ function renderCompare() {
   if (!mt) { mtNote.hidden = true; }
   else {
     mtNote.hidden = false;
+    const confidence = Math.round(100 * (1 - (mt.alpha ?? 0.05)));
     mtNote.innerHTML =
-      `<b>${mt.cleared} of ${mt.tried}</b> strategy variants clear a 95% bar on their ` +
-      `own trades (t-statistic above the luck hurdle), against about ` +
-      `<b>${mt.expected_by_chance}</b> an edgeless menu of ${mt.tried} would clear at the ` +
-      `raw count. Average pairwise correlation <b>${mt.avg_correlation}</b> makes the 24 ` +
-      `worth about <b>${mt.n_eff}</b> independent trials. The best, <b>${mt.best_key}</b>, ` +
-      `scored t=${mt.best_t}; the luckiest of ${mt.n_eff} effective coin-flip rules would ` +
-      `be expected to score about t=${mt.hurdle} ${mt.clears_hurdle
-        ? "&mdash; it clears that hurdle, which is a reason to keep testing it, not a " +
+      `<b>${mt.cleared} of ${mt.tried}</b> rules clear a family-wise ${confidence}% bar ` +
+      `(t &gt; <b>${mt.hurdle}</b>; about <b>${mt.expected_by_chance}</b> would by chance). ` +
+      `Average pairwise correlation <b>${mt.avg_correlation}</b> makes the ${mt.tried} ` +
+      `worth about <b>${mt.n_eff}</b> independent rules, and the best of ${mt.n_eff} ` +
+      `independent edgeless rules would score about t=<b>${mt.expected_best}</b>. ` +
+      `The best here, <b>${mt.best_key}</b>, scored t=${mt.best_t} ${mt.clears_hurdle
+        ? "&mdash; it clears the hurdle, which is a reason to keep testing it, not a " +
           "reason to trade it"
-        : "&mdash; it does not clear that hurdle, so nothing on this board is yet " +
+        : "&mdash; it does not clear the hurdle, so nothing on this board is yet " +
           "distinguishable from the best of a menu of coin flips"}. See Validated on ` +
       `each row for the full picture -- clearing this hurdle is one of five checks, not ` +
       `the whole verdict.`;
@@ -803,6 +882,11 @@ function renderCompare() {
        strategy; on these settings it decides about half the trades.</div>`
     + Object.entries(PRIO_FORMULA)
         .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${PRIO_LABEL[k]}</b> &mdash; ${t}</div>`)
+        .join("")
+    + `<div style="margin-top:12px"><b>Elsewhere on the page</b> &mdash; numbers shown in
+       Detail and the export that have no column here.</div>`
+    + Object.entries(GLOSSARY)
+        .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${k}</b> &mdash; ${t}</div>`)
         .join("");
 }
 
@@ -928,6 +1012,41 @@ function gateChecklist(row) {
     </div>`).join("") + `</div>`;
 }
 
+/* THE CREDIBILITY STATISTIC, TAKEN APART (2026-09-07). One number on Compare;
+   here the pieces, so a reader can see which correction did the work. Each
+   caption is one line a statistician new to finance should accept without a
+   glossary: R is profit per trade divided by the rupees risked at entry. */
+function credibilityCard(row, boot, credLive) {
+  const hurdle = DATA.validation_summary ? DATA.validation_summary.hurdle : null;
+  const t = (v, n = 2) => v == null ? "—" : v.toFixed(n);
+  const tone = v => v == null || hurdle == null ? "" : v > hurdle ? "up" : "down";
+  const stat = (k, v, d, cls = "") => `<div class="stat"><div class="k">${k}</div>
+    <div class="v ${cls}" style="font-size:19px">${v}</div><div class="d">${d}</div></div>`;
+  return `<h3 style="margin-top:var(--gap)">Credibility
+      <span class="pill">${credLive ? `live for ${DATA.universes[S.uni]}` : "All stocks -- no test of its own here"}</span></h3>
+    <p class="sub">mean R per trade, minus what random entries on the same stocks would earn, over a
+      standard error that treats every trade entered in one quarter as one bet &mdash; against a
+      luck hurdle of t = ${hurdle ?? "—"} (the banner atop Compare says how that is set)</p>
+    <div class="stats">
+      ${stat("n", boot.n.toLocaleString("en-IN"), "trades in the rule's own list, overlaps in one stock dropped")}
+      ${stat("n_clusters", boot.n_clusters == null ? "—" : boot.n_clusters.toLocaleString("en-IN"),
+             "distinct entry quarters: the number of bets the standard error counts")}
+      ${stat("mean_r", t(boot.mean_r, 3), "average net profit per trade, in multiples of the rupees risked")}
+      ${stat("drift_r", t(boot.drift_r, 3), boot.drift_r == null
+             ? "what random entries earn -- not computable here" : "what random entries on the same stocks earn, same holding and stop")}
+      ${stat("t_iid", t(boot.t_iid), "mean_r over a plain standard error: every trade an independent draw", tone(boot.t_iid))}
+      ${stat("t_cluster", t(boot.t_cluster), "mean_r over the clustered standard error: one quarter, one bet", tone(boot.t_cluster))}
+      ${stat("t_stat", t(boot.t_stat), "(mean_r − drift_r) over the clustered standard error: THE gate", tone(boot.t_stat))}
+      ${stat("t_taken", t(row.tTaken), "the same t on the trades this account took at this scenario", tone(row.tTaken))}
+    </div>
+    <p class="note">Resampling whole calendar quarters rather than single trades, the mean net R stays positive in
+      ${boot.p_neg == null ? "—" : (100 - boot.p_neg * 100).toFixed(0)}% of resamples (5th/50th/95th percentile
+      ${t(boot.p05_mean_r, 3)} / ${t(boot.p50_mean_r, 3)} / ${t(boot.p95_mean_r, 3)} R).
+      For reference only, the same resampling COMPOUNDED sequentially -- not the credibility figure, and not
+      comparable to the account-level CAGR elsewhere on this page: 5th/50th/95th percentile CAGR
+      ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)}.</p>`;
+}
+
 function validationBlock(row) {
   const val = row.val;
   if (!val) return `<div class="card"><h3>Does it hold up?</h3>
@@ -939,40 +1058,48 @@ function validationBlock(row) {
   const capital = DATA.capitals[S.cap];
   const liveWf = (val.walk_forward_by_scenario || {})[scenarioKey(S.uni, prio, capital)];
   const windows = liveWf ? liveWf.windows : [];
-  const wfSpan = Math.max(...windows.map(w => Math.abs(w[2] ?? 0)), 1);
   const beText = !be ? "—" : be.status === "negative" ? "already negative before any extra cost"
     : be.status === "robust" ? "survives 200bp+ a side" : `${be.bp.toFixed(1)} bp/side`;
-  const permText = !perm ? "not enough trades in the 60-stock sample" :
+  const permText = !perm ? "not enough trades in the shuffled pool" :
     `${perm.observed.toFixed(1)}% real vs ${perm.shuffled_median.toFixed(1)}% median of shuffled ` +
-    `prices (${perm.beat_by >= 0 ? "+" : ""}${perm.beat_by.toFixed(1)}pp) &mdash; ` +
+    `prices (${perm.beat_by >= 0 ? "+" : ""}${perm.beat_by.toFixed(1)}pp; p = ${perm.p == null ? "—" : perm.p.toFixed(3)} ` +
+    `over ${perm.rounds ?? "—"} shuffles of a ${perm.pool ?? "—"}-stock pool, at ₹2L / 1% / most-liquid-first) &mdash; ` +
     (perm.distinguishable
       ? "<b>distinguishable from noise</b>"
       : "<b>NOT distinguishable from noise</b> -- this earns as much on shuffled prices as on real ones");
+  const signed = (v, n = 1) => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(n);
+  const wfRows = windows.map(w => `<tr${w.partial ? ' style="color:var(--ink-3)"' : ""}>
+      <td class="l">${w.from}</td><td class="l">${w.to}</td>
+      <td class="num">${signed(w.cagr)}</td><td class="num">${signed(w.hold)}</td>
+      <td class="num ${w.win == null ? "" : w.win ? "up" : "down"}">${w.win == null ? "—" : w.win ? "✓" : "✗"}</td>
+      <td class="l">${w.partial ? "partial, not counted" : w.win == null ? "under 20 trades, not counted" : ""}</td></tr>`).join("");
+  const wfTable = !windows.length ? `<p class="empty">no walk-forward windows for this scenario</p>` :
+    `<div class="tablewrap"><table>
+      <thead><tr><th class="l">From</th><th class="l">To</th><th>Rule CAGR</th><th>Hold CAGR</th>
+        <th>Win</th><th class="l"></th></tr></thead><tbody>${wfRows}</tbody></table></div>`;
   const corr = val.most_correlated;
   const credLive = fixedChecksLive();
   return `<div class="card"><h3>Does it hold up?
       <span class="pill" style="color:${row.validated ? 'var(--up)' : 'var(--down)'}">
         ${row.validated == null ? "— not enough data" : row.validated ? "✓ Validated" : "✗ Not validated"}</span></h3>
-    <p class="sub">All five checks below are LIVE for ${DATA.universes[S.uni]}${credLive ? "" :
-        " (the three trade-level checks fall back to All stocks -- no bootstrap or " +
-        "shuffled-price test of their own for a single instrument)"}
-      / ${prioName()} first / ${inr(capital)} (Walk-fwd, and the three trade-level checks, not
-      Risk/Year; the three trade-level checks also not Priority/Capital -- see the Credibility
-      column's own formula for why). All five, including the three trade-level checks, run on the
-      SAME "Realistic fills" trades (costs, spread, market impact, size cap) the CAGR column does.</p>
+    <p class="sub">Beats buy &amp; hold is for ${DATA.universes[S.uni]} from ${S.year}; walk-forward for
+      ${DATA.universes[S.uni]} / ${prioName()} first / ${inr(capital)}. The three trade-level checks
+      (shuffled prices, cost margin, credibility) are for ${DATA.universes[S.uni]}${credLive ? "" :
+        " -- falling back to All stocks, since a single instrument has no shuffled-price test or " +
+        "bootstrap of its own"} and always run at ₹2L / 1% / most-liquid-first whatever is on
+      screen: they use the rule's trade list before any account simulation. All five run on the
+      same "Realistic fills" trades (costs, spread, market impact, size cap) the CAGR column does.</p>
     ${gateChecklist(row)}
     <p class="note">Validated means every one of the five checks above passed -- gated, not
       averaged: one bad check is not offset by the others scoring well, on the same reasoning
       the Compare page's banner explains.</p>
-    <div class="wf" style="margin-top:var(--gap)">` +
-    windows.map(([y0, y1, c]) => `<div class="wf-row"><span>${y0}&ndash;${y1}</span>
-      <div class="wf-bar"><div class="wf-fill" style="background:${(c ?? 0) >= 0 ? 'var(--up)' : 'var(--down)'};
-        left:${c == null ? 50 : c < 0 ? 50 - 50 * Math.abs(c) / wfSpan : 50}%;
-        width:${c == null ? 0 : 50 * Math.abs(c) / wfSpan}%"></div></div>
-      <span class="num" style="text-align:right;font-family:var(--mono)">${c == null ? "—" : (c > 0 ? "+" : "") + c.toFixed(1)}</span></div>`).join("") +
-    `</div>
-    <p class="note">Positive in <b>${row.walkText || "—"}</b> disjoint windows for this scenario --
-      these do not overlap, unlike the cumulative start-year control above.</p>
+    <h3 style="margin-top:var(--gap)">Walk-forward <span class="pill">wins/total ${row.walkText || "—"}</span></h3>
+    <p class="sub">fixed 3-year calendar windows, each against its own equal-weight hold of ${DATA.universes[S.uni]}</p>
+    ${wfTable}
+    <p class="note">Wins a strict majority of fixed 3-year calendar windows against that window's own
+      equal-weight hold: <b>${row.walkText || "—"}</b> here, and the gate needs wins × 2 &gt; total.
+      A partial trailing window (under two years of data) is shown, not counted; so is a window with
+      under 20 trades. These windows do not overlap, unlike the cumulative start-year control above.</p>
     <div class="stats" style="margin-top:var(--gap)">
       <div class="stat"><div class="k">Best trades removed</div>
         <div class="v" style="font-size:${'15px'}">${[1, 5, 10, 25].map(n =>
@@ -980,41 +1107,45 @@ function validationBlock(row) {
         <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted (fixed baseline)</div></div>
       <div class="stat"><div class="k">Breakeven cost</div>
         <div class="v">${beText}</div>
-        <div class="d">Zerodha + modelled spread run ~15&ndash;40 bp/side; gate needs &gt;40bp margin</div></div>
+        <div class="d">at ₹2L / 1% / most-liquid-first; Zerodha + modelled spread run ~15&ndash;40 bp/side and the gate needs &gt;40bp margin over that</div></div>
       <div class="stat"><div class="k">Most correlated with</div>
         <div class="v" style="font-size:15px">${corr ? corr.key : "—"}</div>
         <div class="d">${corr ? `r = ${corr.r.toFixed(2)}` : "no strong match"}</div></div>
     </div>
     <p class="note" style="margin-top:var(--gap)"><b>Shuffled-price test</b> (the sharpest of the five gates, live for ${DATA.universes[S.uni]}) &mdash; ${permText}.</p>
-    ${boot ? `<p class="note"><b>Credibility</b> (${credLive ? `live for ${DATA.universes[S.uni]}` : "All stocks -- no bootstrap of its own here"}): t=${boot.t_stat == null ? "—" : boot.t_stat.toFixed(2)}
-       (mean net R ${boot.mean_r.toFixed(3)} &divide; standard error ${boot.se_r.toFixed(3)}, over
-       ${boot.n.toLocaleString("en-IN")} trades) against a luck hurdle of t=${DATA.validation_summary
-         ? DATA.validation_summary.hurdle : "—"} -- see the banner atop Compare for what that hurdle
-       is and why it is corrected for how correlated the variants are.
-       Block-resampled 5,000 times: the mean net R stays positive in
-       ${(100 - boot.p_neg * 100).toFixed(0)}% of resamples (5th/50th/95th percentile
-       ${boot.p05_mean_r.toFixed(3)} / ${boot.p50_mean_r.toFixed(3)} / ${boot.p95_mean_r.toFixed(3)} R).
-       For reference only, the SAME resampling COMPOUNDED sequentially (not the credibility figure --
-       see the FORMULA note on the Credibility column for why compounding alone is misleading at this
-       trade count): 5th/50th/95th percentile CAGR ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)},
-       trade-level and not comparable to the account-level CAGR shown elsewhere on this page.</p>` : ""}
+    ${boot ? credibilityCard(row, boot, credLive) : ""}
     </div>`;
 }
 
+/* R FIRST, RUPEES CAPTIONED (2026-09-07). trade_stats comes from the producer's
+   paper book, which moved from Rs1L to Rs1cr so that no signal the biggest
+   account on the page could take is dropped from the cache. Every rupee
+   field in it is therefore ~100x what it was and describes no account on
+   this page. R (profit over the rupees risked at entry) is the same at any
+   size, so it leads; the rupee figures stay for scale and say whose book
+   they are, from the payload, never a literal. */
 function tradeStatsBlock(row) {
   const t = (DATA.trade_stats || {})[row.id];
   if (!t) return "";
   const stat = (k, v, d) => `<div class="stat"><div class="k">${k}</div>
     <div class="v">${v}</div><div class="d">${d || ""}</div></div>`;
+  const R = v => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2) + " R";
+  const book = (t.paper_capital == null ? "a paper book" : `a ${inr(t.paper_capital)} paper book`)
+    + (t.paper_risk_pct == null ? "" : ` at ${t.paper_risk_pct}% risk`);
+  const paper = `on ${book}, not this account`;
   return `<div class="card"><h3>Trade quality</h3>
-    <p class="sub">One position at a time per symbol -- overlapping signals in the same stock are not double-counted</p>
+    <p class="sub">One position at a time per symbol -- overlapping signals in the same stock are not
+      double-counted. R = net profit ÷ rupees risked at entry, the same at any account size; the
+      rupee figures are ${paper}.</p>
     <div class="stats">
+      ${stat("Expectancy", R(t.expectancy_r), "average net per trade, in R")}
+      ${stat("Avg win / loss", R(t.avg_win_r) + " / " + R(t.avg_loss_r), t.rr == null ? "" : "R:R " + t.rr)}
       ${stat("Win rate", (t.win_rate * 100).toFixed(0) + "%", t.wins + " of " + t.trades)}
       ${stat("Profit factor", t.pf == null ? "no losses" : t.pf.toFixed(2), "gross win ÷ gross loss")}
-      ${stat("Expectancy", inr(t.expectancy), "average net per trade")}
-      ${stat("Avg win / loss", inr(t.avg_win) + " / " + inr(t.avg_loss), t.rr == null ? "" : "R:R " + t.rr)}
-      ${stat("Best / worst trade", inr(t.best) + " / " + inr(t.worst), "single trade, net")}
-      ${stat("Worst losing streak", inr(t.worst_run), "peak-to-trough on the trade P&amp;L line")}
+      ${stat("Expectancy", inr(t.expectancy), "average net per trade, " + paper)}
+      ${stat("Avg win / loss", inr(t.avg_win) + " / " + inr(t.avg_loss), paper)}
+      ${stat("Best / worst trade", inr(t.best) + " / " + inr(t.worst), "single trade, net, " + paper)}
+      ${stat("Worst losing streak", inr(t.worst_run), "peak-to-trough on the trade P&amp;L line, " + paper)}
     </div></div>`;
 }
 
@@ -1027,7 +1158,7 @@ function renderDetail() {
 
      Rebuilt only when the SET of variants changes, not on every render:
      rebuilding a select drops the open dropdown and loses focus mid-click. The
-     set is stable across most scenarios -- the 24 registered variants -- but a
+     set is stable across most scenarios -- every registered variant -- but a
      universe missing some would otherwise leave stale options pointing at cells
      that do not exist. */
   const list = sortedRows();
@@ -1056,12 +1187,21 @@ function renderDetail() {
   pick.value = S.sel;
   const r = row.r;
   const gridKey = keyFor(row.skey, row.v);
+  if (!r) {
+    body.innerHTML = `<div class="card"><h3>${row.family} <span class="pill">${row.setting}</span></h3>
+      <p class="sub">${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])} ·
+        ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}</p>
+      <div class="empty">No trades — the account took nothing on this rule at this scenario:
+        nothing affordable, or nothing signalled in the span. There is no account to draw.</div></div>`;
+    return Promise.resolve(null);
+  }
   /* The stats are in hand; the charts are a disk seek away. Draw what we have
      rather than showing nothing until the curve lands. */
   const c = { d: [], eq: [], dd: [], cash: [] };
   const stat = (k, v, d, cls = "", hero = false) =>
     `<div class="stat${hero ? " hero" : ""}"><div class="k">${k}</div>
      <div class="v ${cls}">${v}</div><div class="d">${d || ""}</div></div>`;
+  const n0 = v => v == null ? "—" : v.toLocaleString("en-IN");
   body.innerHTML = `
     <div class="card" style="margin-bottom:var(--gap)">
       <h3>${row.family} <span class="pill">${row.setting}</span></h3>
@@ -1076,13 +1216,20 @@ function renderDetail() {
       ${stat("Trades", (r.taken ?? 0).toLocaleString("en-IN"),
              (r.signals ?? 0).toLocaleString("en-IN") + " signals offered")}
       ${stat("Captured", r.signals ? Math.round(100 * r.taken / r.signals) + "%" : "—",
-             (r.skipped_cash ?? 0).toLocaleString("en-IN") + " unaffordable")}
-      ${stat("Invested", r.full_pct == null ? "—" : Math.round(r.full_pct) + "%",
+             "of signals taken; the refusals are itemised below")}
+      ${stat("Invested", r.exposure == null ? "—" : Math.round(r.exposure) + "%",
+             "of days with money at work")}
+      ${stat("Fully deployed", r.full_pct == null ? "—" : Math.round(r.full_pct) + "%",
              "of days under 5% cash")}
       ${stat("Ulcer", num(r.ulcer, 1), "depth × duration underwater")}
-      ${stat("Sharpe", num(r.r && r.r.sharpe, 2), "return ÷ all volatility")}
-      ${stat("Sortino", num(r.r && r.r.sortino, 2), "return ÷ downside volatility")}
+      ${stat("Sharpe", num(r.sharpe, 2), "return ÷ all volatility")}
+      ${stat("Sortino", num(r.sortino, 2), "return ÷ downside volatility")}
+      ${stat("Credibility", r.t_taken == null ? "—" : "t=" + r.t_taken.toFixed(2),
+             "on the trades this account took (t_taken)")}
     </div>
+    <p class="note" style="margin:-4px 0 var(--gap)"><b>Captured</b> ${n0(r.taken)} / ${n0(r.signals)} signals;
+      ${n0(r.skipped_cash)} unaffordable (cash); ${n0(r.skipped_tiny_cash)} under the ₹5.5k floor from cash
+      scraps; ${n0(r.skipped_tiny_risk)} under it from risk sizing; ${n0(r.skipped_size)} over the size cap.</p>
     <div class="grid2">
       <div class="card">
         <h3>The account</h3><p class="sub">equity, and how much of it was spare</p>
@@ -1108,7 +1255,7 @@ function renderDetail() {
     </div>
     <div style="margin-top:var(--gap)">${validationBlock(row)}</div>`;
 
-  fetchDetail(gridKey).then(got => {
+  return fetchDetail(gridKey).then(got => {
     if (!got || S.sel !== row.id) return;          // moved on while it loaded
     const cv = got.curve;
     if (!cv) return;
@@ -1121,7 +1268,7 @@ function renderDetail() {
     const epBox = document.getElementById("ep-note");
     if (epBox) epBox.textContent =
       `${(got.episodes || []).length} spells below a previous peak.`;
-  });
+  }).catch(() => {});                             // the stats stay; only the charts are lost
 }
 
 /* ── shell ────────────────────────────────────────────────────────────── */
@@ -1132,11 +1279,29 @@ function render() {
   for (const b of $("nav").children) b.classList.toggle("on", b.dataset.v === S.view);
   for (const [k] of VIEWS) $("v-" + k).classList.toggle("on", k === S.view);
   if (S.view === "compare") renderCompare();
-  if (S.view === "detail") renderDetail();
+  /* Detail's charts arrive asynchronously; returning the promise lets
+     scripts/check_dashboard.js wait for them instead of exiting first. */
+  return S.view === "detail" ? renderDetail() : Promise.resolve(null);
+}
+
+/* A BUILD THAT SKIPPED STAGES SAYS SO (2026-09-07). `--stocks-only` leaves
+   assets/single_name empty, and until now the page showed a board with no
+   Bitcoin or Gold universe and no hint that they were ever expected -- the
+   2026-09-05 payload was served that way for a day. */
+function partialBanner() {
+  const el = $("partial");
+  const missing = DATA.partial || [];
+  if (!missing.length) { el.classList.remove("on"); el.innerHTML = ""; return; }
+  el.classList.add("on");
+  el.innerHTML = `<b>Partial build.</b> These stages were not built: ` +
+    missing.map(m => `<code>${m}</code>`).join(", ") +
+    `. Whatever they would have added is absent from this page, not zero. ` +
+    `Rebuild without the skip flag to fill it in.`;
 }
 
 function init() {
   S.year = DATA.start_default || DATA.start_years[DATA.start_years.length - 1];
+  partialBanner();
   buildScenario();
   for (const [k, label] of VIEWS) {
     const b = document.createElement("button");

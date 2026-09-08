@@ -26,7 +26,9 @@ request to read two fields would turn a 0.1s response into a slow one.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -44,21 +46,72 @@ CURVES_PATH = CLEAN / "dashboard.curves.jsonl"
 STAMP_PATH = CLEAN / "dashboard.stamp.json"
 
 
-def write_stamp(symbols, built: str) -> None:
+def write_stamp(symbols, built: str, inputs: dict | None = None,
+                partial: list | None = None, assets=()) -> None:
     """Record what a dashboard.json was built from. Called by
-    scripts.dashboard_data straight after it writes the big file.
+    scripts.dashboard_data after it writes the big file.
 
     Three things can make the numbers wrong, and all three are recorded: the
     UNIVERSE (which stocks), the PRICE FILES (their size and mtime) and the
-    STRATEGY CODE. signals.stamp() already computes exactly that trio for the
-    trade caches, so the dashboard uses the same definition rather than a
-    second, slightly different one.
+    CODE. signals.stamp(account=True) computes that trio over the producer
+    modules AND the account/validation modules -- see signals._ACCOUNT for why
+    the dashboard needs the wider set (2026-09-07).
+
+    `inputs` is the stamp taken BEFORE the build started. It is passed in
+    rather than computed here because a stamp taken after a long build records
+    the mtimes of whatever the code is NOW, not what produced the numbers: edit
+    backtest.py ten minutes into a rebuild and the file was stamped current
+    over stale trades (audit 2026-09-07, B2). scripts.dashboard_data takes the
+    stamp first, checks it again at the end, and writes `inputs=None` if the
+    two differ, which status() reports as stale.
+
+    `assets` are the non-equity instruments whose price files the build read;
+    they were left out of the stamp until 2026-09-07 (B3). `partial` lists
+    stages the build skipped (["assets"] for --stocks-only) so status() can say
+    "current, assets not built" instead of serving an empty tab as current.
     """
     STAMP_PATH.write_text(json.dumps({
         "built": built,
         "symbols": sorted(symbols),
-        "inputs": signals.stamp(symbols),
+        "assets": sorted(assets),
+        "partial": list(partial or []),
+        "inputs": inputs,
     }, indent=2))
+
+
+_CURVES_CHECK: dict = {}
+
+
+def _curves_match() -> bool:
+    """Does dashboard.curves.jsonl carry the digest dashboard.json recorded?
+
+    Memoised on (size, mtime) of both files so the check costs one read per
+    build, not one per curve. A payload without `curves_sha256` (built before
+    2026-09-07) is trusted, as before.
+    """
+    try:
+        key = (DATA_PATH.stat().st_mtime_ns, CURVES_PATH.stat().st_mtime_ns,
+               CURVES_PATH.stat().st_size)
+    except OSError:
+        return False
+    if _CURVES_CHECK.get("key") != key:
+        want = None
+        with open(DATA_PATH, "rb") as fh:
+            head = fh.read(4_000_000)      # the key sits near the end; fall back to a full read
+        m = re.search(rb'"curves_sha256":\s*"([0-9a-f]{64})"', head)
+        if m is None:
+            m = re.search(rb'"curves_sha256":\s*"([0-9a-f]{64})"', DATA_PATH.read_bytes())
+        if m is not None:
+            want = m.group(1).decode()
+        ok = True
+        if want is not None:
+            h = hashlib.sha256()
+            with open(CURVES_PATH, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            ok = h.hexdigest() == want
+        _CURVES_CHECK.update(key=key, ok=ok)
+    return bool(_CURVES_CHECK["ok"])
 
 
 def status() -> dict:
@@ -89,15 +142,24 @@ def status() -> dict:
         # Same stocks. The price files or the strategy code can still have moved
         # underneath the snapshot, which changes every number without changing
         # the universe -- so check those too rather than declaring it current.
-        want, got = signals.stamp(now), stamp.get("inputs")
+        want = signals.stamp(now + list(stamp.get("assets", [])), account=True)
+        got = stamp.get("inputs")
         if got is None:
             return {"ok": True, "stale": True, "built": stamp.get("built"),
                     "n_built": len(was), "n_now": len(now), "reason": "unrecorded",
                     "message": ("The universe still matches, but this dashboard "
-                                "predates input tracking, so whether the price "
-                                "data or strategy code has changed underneath it "
-                                "cannot be checked. Rebuild with: "
-                                "python -m scripts.refresh")}
+                                "carries no input stamp -- either it predates "
+                                "input tracking, or the code moved while it was "
+                                "being built and the build refused to certify "
+                                "itself. Rebuild with: python -m scripts.refresh")}
+        if not got.get("account"):
+            return {"ok": True, "stale": True, "built": stamp.get("built"),
+                    "n_built": len(was), "n_now": len(now), "reason": "narrow-stamp",
+                    "message": ("This dashboard was stamped against the strategy "
+                                "code only; since 2026-09-07 the account and "
+                                "validation modules are tracked too, and this "
+                                "build cannot be checked against them. Rebuild "
+                                "with: python -m scripts.refresh")}
         if got != want:
             why = ("the PRICE DATA has changed" if got.get("data") != want["data"]
                    else "the STRATEGY CODE has changed" if got.get("code") != want["code"]
@@ -109,7 +171,8 @@ def status() -> dict:
                                 f"but {why} since they were built. Rebuild with: "
                                 "python -m scripts.refresh")}
         return {"ok": True, "stale": False, "built": stamp.get("built"),
-                "n_built": len(was), "n_now": len(now)}
+                "n_built": len(was), "n_now": len(now),
+                "partial": list(stamp.get("partial", []))}
 
     dropped = [s for s in was if s not in set(now)]
     added = [s for s in now if s not in set(was)]
@@ -170,6 +233,11 @@ class Handler(BaseHTTPRequestHandler):
                                "application/json", 404)
                     return
                 size = CURVES_PATH.stat().st_size
+                if not _curves_match():
+                    self._send(json.dumps({"error": "curve file is not this "
+                                           "dashboard's -- rebuild"}).encode(),
+                               "application/json", 409)
+                    return
                 if at < 0 or length < 0 or at + length > size:
                     self._send(json.dumps({"error": "out of range"}).encode(),
                                "application/json", 400)
