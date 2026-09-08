@@ -13,13 +13,28 @@ real account does.
 
 Fixed capital, not compounding: every trade is sized off the same base, so results are
 comparable across stocks and periods rather than depending on trade order.
+
+WHAT THE DEFAULTS ARE FOR (2026-09-07, audit A11). Every producer -- backtest,
+timeframes, darvas, holygrail -- calls position() at these module defaults when it
+writes a trade to the signal cache, and a signal that sizes to zero shares is
+DROPPED there, before any account sees it. The account (kitelab.portfolio.run)
+re-sizes every trade off its own capital and risk, so at the producer stage
+position() is nothing more than an "is this worth caching" gate. At Rs1,00,000 that
+gate was refusing anything whose per-share risk exceeded Rs1,000 or whose price
+exceeded the whole book: MRF on M/W/D cached 14 trades where 105 were possible, and
+MRF, HONAUT, PAGEIND and BOSCHLTD lost every Q/M trade -- so the Rs1cr account on
+the board never saw trades it could have taken. CAPITAL is therefore the LARGEST
+capital on the board (scripts.dashboard_data.CAPITALS), so nothing is filtered out
+that any gridded account could fund. This file is in the cache stamp
+(signals._SUPPORT), which is what makes the change take effect: every cache
+rebuilds against the wider gate.
 """
 from __future__ import annotations
 
 import math
 
-CAPITAL = 100_000.0    # account size
-RISK_PCT = 0.01        # 1% of it per trade
+CAPITAL = 10_000_000.0   # the largest account on the board -- see the module note
+RISK_PCT = 0.01          # 1% of it per trade
 
 # Bitcoin trades in fractions; a whole-coin minimum would reject every signal once
 # the price exceeds the account. When True, position() returns fractional units.

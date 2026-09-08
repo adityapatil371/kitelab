@@ -9,10 +9,11 @@ symbols this is a few megabytes and pandas reads it instantly -- no database nee
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as clock, timedelta
 
 import pandas as pd
 
+from . import config
 from .config import DATA, Config
 
 # Max days Kite will serve in a single historical request, per interval.
@@ -86,34 +87,45 @@ def _to_frame(candles: list[dict]) -> pd.DataFrame:
     return frame[COLUMNS]
 
 
-def fetch_interval(kite, symbol: str, token: int, interval: str,
-                   start: str, throttle: Throttle,
-                   continuous: bool = False) -> pd.DataFrame:
-    """Fetch one interval for one symbol, resuming from whatever is already on disk."""
-    target = path_for(symbol, interval)
-    existing = pd.read_parquet(target) if target.exists() else pd.DataFrame(columns=COLUMNS)
+# NSE's closing auction ends at 15:35 (post 2026-08-03). A bar fetched before
+# that on a trading day is a PARTIAL session and must never be stored as if it
+# were the day. Measured 2026-09-07: the 101 in-sample files end 2026-08-25
+# with a last-bar volume of 0.19x their 60-day median (fetched 10:19-10:34
+# IST); the 898 others end 2026-09-02 at 0.58x (fetched 12:43-13:49 IST).
+# Every one of those last bars is a fraction of a day wearing a day's stamp.
+SESSION_CLOSE = clock(15, 35)
 
-    wanted_start = datetime.fromisoformat(start).date()
-    to_date = date.today()
+# On resume, re-fetch this many of the most recent stored sessions and compare
+# them with what Kite serves now. Kite adjusts its whole history at serve time
+# when a split or bonus goes ex (HAL 2:1 on 2023-07-27/28, BPCL's 2024-06-21
+# bonus, NESTLEIND 1:10 on 2024-01-05), so a file that was fetched before the
+# ex-date and extended after it is two price scales glued together. One
+# overlapping session cannot tell that apart from an ordinary revision; five
+# sessions all shifted by the same ratio can.
+RESUME_SESSIONS = 5
+REBASE_TOLERANCE = 0.005     # 0.5%: a real revision is a tick or two, a rebase is a ratio
 
-    # Fill in BOTH directions. Only extending forward means lowering the configured
-    # start date silently does nothing, and the only way to deepen history is to delete
-    # the file -- which is exactly the trap this avoids.
-    ranges: list[tuple] = []
-    if existing.empty:
-        ranges.append((wanted_start, to_date))
-    else:
-        have_start, have_end = existing["ts"].min().date(), existing["ts"].max().date()
-        if wanted_start < have_start:
-            ranges.append((wanted_start, have_start))
-        # Re-fetch the last stored day so a partially-captured session gets completed.
-        if have_end <= to_date:
-            ranges.append((have_end, to_date))
 
+def cutoff_date(now=None) -> date:
+    """The last date whose session can be stored whole right now.
+
+    Before SESSION_CLOSE (IST) today's bar is still forming, so the cutoff is
+    yesterday. On a weekend that means a Saturday-morning run caps at Friday,
+    which costs nothing: there is no Saturday session to lose.
+    """
+    if now is None:
+        now = config.now_local()
+    if now.time() < SESSION_CLOSE:
+        return (now - timedelta(days=1)).date()
+    return now.date()
+
+
+def _pull(kite, token: int, interval: str, ranges: list[tuple],
+          throttle: Throttle, continuous: bool) -> tuple[pd.DataFrame, int]:
+    """Fetch every (start, end) range in CHUNK_DAYS-sized requests."""
     span = CHUNK_DAYS.get(interval, 100)
     chunks: list[pd.DataFrame] = []
     requests = 0
-
     for range_start, range_end in ranges:
         cursor = range_start
         while cursor <= range_end:
@@ -124,8 +136,92 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
             requests += 1
             chunks.append(_to_frame(candles))
             cursor = chunk_end + timedelta(days=1)
+    if not chunks:
+        return pd.DataFrame(columns=COLUMNS), requests
+    return pd.concat(chunks, ignore_index=True), requests
 
-    combined = pd.concat([existing, *chunks], ignore_index=True)
+
+def rebased(stored: pd.DataFrame, served: pd.DataFrame) -> str | None:
+    """Why the stored history no longer matches what Kite serves, or None.
+
+    Compares closes on the stamps both frames hold. Any close off by more than
+    REBASE_TOLERANCE means the history has been re-based by a corporate action
+    since the file was written, and the whole file is stale, not just its tail.
+    """
+    if stored.empty or served.empty:
+        return None
+    joined = stored[["ts", "close"]].merge(served[["ts", "close"]], on="ts",
+                                          suffixes=("_stored", "_served"))
+    if joined.empty:
+        return None
+    ratio = joined["close_served"] / joined["close_stored"]
+    off = (ratio - 1).abs() > REBASE_TOLERANCE
+    if not off.any():
+        return None
+    worst = joined.loc[(ratio - 1).abs().idxmax()]
+    return (f"{int(off.sum())} of {len(joined)} re-served bars differ from the "
+            f"stored close by over {REBASE_TOLERANCE:.1%} (e.g. {worst['ts']}: "
+            f"stored {worst['close_stored']:.2f}, served {worst['close_served']:.2f})"
+            f" -- the history was re-based by a corporate action")
+
+
+def fetch_interval(kite, symbol: str, token: int, interval: str,
+                   start: str, throttle: Throttle,
+                   continuous: bool = False, now=None) -> pd.DataFrame:
+    """Fetch one interval for one symbol, resuming from whatever is already on disk.
+
+    Three rules, all from the 2026-09-07 audit:
+
+      - never store a partial session: to_date is cutoff_date(now), and any
+        stored bar after it (a partial captured by an earlier run) is dropped
+        so the next run fetches that session whole;
+      - on resume, re-fetch the last RESUME_SESSIONS stored sessions rather
+        than one, and if any re-served close differs by over REBASE_TOLERANCE
+        the file is discarded and fetched whole (see rebased());
+      - fill in BOTH directions, as before: lowering the configured start
+        deepens history instead of silently doing nothing.
+
+    `now` is injectable for tests; it defaults to the market clock (IST).
+    """
+    target = path_for(symbol, interval)
+    existing = pd.read_parquet(target) if target.exists() else pd.DataFrame(columns=COLUMNS)
+
+    wanted_start = datetime.fromisoformat(start).date()
+    to_date = cutoff_date(now)
+    label = f"  {symbol:<10} {interval:<9}"
+
+    if not existing.empty:
+        existing["ts"] = pd.to_datetime(existing["ts"])
+        partial = existing["ts"].dt.normalize().dt.date > to_date
+        if partial.any():
+            print(f"{label} dropping {int(partial.sum())} stored bar(s) after "
+                  f"{to_date} -- fetched before the {SESSION_CLOSE:%H:%M} close, so "
+                  f"they were a partial session; refetched whole next run")
+            existing = existing.loc[~partial].reset_index(drop=True)
+
+    ranges: list[tuple] = []
+    if existing.empty:
+        ranges.append((wanted_start, to_date))
+    else:
+        sessions = sorted(existing["ts"].dt.normalize().dt.date.unique())
+        have_start = sessions[0]
+        check_from = sessions[-RESUME_SESSIONS] if len(sessions) >= RESUME_SESSIONS else have_start
+        if wanted_start < have_start:
+            ranges.append((wanted_start, have_start))
+        if check_from <= to_date:
+            ranges.append((check_from, to_date))
+
+    fetched, requests = _pull(kite, token, interval, ranges, throttle, continuous)
+
+    why = rebased(existing, fetched)
+    if why:
+        print(f"{label} {why}; discarding the stored file and fetching it whole")
+        existing = pd.DataFrame(columns=COLUMNS)
+        fetched, more = _pull(kite, token, interval, [(wanted_start, to_date)],
+                              throttle, continuous)
+        requests += more
+
+    combined = pd.concat([existing, fetched], ignore_index=True)
     combined = (
         combined.dropna(subset=["ts"])
         .drop_duplicates(subset=["ts"], keep="last")
@@ -134,7 +230,7 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
     )
     combined.to_parquet(target, index=False)
 
-    label = f"  {symbol:<10} {interval:<9} {requests:>3} req"
+    label = f"{label} {requests:>3} req"
     if combined.empty:
         print(f"{label}  no data returned")
     else:

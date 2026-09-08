@@ -1,6 +1,6 @@
-# written 2026-09-05 23:55 IST by scripts.backup_inputs
+# written 2026-09-07 19:57 IST by scripts.backup_inputs
 
 levels.json          4671 bytes   hand-drawn levels
-accepted.txt         4413 bytes   the 399 screened names
-in_sample             101 symbols
-unseen                898 symbols
+accepted.txt         4413 bytes   batch 2: the 504 names screen_universe accepted 2026-09-02
+universe             1000 symbols   cfg.merged, EXCLUDED applied
+excluded              102 symbols   config.EXCLUDED

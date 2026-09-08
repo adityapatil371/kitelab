@@ -327,3 +327,221 @@ class DatedMargin(unittest.TestCase):
         daily -- which is why they are a dated schedule rather than a flag."""
         from kitelab import contracts
         self.assertEqual(contracts.unverified_multipliers(), [])
+
+
+class FractionalFlag(unittest.TestCase):
+    """The per-trade `fractional` flag must be the ONLY flag the sizing reads.
+
+    Audit A8 (2026-09-07): the impact loop re-read the module global instead,
+    so a fractional trade trimmed to what cash could afford was floored to
+    whole coins and refused. ema|0|BITCOIN|0.5|200000 took 63 of 113 signals
+    and reported 50 skipped for cash with median cash at 100%; with the flag
+    honoured it takes 113 of 113 and CAGR moves 4.4 -> 5.4.
+    """
+
+    def test_a_fractional_trade_trimmed_by_impact_is_still_taken_at_a_fraction(self):
+        from kitelab import slippage
+        pricey = trade(symbol="BTC", entry_price=5_000_000, exit_price=5_500_000,
+                       stop=4_500_000)
+        pricey["fractional"] = True
+        pricey["fee_rate"] = 0.001
+        prices = {"BTC": [(TS("2019-01-01"), 5e6), (TS("2021-12-31"), 5e6)]}
+        saved = slippage.impact
+        # 1% impact on every order: the risk-sized order costs more than the
+        # cash it was sized against, so the loop must trim it.
+        slippage.impact = lambda symbol, stamp, value: 0.01
+        try:
+            with account(prices=prices, spread=True, fractional=False):
+                r = portfolio.run([pricey], 20_000, 1.0)
+        finally:
+            slippage.impact = saved
+        self.assertEqual(len(r["taken"]), 1)
+        self.assertLess(r["taken"][0]["shares"], 1.0)
+        self.assertGreater(r["taken"][0]["shares"], 0.0)
+        self.assertEqual(r["skipped_cash"], 0)
+        for _, cash in r["cash_curve"]:
+            self.assertGreaterEqual(cash, -1e-6)
+
+
+class TinyPositionsSplit(unittest.TestCase):
+    """Which rule left the position under the cost floor.
+
+    Audit D4 (2026-09-07): W/D at all / Rs2L / 1% / 2018 refused 53,266 of
+    95,452 signals as tiny, and 53,252 of those were cash scraps -- the account
+    had the money for a real position elsewhere. One count hid that.
+    """
+
+    def test_a_risk_sized_position_under_the_floor_counts_against_risk(self):
+        with account():
+            r = portfolio.run([trade(entry_price=1.0, stop=0.9)], 600, 0.01)
+        self.assertEqual(r["skipped_tiny_risk"], 1)
+        self.assertEqual(r["skipped_tiny_cash"], 0)
+        self.assertEqual(r["skipped_tiny"], 1)
+
+    def test_cash_scraps_count_against_cash(self):
+        # A (offered first: same day, same liquidity, alphabetical) risks Rs11 a
+        # share against Rs2,200, so it takes 200 shares -- Rs20,000 of the
+        # Rs22,000. B's risk rule wants 220 shares; the Rs2,000 left buys 20,
+        # which is under the floor. The account, not the rule, made it tiny.
+        pair = [trade(symbol="AAA", entry="2020-01-01", exit_="2020-06-01",
+                      entry_price=100, stop=89),
+                trade(symbol="BBB", entry="2020-01-01", exit_="2020-06-01",
+                      entry_price=100, stop=90)]
+        with account():
+            r = portfolio.run(pair, 22_000, 0.10)
+        self.assertEqual(len(r["taken"]), 1)
+        self.assertEqual(r["skipped_tiny_cash"], 1)
+        self.assertEqual(r["skipped_tiny_risk"], 0)
+        self.assertEqual(r["skipped_tiny"], r["skipped_tiny_cash"] + r["skipped_tiny_risk"])
+
+    def test_a_position_the_participation_cap_trims_under_the_floor_is_refused(self):
+        """Audit A5: the cap trimmed AFTER the floor check, so a trimmed order
+        could be placed at a size the floor would have refused."""
+        from kitelab import slippage
+        saved = slippage.capped_shares
+        slippage.capped_shares = lambda symbol, stamp, price, shares: min(shares, 20)
+        try:
+            with account():
+                r = portfolio.run([trade(entry_price=100, stop=90)], 100_000, 0.01)
+        finally:
+            slippage.capped_shares = saved
+        self.assertEqual(len(r["taken"]), 0)
+        self.assertEqual(r["skipped_tiny_cash"], 1)
+        self.assertEqual(r["skipped_liquidity"], 0)
+
+
+class AnnualisationSpan(unittest.TestCase):
+    def test_years_run_to_the_latest_exit_not_the_last_entered_trades_exit(self):
+        """Audit finding 6 (2026-09-07): `years` ended at the exit of the
+        last-ENTERED trade. A trend rule holds its winners, so an older
+        position usually outlives the newest one and the span came out short,
+        which inflates the annualised rate."""
+        seq = [trade(symbol="AAA", entry="2020-01-01", exit_="2021-01-01",
+                     entry_price=100, exit_price=110, stop=90),
+               trade(symbol="BBB", entry="2020-02-01", exit_="2020-03-01",
+                     entry_price=100, exit_price=110, stop=90)]
+        with account():
+            r = portfolio.run(seq, 100_000, 0.01)
+        self.assertEqual(len(r["taken"]), 2)
+        self.assertAlmostEqual(r["years"], 366 / 365.25, places=6)
+
+    def test_the_span_is_what_the_account_was_offered_not_only_what_it_took(self):
+        """An account alive and refusing signals is still alive: a second AAA
+        signal it cannot take (one position per symbol) still extends its
+        clock, otherwise one early winner annualises over a few weeks."""
+        seq = [trade(symbol="AAA", entry="2020-01-01", exit_="2020-03-01",
+                     entry_price=100, exit_price=110, stop=90),
+               trade(symbol="AAA", entry="2020-02-01", exit_="2021-01-01",
+                     entry_price=100, exit_price=110, stop=90)]
+        with account():
+            r = portfolio.run(seq, 100_000, 0.01)
+        self.assertEqual(r["skipped_busy"], 1)
+        self.assertAlmostEqual(r["years"], 366 / 365.25, places=6)
+
+
+class OneBook(unittest.TestCase):
+    """The daily curve is READ OFF run()'s ledger, never recomputed.
+
+    Audit A9 (2026-09-07): daily_curve kept its own books -- full notional on
+    entry, the equity fee schedule on exit, no margin -- and on GOLD at
+    Rs1cr / 1% / 2006 ended at Rs93,02,789 against a settled final of
+    Rs1,23,06,279, with a cash floor of -Rs6.7cr that reached the page as
+    median_cash -921. Every trade list in this module must reconcile.
+    """
+
+    def _gold(self, entry_price=160_000.0, exit_price=170_000.0, stop=155_000.0, **kw):
+        t = trade(symbol="GOLD", entry_price=entry_price, exit_price=exit_price,
+                  stop=stop, **kw)
+        t["multiplier"], t["margin_pct"], t["fee_rate"] = 100.0, 0.06, 0.0005
+        return t
+
+    def _btc(self, **kw):
+        t = trade(symbol="BTC", entry_price=5_000_000, exit_price=5_500_000,
+                  stop=4_500_000, **kw)
+        t["fractional"], t["fee_rate"] = True, 0.001
+        return t
+
+    def scenarios(self):
+        """(label, trades, capital, risk, prices) for every shape this module
+        exercises: plain equities, contested cash, same-day round trips, a
+        wiped account, fractional, fee-rated, and futures on margin."""
+        flat = {"GOLD": [(TS("2019-01-01"), 160_000.0), (TS("2021-12-31"), 160_000.0)],
+                "BTC": [(TS("2019-01-01"), 5e6), (TS("2021-12-31"), 5e6)]}
+        moving = {"GOLD": [(TS(f"2020-01-{d:02d}"), 160_000.0 + 1_000.0 * d)
+                           for d in range(1, 31)]}
+        many = [trade(symbol=f"S{i}", entry=f"2020-01-{i+1:02d}", exit_="2021-01-01",
+                      entry_price=100, stop=99) for i in range(20)]
+        contested = [trade(symbol="LIQUID", entry="2020-01-01", exit_="2020-12-01",
+                           entry_price=100, stop=90),
+                     trade(symbol="THIN", entry="2020-01-01", exit_="2020-12-01",
+                           entry_price=100, stop=50)]
+        return [
+            ("one equity", [trade()], 100_000, 0.01, {}),
+            ("twenty overlapping equities", many, 50_000, 0.02, {}),
+            ("contested cash", contested, 30_000, 0.10, {}),
+            ("same-day round trip", [trade(exit_="2020-01-01", same_session=True)],
+             100_000, 0.01, {}),
+            ("wiped", [trade(entry_price=100, exit_price=0.01, stop=90)], 10_200, 1.0, {}),
+            ("fee-rated equity", [dict(trade(), fee_rate=0.0)], 100_000, 0.01, {}),
+            ("fractional", [self._btc()], 200_000, 0.01, flat),
+            ("equity and fractional", [trade(), self._btc()], 500_000, 0.01, flat),
+            ("gold on margin", [self._gold()], 50_000_000, 0.05, flat),
+            ("gold and an equity", [trade(), self._gold()], 50_000_000, 0.05, flat),
+            ("gold marked daily", [self._gold(entry="2020-01-02", exit_="2020-01-20")],
+             50_000_000, 0.05, moving),
+            ("gold losing", [self._gold(exit_price=150_000.0)], 50_000_000, 0.05, flat),
+        ]
+
+    def test_the_curve_ends_at_the_settled_final_and_cash_never_dips_below_zero(self):
+        for label, trades, capital, risk, prices in self.scenarios():
+            with self.subTest(label), account(prices=prices):
+                r = portfolio.run(trades, capital, risk)
+            self.assertTrue(r["curve"], f"{label}: no curve")
+            self.assertAlmostEqual(r["curve"][-1][1], r["final"], places=2,
+                                   msg=f"{label}: curve end != final")
+            self.assertAlmostEqual(r["cash_curve"][-1][1], r["final"], places=2)
+            # Cash may only ever go below zero by what the wiped account itself
+            # ended at: settlement fees on a position sold for Rs1.02 are real
+            # and the broker bills them. Never by a debit the ledger invented.
+            for day, cash in r["cash_curve"]:
+                self.assertGreaterEqual(cash, min(0.0, r["final"]) - 1e-6,
+                                        f"{label}: cash {cash} on {day}")
+            realised = sum(t["net"] for t in r["taken"])
+            self.assertAlmostEqual(r["final"], capital + realised, places=4)
+
+    def test_an_open_future_is_marked_at_margin_plus_the_move_not_at_notional(self):
+        moving = {"GOLD": [(TS(f"2020-01-{d:02d}"), 160_000.0 + 1_000.0 * d)
+                           for d in range(1, 31)]}
+        gold = self._gold(entry="2020-01-02", exit_="2020-01-20")
+        with account(prices=moving):
+            r = portfolio.run([gold], 50_000_000, 0.05)
+        pos = r["taken"][0]
+        eq = dict(r["curve"])
+        cash = dict(r["cash_curve"])
+        day = TS("2020-01-10")
+        move = pos["shares"] * ((160_000.0 + 10_000.0) - pos["entry_price"])
+        self.assertAlmostEqual(eq[day], cash[day] + pos["margin_held"] + move, places=4)
+        # And nowhere near the notional the old curve carried.
+        self.assertLess(eq[day], cash[day] + 0.5 * pos["shares"] * 170_000.0)
+
+    def test_sizing_equity_counts_an_open_future_at_margin_not_notional(self):
+        """The sizing line summed shares x entry for every open position, so a
+        6%-margin gold lot counted sixteen times the cash committed and the
+        next trade was sized off money that was never in the account."""
+        flat = {"GOLD": [(TS("2019-01-01"), 160_000.0), (TS("2021-12-31"), 160_000.0)]}
+        gold = self._gold(entry="2020-01-01", exit_="2021-01-01")
+        eq = trade(symbol="AAA", entry="2020-06-01", exit_="2020-07-01",
+                   entry_price=100, stop=90)
+        with account(prices=flat):
+            r = portfolio.run([gold, eq], 50_000_000, 0.05)
+        by = {t["symbol"]: t for t in r["taken"]}
+        # Flat prices: no move, so equity for sizing is exactly the capital.
+        self.assertEqual(by["AAA"]["shares"], math.floor(50_000_000 * 0.05 / 10))
+
+    def test_the_ledger_is_returned_and_replays_to_the_same_curve(self):
+        with account():
+            r = portfolio.run([trade(), trade(symbol="BBB", entry="2020-02-01",
+                                              exit_="2020-03-01")], 100_000, 0.01)
+            again = portfolio.daily_curve(r["ledger"], 100_000)
+        self.assertEqual(again["curve"], r["curve"])
+        self.assertEqual(again["cash_curve"], r["cash_curve"])

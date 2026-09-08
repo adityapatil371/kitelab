@@ -106,9 +106,19 @@ TOKEN_PATH = Path(
 # Two kinds of defect, both found 2026-08-31:
 #
 #   SEAM     a long trading gap with the price on a completely different level
-#            either side. Either the company was restructured and Kite's history
-#            is unadjusted, or the symbol was reused. Kite sells no corporate
-#            actions, so it cannot be told which, and it cannot be repaired.
+#            either side: a symbol reused, or a suspension that outlasted any
+#            position. Since 2026-09-07 frames.sanitise() CUTS history at the
+#            last gap over frames.LISTING_BREAK_DAYS instead of trading across
+#            it, so a seam is no longer a reason to refuse a stock -- these
+#            four entries predate that rule and stay only because removing an
+#            exclusion changes the universe, which is the owner's call. (The
+#            2026-08-31 text said "Kite sells no corporate actions, so it
+#            cannot be told which". Half right: Kite DOES adjust splits and
+#            bonuses at serve time -- HAL 2:1 on 2023-07-27/28 reads 1926.50
+#            -> 1964.50, BPCL's 2024-06-21 bonus 288.95 -> 283.85, NESTLEIND
+#            1:10 on 2024-01-05 1355.8 -> 1333.2 with volume adjusted too --
+#            and does NOT adjust demergers, which is what DEMERGERS below is
+#            for.)
 #
 #   PADDING  zero-volume bars carrying a made-up price in front of the stock's
 #            first real trade. frames.drop_untraded_outliers() removes the worst
@@ -141,7 +151,8 @@ EXCLUDED: dict[str, str] = {
     # 2026-09-01: the quality gate applied to the EXISTING universe, not just to
     # new candidates. scripts/screen_universe.py states the bar -- five years of
     # history (the Q/M/W stack needs 20 quarterly bars), Rs20 lakh median daily
-    # turnover, no seams, no padding, no suspected unadjusted split, structural
+    # turnover, no seams, no padding, no suspected unadjusted split (a rule
+    # retired 2026-09-07 -- Kite adjusts splits; see DEMERGERS), structural
     # integrity -- and these 91 of the then-192 did not clear it.
     #
     # Holding half a universe to one standard and half to another is how most of
@@ -187,7 +198,17 @@ EXCLUDED: dict[str, str] = {
     "HYUNDAI": "GATE: history 1.8y / 457 bars < 5.0y",
     "INDOTHAI": "GATE: turnover Rs307,328 < Rs2,000,000",
     "IPRINGLTD": "GATE: history 0.0y / 7 bars < 5.0y",
-    "JASH": "GATE: suspected unadjusted split/bonus",
+    # 2026-09-07: the four "suspected unadjusted split/bonus" verdicts re-read
+    # against the files, now that Kite is known to adjust splits and bonuses.
+    # Not one of them was a split. ORIENTPPR's was a demerger and has moved to
+    # DEMERGERS; the other three keep their exclusion with the reason corrected.
+    "JASH": "SYMBOL REUSED: 2015-01-01 .. 2017-04-25 carries a tape with a median "
+            "19.3m shares and Rs1.15bn a day, which cannot be Jash Engineering "
+            "(an SME that listed 2017-09-28; its own tape from 2017-10-11 runs "
+            "24-48k shares a day). The -49.5% on 2017-10-11 is the seam between "
+            "the two instruments across a 169-day gap -- under "
+            "frames.LISTING_BREAK_DAYS, so the break rule does not cut it, and "
+            "the post-seam turnover is far below the gate anyway.",
     "JAYAGROGN": "GATE: turnover Rs1,623,568 < Rs2,000,000",
     "JPOLYINVST": "GATE: turnover Rs512,836 < Rs2,000,000",
     "KAMAHOLD": "GATE: history 0.3y / 89 bars < 5.0y",
@@ -208,10 +229,14 @@ EXCLUDED: dict[str, str] = {
     "NIRLON": "GATE: history 0.3y / 89 bars < 5.0y",
     "NYKAA": "GATE: history 4.8y / 1189 bars < 5.0y",
     "ORIENTALTL": "GATE: turnover Rs361,962 < Rs2,000,000",
-    "ORIENTPPR": "GATE: suspected unadjusted split/bonus",
     "OSWALAGRO": "GATE: turnover Rs1,746,459 < Rs2,000,000",
     "PILITA": "GATE: turnover Rs938,110 < Rs2,000,000",
-    "PNB": "GATE: suspected unadjusted split/bonus",
+    "PNB": "NO DATA DEFECT (kept out pending re-screen): the +46.2% on 2017-10-25 "
+           "(130.51 -> 190.81, 166.5m shares, 25.7x the 60-day median) is the "
+           "PSU-bank recapitalisation announcement, a real move that the split "
+           "gate misread as a 3:2 ratio. Volume and turnover stayed up for the "
+           "month after, which a split cannot do. Passes every current gate; "
+           "putting it back changes the universe, so that is the owner's call.",
     "POLYSPIN": "GATE: history 0.0y / 7 bars < 5.0y",
     "PRABHA": "GATE: history 1.4y / 355 bars < 5.0y",
     "RAMBHAJO": "GATE: history 0.2y / 40 bars < 5.0y",
@@ -233,7 +258,13 @@ EXCLUDED: dict[str, str] = {
     "TMCV": "GATE: history 0.8y / 195 bars < 5.0y",
     "TRANSCOR": "GATE: history 0.0y / 7 bars < 5.0y",
     "TURTLEMINT": "GATE: history 0.2y / 42 bars < 5.0y",
-    "UNITECH": "GATE: suspected unadjusted split/bonus",
+    "UNITECH": "NO SPLIT (kept out pending re-screen): the -49.7% on 2008-10-24 "
+               "(61.60 -> 31.00 on 6.3x volume, +38% the next session) is the "
+               "market-wide crash day on which half the universe fell over 8%, "
+               "not a corporate action. The stock is a Rs1-2 penny stock since "
+               "2019, and the 2026-09-07 gate rejects it on its own: 2.10 -> 1.25 "
+               "on 2019-02-21 (-40.5%) reads as a suspected demerger, and it is "
+               "not one -- it is what a Rs2 stock does.",
     "VHL": "GATE: turnover Rs426,748 < Rs2,000,000",
     "VINCOFE": "GATE: history 1.9y / 459 bars < 5.0y",
     "VOITHPAPR": "GATE: history 0.0y / 7 bars < 5.0y",
@@ -263,11 +294,77 @@ EXCLUDED: dict[str, str] = {
     "SGBMR29XII-GB": "WRONG INSTRUMENT TYPE: Sovereign Gold Bond, not equity.",
 }
 
+# Demerger EX-DATES. Kite adjusts splits and bonuses at serve time (see the
+# HAL / BPCL / NESTLEIND readings above) but NOT demergers: on the ex-date the
+# parent's close drops by the value that left, and the daily file records it
+# as a crash. frames.history_start() treats each date here as a listing break
+# -- history restarts on that date -- because the price before it is the price
+# of a different company.
+#
+# Found 2026-09-07 by scanning every daily file for a close-to-close drop over
+# 30% that was not a market-wide day (frames.market_wide_days: 2008-01-21/22,
+# October 2008, 2015-08-24, 2020-03-12/23, 2024-06-04 are the crash days, and
+# on none of the dates below did more than 5% of the universe fall over 8%).
+# Every date was read back against the file before it went in; the figures
+# are previous close -> that day's open (the gap) and close.
+#
+# The rule for ADDING one: verify the drop in the file, verify the day is not
+# market-wide, then record it here with the numbers. A date that is wrong
+# silently deletes history, so this is not a list to guess at.
+DEMERGERS: dict[str, list[str]] = {
+    "SIEMENS":    ["2025-04-07"],  # 3754.25 -> 2450.00 (-34.7% gap), close 2812.45; Siemens Energy India
+    "RAYMOND":    ["2024-07-11",   # 1912.50 -> 1161.10 (-39.3%), close 1219.20; Raymond Lifestyle
+                   "2025-05-14"],  # 953.00 -> 525.00 (-44.9%), close 551.20; Raymond Realty
+    "ABFRL":      ["2025-05-22"],  # 203.55 -> 98.00 (-51.9%), close 89.85, 14.2x vol; AB Lifestyle Brands
+    "ABREL":      ["2019-10-11"],  # 882.20 -> 390.00 (-55.8%), close 393.85; cement business to UltraTech
+    "ARVIND":     ["2018-11-28"],  # 248.85 -> 109.45 (-56.0%), close 108.60, 36x vol; Arvind Fashions + Anup
+    "TATACHEM":   ["2020-03-04"],  # 719.65 -> 315.00 (-56.2%), close 314.95; consumer business to Tata Consumer
+    "ADANIENT":   ["2015-06-03"],  # 183.20 -> close 106.40 (-41.9%; the 555.80 open is a pre-open print); Adani Ports / Power / Transmission
+    "VEDL":       ["2026-04-30"],  # 404.90 -> 289.50 (-28.5%), close 271.55 (-32.9%); Vedanta demerger
+    "TRIVENI":    ["2026-07-22"],  # 471.50 -> 289.95 (-38.5%), close 275.50 (-41.6%)
+    "IIFL":       ["2019-05-30"],  # 291.05 -> 203.95 (-29.9%), close 193.80 (-33.4%), ordinary volume; IIFL Wealth + IIFL Securities
+    "TATACOMM":   ["2019-09-17"],  # 426.60 -> 265.00 (-37.9%), close 278.25 (-34.8%), ordinary volume; surplus land to Hemisphere Properties
+    "NIITLTD":    ["2023-06-08"],  # 173.95 -> 92.15 (-47.0%), close 96.75 (-44.4%); NIIT Learning Systems
+    "THOMASCOOK": ["2019-12-05"],  # 116.70 -> 69.90 (-40.1%), close 66.45 (-43.1%); Quess Corp stake
+    # Was EXCLUDED as "suspected unadjusted split/bonus" until 2026-09-07. A
+    # split halves the price and doubles the share count; here the price
+    # halved (104.45 -> 55.05, close 52.30) while median daily volume FELL
+    # from 726k to 480k and turnover to a third -- value left the company.
+    # Orient Electric was carved out of Orient Paper on this ex-date.
+    "ORIENTPPR":  ["2018-01-11"],
+}
+
+# Series that are continuous but WRONG before a date, with no gap or ex-date
+# to hang the cut on. The bars before the date are dropped on load.
+#
+# HINDPETRO, found 2026-09-07 (audit): its 2013 file has a high/low ratio of
+# 14.6x against BPCL's 2.0x and 20 sessions with a move over 15% against
+# BPCL's none, while its daily return correlation with BPCL stays 0.78 -- a
+# series that TRACKS its peer with the moves amplified several-fold, at a
+# price level (Rs2.25 in August 2013) the stock never traded at. The per-year
+# sigma is 3.4x its liquidity bucket's median in 2013 and 4.1x in 2008; from
+# 2015 it is within 1.2x every year. The audit brief quoted 10.9x and 23
+# sessions from the raw file; the cleaned file gives 14.6x and 20. Same
+# conclusion either way.
+HISTORY_STARTS: dict[str, str] = {
+    "HINDPETRO": "2015-01-01",
+}
+
 
 @dataclass(frozen=True)
 class Config:
     api_key: str
     api_secret: str
+    # The four [universe] lists in config.local.toml. They are the BATCHES the
+    # store was fetched in, not a split: `symbols` the class-assigned five,
+    # `extended` the 2026-08 additions, `holdout` the 150 drawn on 2026-08-23,
+    # `unseen` the 399 screened on 2026-09-02 plus the 504 of batch 2. The key
+    # names are historical -- renaming one silently empties a universe -- and
+    # nothing reads them apart from merged() and excluded(). The
+    # in_sample / out_of_sample properties that used to split them were
+    # deleted on 2026-09-07 (owner's decision 5) along with
+    # scripts.universe_bias, the only thing that read them; the 399 list
+    # survives at commit 2a3e4d2.
     symbols: list[str]
     extended: list[str]
     holdout: list[str]
@@ -295,55 +392,6 @@ class Config:
         return {s: why for s, why in EXCLUDED.items() if s in listed}
 
     @property
-    def in_sample(self) -> list[str]:
-        """Where the parameters were chosen. Results here are not evidence."""
-        return self._dedupe(self.symbols, self.extended)
-
-    # THE SPLIT, decided 2026-09-01, corrected 2026-09-02.
-    #
-    # THESE 101 ARE IN-SAMPLE. Every parameter in this project -- the 2% band,
-    # 20/10 and 55/20, the weekly gate, the risk levels -- was chosen by looking
-    # at them. A set that has been fitted on cannot serve as a holdout however it
-    # is labelled, so no result measured here is evidence that the rules work.
-    #
-    # THE NEW NAMES ARE THE HOLDOUT. When the raw store grows past 3,000 symbols
-    # and the universe widens, the added stocks are the only ones nothing has
-    # ever been tuned on. That is where the rules get their first honest test.
-    #
-    # Two things must hold, or the split is worthless:
-    #   - the new names go through scripts.screen_universe unchanged, so they
-    #     face the same quality gate and are not filtered by hindsight;
-    #   - nothing gets tuned on them. Once a parameter is chosen by looking at
-    #     the holdout it stops being one, and there is no second.
-    #
-    # The dashboard's in-sample / holdout universes were removed on 2026-09-01
-    # because a 44/57 split of stocks that had all been looked at measured
-    # nothing. in_sample and out_of_sample below are what the real split should
-    # be rebuilt from once the new names land.
-
-    @property
-    def out_of_sample(self) -> list[str]:
-        """Stocks no parameter has ever seen.
-
-        NOT `holdout`. That list was drawn on 2026-08-23 and folded into
-        all_symbols the same day, so every parameter since has been chosen with
-        it in view -- it is in-sample and has been all along. The name is kept
-        because config.local.toml still uses it and renaming a key silently
-        empties a universe.
-
-        `unseen` is the real one: the 399 that passed screen_universe on
-        2026-09-02 and have never been looked at. Anything already inside the
-        in-sample set is dropped, so the two can never overlap however the
-        config is edited.
-        """
-        inside = set(self.in_sample) | set(self.holdout)
-        return [s for s in self.unseen if s not in EXCLUDED and s not in inside]
-
-    @property
-    def all_symbols(self) -> list[str]:
-        return self._dedupe(self.symbols, self.extended, self.holdout)
-
-    @property
     def merged(self) -> list[str]:
         """Every screened stock, one universe. THIS is what results are quoted on.
 
@@ -367,10 +415,11 @@ class Config:
         SO THE EXPOSURE IS MULTIPLE TESTING, NOT CONTAMINATION, and a holdout is
         a blunt instrument against it: it spends 80% of the data to control for
         something a bootstrap controls for on all of it. scripts.universe_bias
-        measured the exposure directly -- 13 different variants won across 25
-        fresh draws. The replacements are the tests traders actually run: a
-        trade bootstrap, regime splits, parameter plateaus, worst-draw baskets.
-        Every one of them is stronger on 500 stocks than on 101.
+        (deleted 2026-09-07 with the split it measured) found the exposure
+        directly -- 13 different variants won across 25 fresh draws. The
+        replacements are the tests traders actually run: a trade bootstrap,
+        regime splits, parameter plateaus, worst-draw baskets. Every one of
+        them is stronger on 500 stocks than on 101.
 
         WHAT MERGING DOES NOT FIX, so that nothing here is read as a clean bill:
         the 101 are still winners, now ~20% of the deck instead of 100%, so that

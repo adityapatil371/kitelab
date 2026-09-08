@@ -58,14 +58,24 @@ class ConfigUniverse(unittest.TestCase):
         cfg = config.load()
         self.assertEqual(len(cfg.merged), len(set(cfg.merged)))
 
-    def test_merged_contains_both_sides_of_the_retired_split(self):
+    def test_merged_holds_every_configured_list(self):
+        """The four [universe] lists are batches, not a split (2026-09-07)."""
         cfg = config.load()
-        self.assertTrue(set(cfg.all_symbols) <= set(cfg.merged))
-        self.assertTrue(set(cfg.out_of_sample) <= set(cfg.merged))
+        listed = {*cfg.symbols, *cfg.extended, *cfg.holdout, *cfg.unseen}
+        self.assertEqual(set(cfg.merged), listed - set(config.EXCLUDED))
 
-    def test_the_two_sides_of_the_old_split_never_overlap(self):
+    def test_the_old_split_is_gone(self):
+        """in_sample / out_of_sample were deleted with scripts.universe_bias
+        (owner's decision 5, 2026-09-07). Nothing may grow them back."""
         cfg = config.load()
-        self.assertEqual(set(cfg.all_symbols) & set(cfg.out_of_sample), set())
+        for name in ("in_sample", "out_of_sample", "all_symbols"):
+            self.assertFalse(hasattr(cfg, name), name)
+
+    def test_every_demerger_is_a_stock_the_config_knows(self):
+        cfg = config.load()
+        known = set(cfg.merged) | set(config.EXCLUDED)
+        for symbol in config.DEMERGERS:
+            self.assertIn(symbol, known)
 
     def test_excluded_symbols_reach_no_universe(self):
         """Each exclusion carries a measurement that justifies it; a stock that

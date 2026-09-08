@@ -43,8 +43,8 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = config.load()
-    # cfg.in_sample / cfg.out_of_sample are for scripts.universe_bias only -- see
-    # CLAUDE.md. This script quotes the merged universe like everything else.
+    # One universe (config.Config.merged), like everything else since the
+    # in-sample/holdout split was retired on 2026-09-03.
     members = cfg.merged
     builders = {"Breakout": lambda s: strategies.ath_breakout_trades(s, trailing_stops=True),
                 "EMA": backtest.simulate}

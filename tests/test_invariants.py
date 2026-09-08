@@ -64,6 +64,36 @@ class BooksBalance(unittest.TestCase):
         counted = (len(r["taken"]) + r["skipped_cash"] + r["skipped_size"]
                    + r["skipped_busy"] + r["skipped_tiny"] + r["skipped_liquidity"])
         self.assertLessEqual(counted, r["signals"])
+        # skipped_tiny is the sum of its two halves (2026-09-07, audit D4) and
+        # stays for one release so nothing reading it breaks.
+        self.assertEqual(r["skipped_tiny"], r["skipped_tiny_cash"] + r["skipped_tiny_risk"])
+
+    def test_the_daily_curve_ends_where_the_ledger_settled(self):
+        """One book (2026-09-07, audit A9): the curve is read off run()'s
+        ledger, so its last point is the settled final and its cash line is
+        the account's cash. Before, the curve kept its own accounting and on
+        GOLD at Rs1cr / 1% / 2006 ended Rs30 lakh below the settled final."""
+        with account():
+            r = portfolio.run(spread_of_trades(20), 200_000, 0.02)
+        self.assertAlmostEqual(r["curve"][-1][1], r["final"], places=2)
+        self.assertAlmostEqual(r["cash_curve"][-1][1], r["final"], places=2)
+
+    def test_a_future_on_margin_keeps_the_same_books(self):
+        """The case the second ledger got wrong: margin in, the move settled
+        in cash, and never the full notional."""
+        gold = trade(symbol="GOLD", entry="2020-01-02", exit_="2020-01-20",
+                     entry_price=160_000.0, exit_price=170_000.0, stop=155_000.0)
+        gold["multiplier"], gold["margin_pct"], gold["fee_rate"] = 100.0, 0.06, 0.0005
+        prices = {"GOLD": [(pd.Timestamp(f"2020-01-{d:02d}"), 160_000.0 + 500.0 * d)
+                           for d in range(1, 31)]}
+        with account(prices=prices):
+            r = portfolio.run([gold, *spread_of_trades(6)], 50_000_000, 0.05)
+        self.assertIn("GOLD", {t["symbol"] for t in r["taken"]})
+        self.assertAlmostEqual(r["curve"][-1][1], r["final"], places=2)
+        self.assertAlmostEqual(r["final"], 50_000_000 + sum(t["net"] for t in r["taken"]),
+                               places=4)
+        for _, cash in r["cash_curve"]:
+            self.assertGreaterEqual(float(cash), -1e-6)
 
 
 class NothingKnownEarly(unittest.TestCase):
@@ -115,6 +145,12 @@ class BorderCases(unittest.TestCase):
         self.assertGreater(r["final"], 0)
 
 
+# Recorded 2026-09-07 from spread_of_trades(20) at Rs2,00,000 / 1% -- see
+# Golden.test_a_known_trade_list_gives_the_recorded_account for the rule.
+GOLDEN = {"taken": 20, "final": 200336.02, "cagr_pct": 0.2240,
+          "max_drawdown_pct": -5.4183, "charges": 1270.98}
+
+
 class Golden(unittest.TestCase):
     """A fixed input with a recorded answer.
 
@@ -126,6 +162,29 @@ class Golden(unittest.TestCase):
     """
 
     def test_a_known_trade_list_gives_the_recorded_account(self):
+        """spread_of_trades(20) through the account at Rs2,00,000 / 1%.
+
+        Until 2026-09-07 this test never called portfolio.run (audit E2): it
+        pinned one simulated trade's entry, stop and exit, and nothing pinned
+        the ACCOUNT -- the number the whole board ranks on. The values below
+        were generated from the code after the 2026-09-07 repairs (one-book
+        ledger, the fractional flag, the tiny-position split, the cap
+        re-check, the annualisation span).
+
+        A CHANGE TO THESE NUMBERS MUST BE EXPLAINED IN THE COMMIT THAT MAKES
+        IT: which rule moved, and by how much. Updating the constants without
+        that explanation defeats the only test here that can see silent drift.
+        """
+        with account():
+            r = portfolio.run(spread_of_trades(20), 200_000, 0.01)
+        self.assertEqual(len(r["taken"]), GOLDEN["taken"])
+        self.assertAlmostEqual(r["final"], GOLDEN["final"], places=2)
+        self.assertAlmostEqual(r["cagr_pct"], GOLDEN["cagr_pct"], places=2)
+        self.assertAlmostEqual(r["max_drawdown_pct"], GOLDEN["max_drawdown_pct"], places=2)
+        self.assertAlmostEqual(sum(t["charges"] for t in r["taken"]), GOLDEN["charges"],
+                               places=2)
+
+    def test_a_known_bar_sequence_gives_the_recorded_trade(self):
         rows = [FLAT,
                 (100, 112, 90, 110),        # entry: close 110, stop 90
                 (110, 130, 108, 128),

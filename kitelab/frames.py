@@ -21,6 +21,7 @@ from functools import lru_cache
 
 import pandas as pd
 
+from . import config
 from .config import CLEAN
 
 SESSION_OPEN = pd.Timedelta(hours=9, minutes=15)
@@ -181,6 +182,229 @@ def enforce_containment(frame: pd.DataFrame, symbol: str,
     return frame
 
 
+# The interval names the daily path is called with: frames.daily says "daily",
+# clean_data passes the file suffix "day", and load() speaks in TIMEFRAMES.
+DAILY_INTERVALS = {"day", "daily", "1d"}
+
+
+def _is_daily(interval: str) -> bool:
+    return interval in DAILY_INTERVALS
+
+
+def dedupe_sessions(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
+    """One bar per session: normalise the stamp to the date, keep the last.
+
+    Added 2026-09-07. COALINDIA, ONGC and PETRONET each carried 2015-12-31
+    twice -- once stamped 00:00 and once 09:15, identical OHLCV -- because
+    fetch.py's drop_duplicates ran on the raw stamp, before anything
+    normalised it. Across the store: 16 duplicated sessions in CLEAN, 21 in
+    RAW (GOLD, SILVER and CRUDEOIL each hold three identical pairs stamped
+    10:00 and 12:00; NIFTY BANK holds four with junk stamps such as 08:59:23
+    and 11:54:10). A doubled session doubles that day's volume in every
+    turnover measure and puts two closes on one date in every resampler.
+
+    The daily frame's ts column comes out NORMALISED, which frames.daily did
+    already; doing it here means the cleaned files on disk carry dates too.
+    `keep="last"` is the later raw stamp, which for the NIFTY BANK pairs is
+    the one closer to the session close.
+    """
+    if frame.empty or not _is_daily(interval):
+        return frame
+    stamps = pd.to_datetime(frame["ts"])
+    normalised = stamps.dt.normalize()
+    if normalised.equals(stamps) and not normalised.duplicated().any():
+        return frame
+    frame = frame.copy()
+    frame["ts"] = normalised
+    doubled = frame["ts"].duplicated(keep="last")
+    if doubled.any():
+        tag = f"{symbol}:{interval}:sessions"
+        if tag not in _CLEAN_WARNED:
+            dates = ", ".join(str(d.date()) for d in frame.loc[doubled, "ts"].head(3))
+            print(f"[kitelab] {symbol}: dropped {int(doubled.sum()):,} duplicated "
+                  f"{interval} session(s) after normalising the stamp ({dates}"
+                  f"{', ...' if doubled.sum() > 3 else ''})")
+            _CLEAN_WARNED.add(tag)
+        frame = frame.loc[~doubled]
+    return frame.reset_index(drop=True)
+
+
+# A gap this long between consecutive session dates is a LISTING BREAK: what
+# is on the far side is a different instrument, or the same one after a
+# suspension long enough that nothing traded across it could have been held.
+#
+# Measured 2026-09-07 (audit A6/A7) on the 999-stock universe: 10 files carry
+# a gap over 180 days. ROTO was suspended 2018-04-13 -> 2022-04-21 (1,469 days,
+# Rs83.35 -> Rs37.55) and a cached trade held straight through it at -53.5R.
+# STARHEALTH has 61 bars from 2016-01-04 that predate its 2021-12-10 listing;
+# HOMEFIRST 90 bars in 2018 before listing 2021-02-03; PIXTRANS 113 bars
+# before a 737-day gap. 180 days rather than 90: the longest ordinary hole in
+# a listed stock's daily file is under a month, and 180 keeps clear of the
+# 169-day seam in JASH, which is a symbol reuse and belongs in EXCLUDED, not a
+# rule that would then have to explain itself on every 4-month suspension.
+LISTING_BREAK_DAYS = 180
+
+
+def history_start(symbol: str, dates: pd.Series,
+                  demergers: dict[str, list[str]] | None = None,
+                  history_starts: dict[str, str] | None = None):
+    """Where a symbol's usable history begins, or None if all of it is usable.
+
+    `dates` are the normalised session dates in order. Three things restart the
+    history, and the LATEST of them wins:
+
+      - a gap over LISTING_BREAK_DAYS between consecutive sessions;
+      - a demerger ex-date from config.DEMERGERS: Kite adjusts splits and
+        bonuses at serve time but not demergers, so the close on the far side
+        of one is a different company's price;
+      - an explicit start in config.HISTORY_STARTS, for a series that is
+        continuous but wrong (HINDPETRO before 2015).
+
+    Returns (start, reason); the reason is the text printed when bars are cut.
+    """
+    if demergers is None:
+        demergers = config.DEMERGERS
+    if history_starts is None:
+        history_starts = config.HISTORY_STARTS
+    if len(dates) == 0:
+        return None
+    dates = pd.to_datetime(pd.Series(dates)).dt.normalize().reset_index(drop=True)
+    candidates: list[tuple[pd.Timestamp, str]] = []
+    gaps = dates.diff().dt.days
+    breaks = gaps[gaps > LISTING_BREAK_DAYS]
+    if len(breaks):
+        at = breaks.index[-1]
+        candidates.append((dates[at], f"{int(breaks.iloc[-1]):,}-day listing break"))
+    for ex_date in demergers.get(symbol, []):
+        ex = pd.Timestamp(ex_date)
+        after = dates[dates >= ex]
+        if len(after):
+            candidates.append((after.iloc[0], f"demerger ex-date {ex.date()}"))
+    if symbol in history_starts:
+        ex = pd.Timestamp(history_starts[symbol])
+        after = dates[dates >= ex]
+        if len(after):
+            candidates.append((after.iloc[0], "config.HISTORY_STARTS"))
+    if not candidates:
+        return None
+    start, reason = max(candidates, key=lambda c: c[0])
+    if start <= dates.iloc[0]:
+        return None
+    return start, reason
+
+
+def drop_before_history_start(frame: pd.DataFrame, symbol: str,
+                              interval: str) -> pd.DataFrame:
+    """Cut everything before the last listing break / demerger / configured start.
+
+    Daily frames only; the intraday frame inherits it in base_15m, which trims
+    to the first DAILY bar. Every consumer of daily bars -- frames.daily,
+    frames.load, the weekly/monthly/quarterly resamplers, and clean_data's
+    cleaned copies -- goes through sanitise(), so this is the one place the rule
+    has to live.
+    """
+    if frame.empty or not _is_daily(interval):
+        return frame
+    found = history_start(symbol, frame["ts"])
+    if found is None:
+        return frame
+    start, reason = found
+    doomed = pd.to_datetime(frame["ts"]) < start
+    if not doomed.any():
+        return frame
+    tag = f"{symbol}:{interval}:history"
+    if tag not in _CLEAN_WARNED:
+        print(f"[kitelab] {symbol}: dropped {int(doomed.sum()):,} {interval} bars "
+              f"before {start.date()} ({reason}; history restarts there)")
+        _CLEAN_WARNED.add(tag)
+    return frame.loc[~doomed].reset_index(drop=True)
+
+
+# An intraday session whose last close is this far from the daily close is
+# priced in a different unit from the daily bar. Measured 2026-09-07 over every
+# 15-minute file with a daily twin: 1,837 sessions differ by 2-5%, 77 by
+# 5-10%, 4 by 10-15% -- the closing-auction / VWAP-vs-last-trade effect
+# (MUTHOOTFIN 2018-12-06 at 5.8%, IOC 2018-10-04 at 9.2%) -- then NOTHING
+# between 15% and 50%, and four sessions above it: ALANKIT 2015-09-22 at 5.0x,
+# DIVISLAB 2015-09-22 at 2.005x, ALANKIT 2016-10-18 at 2.002x, MOTHERSON
+# 2015-07-22 at 1.505x. Those are ex-dates where Kite adjusted the daily bar
+# for the split/bonus but not the 15-minute bars. 0.25 sits in the empty band
+# with a 2x margin to the smallest hit and to the largest auction mismatch.
+EX_DATE_MISMATCH = 0.25
+
+
+def rescale_ex_date_sessions(frame: pd.DataFrame, day: pd.DataFrame,
+                             symbol: str) -> pd.DataFrame:
+    """Scale an intraday session onto its daily bar when the two disagree by
+    more than EX_DATE_MISMATCH.
+
+    The daily bar is the authority: it is what Kite adjusts, and it is what
+    every close-based rule trades on. Price is scaled by daily close / last
+    intraday close; volume is scaled so the session's sum matches the daily
+    volume, because the intraday volume on those sessions is in pre-action
+    shares too (DIVISLAB's 15-minute bars sum to 0.50x the daily volume on its
+    2:1 day, ALANKIT's to 0.20x on its 5x day, MOTHERSON's to 0.66x).
+
+    Nothing under the threshold is touched, so the 4-13% closing-auction
+    mismatches stay exactly as Kite served them.
+    """
+    if frame.empty or day.empty:
+        return frame
+    session = frame["ts"].dt.normalize()
+    grouped = frame.groupby(session)
+    mine = pd.DataFrame({"m_close": grouped["close"].last(),
+                         "m_volume": grouped["volume"].sum()})
+    ref = day.set_index(pd.to_datetime(day["ts"]).dt.normalize())[["close", "volume"]]
+    ref = ref[~ref.index.duplicated(keep="last")]
+    joined = mine.join(ref.rename(columns={"close": "d_close", "volume": "d_volume"}),
+                       how="inner")
+    factor = joined["d_close"] / joined["m_close"]
+    hit = (factor - 1).abs() > EX_DATE_MISMATCH
+    if not hit.any():
+        return frame
+    frame = frame.copy()
+    for stamp, row in joined[hit].iterrows():
+        mask = (session == stamp).to_numpy()
+        scale = row["d_close"] / row["m_close"]
+        for col in ("open", "high", "low", "close"):
+            frame.loc[mask, col] = frame.loc[mask, col] * scale
+        if row["m_volume"] > 0 and row["d_volume"] > 0:
+            v_scale = row["d_volume"] / row["m_volume"]
+            frame.loc[mask, "volume"] = (frame.loc[mask, "volume"] * v_scale).round()
+    frame["volume"] = frame["volume"].astype("int64")
+    tag = f"{symbol}:15-minute:ex-date"
+    if tag not in _CLEAN_WARNED:
+        shown = ", ".join(f"{d.date()} x{1 / f:.2f}" for d, f in factor[hit].items())
+        print(f"[kitelab] {symbol}: rescaled {int(hit.sum())} intraday session(s) "
+              f"priced in pre-corporate-action units onto the daily bar ({shown})")
+        _CLEAN_WARNED.add(tag)
+    return frame
+
+
+def market_wide_days(closes: dict[str, pd.Series], drop: float = 0.08,
+                     share: float = 0.25, min_symbols: int = 50) -> pd.DatetimeIndex:
+    """Sessions on which at least `share` of the symbols with a bar fell over
+    `drop` close-to-close. A single stock halving on one of these is a crash,
+    not a corporate action.
+
+    Measured 2026-09-07 on the 999-stock universe: 2008-01-21/22, the October
+    2008 run, 2015-08-24, 2020-03-12/23 and 2024-06-04 are the days that
+    qualify; on every demerger ex-date in config.DEMERGERS under 5% of stocks
+    fell that far. `min_symbols` stops a Saturday session with three bars from
+    counting as a market-wide day.
+
+    `closes` maps symbol -> Series of closes indexed by normalised date.
+    """
+    if not closes:
+        return pd.DatetimeIndex([])
+    returns = pd.DataFrame({s: c[~c.index.duplicated(keep="last")].pct_change()
+                            for s, c in closes.items()})
+    counted = returns.notna().sum(axis=1)
+    fell = (returns < -drop).sum(axis=1)
+    hit = (counted >= min_symbols) & (fell / counted.where(counted > 0) >= share)
+    return pd.DatetimeIndex(returns.index[hit])
+
+
 def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
     """Repair non-positive OHLC values in the stored candles, and drop bars that
     record a price nothing traded at.
@@ -198,31 +422,37 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
 
     A third: bars whose HIGH/LOW do not contain their own open and close. See
     enforce_containment.
+
+    Two more, daily frames only, added 2026-09-07: one bar per session
+    (dedupe_sessions) and nothing before the last listing break, demerger
+    ex-date or configured start (drop_before_history_start). They run last
+    so the gap arithmetic sees clean dates. scripts.clean_data mirrors this
+    order stage by stage and checks its result against this function.
     """
     cols = ["open", "high", "low", "close"]
     broken = (frame[cols] <= 0).any(axis=1)
-    if not broken.any():
-        return drop_untraded_outliers(
-            enforce_containment(frame, symbol, interval), symbol, interval)
-    count = int(broken.sum())
-    dead = frame["close"] <= 0
-    frame = frame.loc[~dead].copy()
-    for name, fallback in (("open", "close"), ("high", None), ("low", None)):
-        column = frame[name]
-        if name == "open":
-            frame[name] = column.where(column > 0, frame[fallback])
-        elif name == "high":
-            frame[name] = column.where(column > 0, frame[["open", "close"]].max(axis=1))
-        else:
-            frame[name] = column.where(column > 0, frame[["open", "close"]].min(axis=1))
-    tag = f"{symbol}:{interval}"
-    if tag not in _CLEAN_WARNED:
-        print(f"[kitelab] {symbol}: repaired {count:,} {interval} bars with "
-              f"non-positive prices (Kite data gaps), dropped {int(dead.sum())}")
-        _CLEAN_WARNED.add(tag)
-    return drop_untraded_outliers(
-        enforce_containment(frame.reset_index(drop=True), symbol, interval),
-        symbol, interval)
+    if broken.any():
+        count = int(broken.sum())
+        dead = frame["close"] <= 0
+        frame = frame.loc[~dead].copy()
+        for name, fallback in (("open", "close"), ("high", None), ("low", None)):
+            column = frame[name]
+            if name == "open":
+                frame[name] = column.where(column > 0, frame[fallback])
+            elif name == "high":
+                frame[name] = column.where(column > 0, frame[["open", "close"]].max(axis=1))
+            else:
+                frame[name] = column.where(column > 0, frame[["open", "close"]].min(axis=1))
+        tag = f"{symbol}:{interval}"
+        if tag not in _CLEAN_WARNED:
+            print(f"[kitelab] {symbol}: repaired {count:,} {interval} bars with "
+                  f"non-positive prices (Kite data gaps), dropped {int(dead.sum())}")
+            _CLEAN_WARNED.add(tag)
+        frame = frame.reset_index(drop=True)
+    frame = drop_untraded_outliers(
+        enforce_containment(frame, symbol, interval), symbol, interval)
+    frame = dedupe_sessions(frame, symbol, interval)
+    return drop_before_history_start(frame, symbol, interval)
 
 
 
@@ -259,8 +489,14 @@ def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
 
     Some symbols return intraday history from before the equity listed -- IRFC serves
     bars from 2018 despite listing in 2021, almost certainly from listed debt under the
-    same trading symbol. Those bars are dropped by default, using the first native daily
-    bar as the listing date.
+    same trading symbol. Those bars are dropped by default, using the first DAILY bar
+    as the listing date.
+
+    Since 2026-09-07 that first daily bar is read through daily(), i.e. AFTER the
+    listing-break / demerger / HISTORY_STARTS cut, so the intraday frame restarts
+    where the daily one does -- ROTO's 15-minute bars from 2018 go with its daily
+    ones. The same daily frame then rescales any session Kite left in
+    pre-corporate-action units (rescale_ex_date_sessions).
     """
     path = _path(symbol, "15minute")
     if not path.exists():
@@ -269,17 +505,20 @@ def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
     frame = sanitise(frame, symbol, "15-minute")
 
     native = _path(symbol, "day")
-    if trim_orphans and native.exists():
-        listed_on = pd.read_parquet(native, columns=["ts"])["ts"].min().normalize()
-        orphans = frame["ts"] < listed_on
-        if orphans.any():
-            if symbol not in _TRIM_WARNED:
-                print(
-                    f"[kitelab] {symbol}: dropped {int(orphans.sum()):,} intraday bars "
-                    f"before {listed_on.date()} (predate the equity listing)."
-                )
-                _TRIM_WARNED.add(symbol)
-            frame = frame.loc[~orphans].reset_index(drop=True)
+    if native.exists():
+        day = daily(symbol)
+        if trim_orphans and not day.empty:
+            listed_on = day["ts"].min()
+            orphans = frame["ts"] < listed_on
+            if orphans.any():
+                if symbol not in _TRIM_WARNED:
+                    print(
+                        f"[kitelab] {symbol}: dropped {int(orphans.sum()):,} intraday bars "
+                        f"before {listed_on.date()} (predate the first usable daily bar)."
+                    )
+                    _TRIM_WARNED.add(symbol)
+                frame = frame.loc[~orphans].reset_index(drop=True)
+        frame = rescale_ex_date_sessions(frame, day, symbol)
     return frame
 
 
@@ -325,25 +564,35 @@ def _resample_cached(symbol: str, minutes: int) -> pd.DataFrame:
     return _resample_intraday(base_15m(symbol), minutes)
 
 
-def _daily_from_intraday(base: pd.DataFrame) -> pd.DataFrame:
+def _daily_from_intraday(base: pd.DataFrame, symbol: str) -> pd.DataFrame:
     indexed = base.set_index("ts").sort_index()
     out = indexed.groupby(indexed.index.normalize()).agg(AGG)
     out.index.name = "ts"
     out = out.reset_index()
     out["volume"] = out["volume"].astype("int64")
-    return out.sort_values("ts").reset_index(drop=True)
+    out = out.sort_values("ts").reset_index(drop=True)
+    # The intraday bars were sanitised as intraday; the daily rules (one bar per
+    # session, nothing before the last break) still have to run on the result.
+    return sanitise(out, symbol, "daily")
 
 
 @lru_cache(maxsize=_CACHE_SYMBOLS * 2)
 def daily(symbol: str, prefer_native: bool = True) -> pd.DataFrame:
-    """Daily candles, from Kite's `day` interval if available, else from 15-min bars."""
+    """Daily candles, from Kite's `day` interval if available, else from 15-min bars.
+
+    Sorted on the RAW stamp before sanitise() normalises it, so that when a
+    session is stored twice (00:00 and 09:15) "keep last" means the later
+    stamp. Every daily consumer -- load("1d"/"1w"/"1M"), weekly(), monthly(),
+    quarterly(), portfolio's mark-to-market, slippage's liquidity -- reads
+    through here, which is what makes the rules in sanitise() universal.
+    """
     native = _path(symbol, "day")
     if prefer_native and native.exists():
         frame = pd.read_parquet(native)
-        frame["ts"] = pd.to_datetime(frame["ts"]).dt.normalize()
-        frame = frame.sort_values("ts").reset_index(drop=True)
+        frame["ts"] = pd.to_datetime(frame["ts"])
+        frame = frame.sort_values("ts", kind="stable").reset_index(drop=True)
         return sanitise(frame, symbol, "daily")
-    return _daily_from_intraday(base_15m(symbol))
+    return _daily_from_intraday(base_15m(symbol), symbol)
 
 
 def _group_daily(day_frame: pd.DataFrame, key) -> pd.DataFrame:

@@ -65,6 +65,18 @@ RULES = [
      f"more than {1 / frames.UNTRADED_OUTLIER_FACTOR:.0f}x in either "
      f"direction. No volume means no trade, so there is no price to repair "
      f"towards -- the bar did not happen."),
+    ("dedupe-sessions",
+     "Daily files only. The stamp is normalised to the date and a session "
+     "stored twice (COALINDIA 2015-12-31 at 00:00 and 09:15, identical) keeps "
+     "its last copy. fetch.py deduplicated on the raw stamp, which missed "
+     "these. Added 2026-09-07."),
+    ("drop-before-history-start",
+     f"Daily files only. Bars before the LAST of: a gap over "
+     f"{frames.LISTING_BREAK_DAYS} days (a listing break -- ROTO's 2018-2022 "
+     f"suspension, STARHEALTH's pre-listing bars), a demerger ex-date in "
+     f"config.DEMERGERS, or a config.HISTORY_STARTS date, are dropped; the "
+     f"history restarts there. The intraday file inherits it on load. Added "
+     f"2026-09-07."),
     ("passthrough-instruments",
      f"Files named {PASSTHROUGH_PREFIX}*.parquet are symbol master dumps, not "
      f"candles. Copied through unchanged; no rule applies."),
@@ -120,15 +132,21 @@ def clean_frame(symbol: str, interval: str, raw: pd.DataFrame) -> tuple[pd.DataF
     low = d[["low", "open", "close"]].min(axis=1)
     counts["widen-containment"] = int(((high != d["high"]) | (low != d["low"])).sum())
 
-    # Rules 3 and 4 are applied by frames itself. sanitise() prints as it repairs;
+    # Rules 3 to 6 are applied by frames itself. sanitise() prints as it repairs;
     # this script prints its own per-file line instead, so that chatter is caught.
-    before_untraded = len(d)
     noise = io.StringIO()
     with redirect_stdout(noise):
         d = frames.enforce_containment(d, symbol, interval)
+        before = len(d)
         d = frames.drop_untraded_outliers(d, symbol, interval)
+        counts["drop-untraded-outlier"] = before - len(d)
+        before = len(d)
+        d = frames.dedupe_sessions(d, symbol, interval)
+        counts["dedupe-sessions"] = before - len(d)
+        before = len(d)
+        d = frames.drop_before_history_start(d, symbol, interval)
+        counts["drop-before-history-start"] = before - len(d)
         reference = frames.sanitise(raw.copy(), symbol, interval)
-    counts["drop-untraded-outlier"] = before_untraded - len(d)
 
     d = d.reset_index(drop=True)
     check = reference.reset_index(drop=True)

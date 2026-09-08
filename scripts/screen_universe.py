@@ -17,20 +17,33 @@ THE QUALITY GATE. Every defect this project has been bitten by is a rejection ru
 here, so bad data is refused at the door instead of being discovered months later in
 a published number:
 
-    history        >= MIN_YEARS of daily bars. The Q/M/W stack needs 20 QUARTERLY
-                   bars to mean anything; a stock with 89 bars cannot support the
-                   indicators computed from it.
+    history        >= MIN_YEARS of daily bars SINCE THE LAST LISTING BREAK -- a gap
+                   over frames.LISTING_BREAK_DAYS, a config.DEMERGERS ex-date or a
+                   config.HISTORY_STARTS date -- because that is where
+                   frames.sanitise() restarts the history on load (2026-09-07).
+                   Until then it measured from the first bar, so STARHEALTH's 61
+                   bars from 2016 bought it five years it did not have. The Q/M/W
+                   stack needs 20 QUARTERLY bars to mean anything.
     liquidity      >= MIN_TURNOVER median daily traded value. Below that, fills are
                    fiction and the slippage model is guessing.
-    seams          no long gap with the price on a different level either side --
-                   the VINEETLAB defect (Rs1,556 -> Rs41 across 350 days).
     padding        no run of invented bars in front of the first real trade -- the
                    JMFINANCIL defect (191 bars at Rs0.14 before Rs30.99).
-    splits         no single-day move whose ratio lands on a common split fraction.
-                   Kite serves prices UNADJUSTED, so a 2:1 split reads as a 50%
-                   crash and stops a position out at a loss that never happened.
+    demergers      no close-to-close DROP over 30% on a day that was not market-wide.
+                   Kite adjusts splits and bonuses at serve time (HAL 2:1 2023-07-28
+                   1926.50 -> 1964.50; NESTLEIND 1:10 2024-01-05) but not demergers,
+                   so the drop is the value that left the parent. Rejected until the
+                   ex-date is entered in config.DEMERGERS, after which history restarts
+                   there and the stock passes. This replaced the "unadjusted split"
+                   gate on 2026-09-07: of its four verdicts, one was a demerger
+                   (ORIENTPPR) and three were real moves or a reused symbol.
     integrity      no bar whose high/low fails to contain its own open/close, no
-                   negative volume, no duplicated or out-of-order timestamps.
+                   negative volume, no out-of-order timestamps, no two bars on one
+                   SESSION that disagree (a session stored twice with identical
+                   OHLCV is deduplicated, as sanitise does).
+
+    seams          -- the VINEETLAB defect (Rs1,556 -> Rs41 across 350 days) -- are
+                   no longer a rejection. The listing-break rule cuts the history at
+                   the gap instead, the same repair every existing member gets.
 
 STRATIFICATION. Survivors are bucketed by median traded value and sampled evenly
 across the buckets, so the universe spans micro to large rather than drifting to
@@ -45,7 +58,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from kitelab import config
+from kitelab import config, frames
 from kitelab.config import CLEAN, DATA
 
 MIN_YEARS = 5.0            # 20 quarterly bars for the Q/M/W stack
@@ -53,7 +66,26 @@ MIN_BARS = 1_100          # ~4.4 trading years; belt and braces with MIN_YEARS
 MIN_TURNOVER = 2_000_000  # Rs20 lakh median daily traded value
 BUCKETS = [(0, 1e7, "micro  < Rs1cr"), (1e7, 5e7, "small  Rs1-5cr"),
            (5e7, 2.5e8, "mid    Rs5-25cr"), (2.5e8, float("inf"), "large  > Rs25cr")]
-SPLIT_RATIOS = [1/2, 1/3, 1/4, 1/5, 1/10, 2/5, 3/5, 2/3, 3/2, 2.0, 5/2, 3.0, 5.0, 10.0]
+# A close-to-close drop this large on a day the market did not crash is a
+# demerger until shown otherwise. Every entry in config.DEMERGERS is between
+# -25% and -56% close-to-close; the smallest, VEDL, is -32.9%.
+DEMERGER_DROP = 0.30
+
+
+def market_wide_days() -> pd.DatetimeIndex:
+    """Crash days, measured on the current universe's cleaned daily closes.
+
+    A candidate halving on one of these (UNITECH on 2008-10-24, when half the
+    universe fell over 8%) is not a corporate action. Read once per run.
+    """
+    closes = {}
+    for symbol in config.load().merged:
+        try:
+            day = frames.daily(symbol)
+        except SystemExit:
+            continue
+        closes[symbol] = day.set_index("ts")["close"]
+    return frames.market_wide_days(closes)
 
 
 def ordinary_equities() -> pd.DataFrame:
@@ -84,13 +116,20 @@ def ordinary_equities() -> pd.DataFrame:
     return eq.drop_duplicates("tradingsymbol").reset_index(drop=True), dumps[-1]
 
 
-def assess(symbol: str) -> dict | None:
-    """Every quality check, on the daily file. None if there is no file yet."""
+def assess(symbol: str, market_wide=None) -> dict | None:
+    """Every quality check, on the daily file. None if there is no file yet.
+
+    `market_wide` is the index of crash days (market_wide_days()); a drop on
+    one of them is not read as a demerger. None means no such exemption.
+    """
     # RAW, not CLEAN. A candidate has only ever been fetched -- clean_data
     # processes the WORKING SET, which by definition a candidate is not in
     # yet, so its cleaned copy does not exist. Screening is triage of raw
     # arrivals, the same category as data_audit, and reading CLEAN here would
     # have found nothing and rejected every candidate for want of history.
+    # The two rules sanitise() applies to daily files -- one bar per session,
+    # history from the last break -- are applied here by hand for the same
+    # reason, so the candidate is measured as it would be traded.
     p = DATA / f"{symbol}_day.parquet"
     if not p.exists():
         return None
@@ -101,59 +140,75 @@ def assess(symbol: str) -> dict | None:
     if d.empty:
         return {"symbol": symbol, "reject": "empty file"}
 
-    ts = pd.to_datetime(d["ts"])
-    o, h, l, c = (d[k].to_numpy(float) for k in ["open", "high", "low", "close"])
-    v = d["volume"].to_numpy(float)
-    traded = v > 0
     out = {"symbol": symbol, "bars": len(d), "reject": ""}
 
     def fail(why: str) -> dict:
         out["reject"] = why
         return out
 
-    if not traded.any():
-        return fail("no traded bar at all")
-    years = (ts.iloc[-1] - ts.iloc[0]).days / 365.25
-    out["years"] = round(years, 1)
-    turnover = float(np.median((c * v)[traded]))
-    out["turnover"] = turnover
-
-    if ts.duplicated().any():
-        return fail("duplicate timestamps")
+    ts = pd.to_datetime(d["ts"])
     if (ts.diff() < pd.Timedelta(0)).any():
         return fail("timestamps out of order")
+    session = ts.dt.normalize()
+    doubled = session.duplicated(keep="last")
+    if doubled.any():
+        # Identical twins are the fetch.py stamp defect and are dropped, as on
+        # load. Twins that DISAGREE are two different bars claiming one date.
+        conflicting = d.assign(_s=session).groupby("_s")["close"].nunique() > 1
+        if conflicting.any():
+            return fail("two bars on one session with different closes")
+        d = d.loc[~doubled].reset_index(drop=True)
+        session = session[~doubled].reset_index(drop=True)
+    out["duplicate_sessions"] = int(doubled.sum())
+
+    o, h, l, c = (d[k].to_numpy(float) for k in ["open", "high", "low", "close"])
+    v = d["volume"].to_numpy(float)
+    traded = v > 0
+    if not traded.any():
+        return fail("no traded bar at all")
     if (v < 0).any():
         return fail("negative volume")
-    if len(d) < MIN_BARS or years < MIN_YEARS:
-        return fail(f"history {years:.1f}y / {len(d)} bars < {MIN_YEARS}y")
+
+    # History is what survives the last listing break, demerger ex-date or
+    # configured start -- the same cut frames.sanitise() makes on load.
+    found = frames.history_start(symbol, session)
+    start = found[0] if found else session.iloc[0]
+    out["history_from"] = str(start.date())
+    out["restarted_by"] = found[1] if found else ""
+    since = (session >= start).to_numpy()
+    bars = int(since.sum())
+    years = (session.iloc[-1] - start).days / 365.25
+    out["years"] = round(years, 1)
+    out["bars"] = bars
+    turnover = float(np.median((c * v)[traded & since]))
+    out["turnover"] = turnover
+
+    if bars < MIN_BARS or years < MIN_YEARS:
+        cut = f" since {start.date()} ({out['restarted_by']})" if found else ""
+        return fail(f"history {years:.1f}y / {bars} bars{cut} < {MIN_YEARS}y")
     if turnover < MIN_TURNOVER:
         return fail(f"turnover Rs{turnover:,.0f} < Rs{MIN_TURNOVER:,}")
 
-    pos = (h > 0) & (l > 0) & (o > 0) & (c > 0)
+    pos = (h > 0) & (l > 0) & (o > 0) & (c > 0) & since
     if int((pos & ((h < l) | (h < np.maximum(o, c) - 1e-9)
                    | (l > np.minimum(o, c) + 1e-9))).sum()) > 5:
         return fail("high/low does not contain open/close, repeatedly")
 
-    first = int(traded.argmax())
+    first = int((traded & since).argmax()) - int(since.argmax())
     if first > 20:
         return fail(f"{first} invented bars before the first real trade")
 
-    t = ts[traded].reset_index(drop=True)
-    cc = pd.Series(c[traded]).reset_index(drop=True)
-    gaps = t.diff().dt.days
-    for i in gaps[gaps > 180].index:
-        before, after = cc.iloc[max(0, i - 5):i].median(), cc.iloc[i:i + 5].median()
-        if before and not np.isnan(after) and not (0.4 <= after / before <= 2.5):
-            return fail(f"price seam: {before:,.2f} -> {after:,.2f} across "
-                        f"{int(gaps.iloc[i])} days")
-
+    keep = traded & since
+    t = session[keep].reset_index(drop=True)
+    cc = pd.Series(c[keep]).reset_index(drop=True)
     ratio = cc.to_numpy()[1:] / np.where(cc.to_numpy()[:-1] == 0, np.nan, cc.to_numpy()[:-1])
-    big = np.abs(ratio - 1) > 0.45
-    near = np.zeros(len(ratio), dtype=bool)
-    for k in SPLIT_RATIOS:
-        near |= np.abs(ratio - k) < 0.03 * k
-    if int(np.nansum(near & big)):
-        return fail("suspected unadjusted split/bonus")
+    drops = ratio < 1 - DEMERGER_DROP
+    if market_wide is not None and len(market_wide):
+        drops &= ~t.iloc[1:].isin(market_wide).to_numpy()
+    if int(np.nansum(drops)):
+        i = int(np.nanargmin(np.where(drops, ratio, np.nan)))
+        return fail(f"suspected demerger: {ratio[i] - 1:+.1%} on {t.iloc[i + 1].date()}"
+                    f" -- verify, then add the ex-date to config.DEMERGERS")
     if int(np.nansum(np.abs(ratio - 1) > 0.6)):
         return fail("unexplained single-day move over 60%")
     return out
@@ -202,9 +257,11 @@ def main() -> None:
         return
 
     # ---- rank -------------------------------------------------------------
+    crashes = market_wide_days()
+    print(f"  market-wide crash days on the current universe: {len(crashes)}")
     rows, missing = [], 0
     for s in sorted(set(eq.tradingsymbol) - held):
-        a = assess(s)
+        a = assess(s, crashes)
         if a is None:
             missing += 1
         else:
@@ -255,8 +312,8 @@ def main() -> None:
     target.write_text(
         f"# {len(chosen)} stocks that passed every quality check, sampled evenly\n"
         f"# across liquidity buckets, longest history first within each.\n"
-        "# Fetch them properly, then add them to [universe] holdout in "
-        "config.local.toml:\n"
+        "# Fetch them properly, then add them to [universe] unseen in "
+        "config.local.toml (the batch list; the four lists merge into one universe):\n"
         "#   python -m scripts.backfill --symbols-file data/accepted.txt\n"
         + "\n".join(r["symbol"] for r in sorted(chosen, key=lambda r: r["symbol"])) + "\n")
     print(f"\n  wrote {target} with {len(chosen)} stocks")

@@ -59,8 +59,20 @@ def snap(price: float) -> float:
 
 
 def load_all() -> dict[str, list[dict]]:
+    """Every hand-drawn level, keyed by symbol.
+
+    RAISES when the file is missing. Until 2026-09-07 it returned {} -- and
+    a wiped CLEAN then gave every level strategy zero trades with no message,
+    which read on the board as "the rule never fires" rather than "the input
+    is gone". Missing hand-drawn work is an error, not an empty answer. The
+    one legitimate empty case, drawing the first level ever, is handled in
+    add(), which starts a fresh store when nothing exists yet.
+    """
     if not LEVELS_PATH.exists():
-        return {}
+        raise FileNotFoundError(
+            f"{LEVELS_PATH} is missing. It holds the hand-drawn levels and nothing "
+            f"can rebuild it -- restore it from data/keep/levels.json in the repo "
+            f"(scripts.backup_inputs keeps that copy current).")
     return json.loads(LEVELS_PATH.read_text())
 
 
@@ -72,7 +84,7 @@ def save_all(levels: dict[str, list[dict]]) -> None:
 def add(symbol: str, price: float, kind: str, note: str = "") -> Level:
     level = Level(price=snap(price), kind=kind,
                   created=datetime.now().isoformat(timespec="seconds"), note=note)
-    store = load_all()
+    store = load_all() if LEVELS_PATH.exists() else {}
     store.setdefault(symbol, []).append(asdict(level))
     save_all(store)
     return level

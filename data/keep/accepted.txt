@@ -1,6 +1,8 @@
 # 504 stocks that passed every quality check, sampled evenly
 # across liquidity buckets, longest history first within each.
-# Fetch them properly, then add them to [universe] holdout in config.local.toml:
+# Fetch them properly, then add them to [universe] unseen in config.local.toml
+# (the batch list; the four lists merge into one universe -- they went into
+# `unseen` on 2026-09-02, header corrected 2026-09-07):
 #   python -m scripts.backfill --symbols-file data/accepted.txt
 A2ZINFRA
 AAVAS
