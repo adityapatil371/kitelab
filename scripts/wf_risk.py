@@ -1,4 +1,45 @@
-"""Risk-adjusted comparison: rules vs equal-weight hold. WRITTEN 2026-09-08, NOT YET RUN.
+"""Risk-adjusted comparison: rules vs equal-weight hold. RAN 2026-09-08 (11.6s).
+
+RESULT: THE RISK DEFENCE FAILS. The rules do not buy safety with their lost
+return -- they are the noisier account AND the losing one.
+
+  account            CAGR   maxDD  under water  >20% down  worst 12m  Calmar  matched   k
+  hold              13.97   -55.3       74.5mo      25.5%      -51.6    0.25    13.97 1.00
+  Turtle_1tf_55_20  11.82   -53.0       36.3mo      37.5%      -50.5    0.22     8.98 0.73
+  Turtle_w20_55_20   8.81   -54.8       77.0mo      56.8%      -32.4    0.16     6.68 0.71
+  EMA_b0            -4.43   -87.8      223.8mo      91.9%      -72.3   -0.05    -2.24 0.64
+
+k < 1 for every rule: hold's volatility is only ~0.7x the rule's, so matching
+risk means de-levering the rule, not levering it up. The Turtle is MORE
+volatile than a 1,000-name equal-weight book -- unsurprising for 13-17
+concentrated positions, but it is the opposite of the premise this file was
+written to test. Matched to hold's risk the Turtle compounds at 8.98%/yr
+against hold's 13.97%: it loses on return AND on risk. Every ratio agrees
+(Calmar 0.22 vs 0.25, Sortino 0.72 vs 1.05) and the two caveats below would
+only flatter the rule further, so they do not rescue it.
+
+THE 2008 CRASH-PROTECTION CLAIM WAS AN ARTEFACT OF FREE FILLS. The note this
+file was built on said the Turtle fell 23.5% in 2008 while hold fell 55.3%.
+With fills priced, calendar 2008 is hold -50.4% vs Turtle -50.2%, and
+peak-to-trough hold -55.3% vs Turtle -53.0% -- a tie. The protection was the
+same unpriced illiquidity that produced the fake edge.
+
+Nor is it a shallower ride overall. Drawdowns past -20%, priced fills:
+  hold    4 episodes  (-55.3 2008, -48.2 2018-20, -21.7 2022, -25.0 2024-)
+  Turtle  7 episodes  (-25.1 2006, -53.0 2008, -34.4 2011, -30.8 2015,
+                       -42.3 2018, -46.5 2022, -33.5 2024- unrecovered)
+The Turtle's one genuine win is RECOVERY SPEED, not depth: 36.3 months under
+water at worst against hold's 74.5. It pays for that by sitting more than 20%
+below its own peak on 37.5% of all sessions versus hold's 25.5%.
+
+So "0 of 950 cells beat hold" may now be quoted as a verdict on return AND
+risk. The return-only caveat is discharged.
+
+Reproduce: python3 -m scripts.wf_risk    (output/wf_risk_2026-09-08.csv|.png|.log)
+Drawdown-episode and calendar-year detail came from a throwaway diagnostic that
+re-ran the same curve; the episode table above is its output.
+
+--- original rationale, kept because it is why the file exists -------------
 
 WHY THIS EXISTS. Every verdict on the board so far -- including the
 scripts.wf_daily --capped grid that killed all 950 cells -- ranks on
