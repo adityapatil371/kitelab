@@ -28,7 +28,7 @@ python3 -m scripts.refresh               # --check | --force | --stocks-only
 # BEFORE a rebuild — catches what import cannot (NameError in main(), a payload
 # key the build stopped emitting). Five of six rebuilds on 2026-09-03 were spent
 # finding faults these would have caught in minutes.
-python3 -m unittest discover -s tests -t .   # 350 tests, ~1s
+python3 -m unittest discover -s tests -t .   # 403 tests, ~2s
 python3 -m pyflakes kitelab scripts tests    # undefined names, instant
 python3 -m scripts.preflight                 # build path, one symbol per bucket, ~2 min
 
@@ -42,6 +42,10 @@ python3 -m scripts.backfill --symbols-file <list> --daily-only
 
 # health / audits
 python3 -m scripts.cache_status | data_audit | validate | bootstrap | ath_band
+
+# one-off measurements, off the board; each writes a dated CSV/PNG to output/
+python3 -m scripts.wf_<name>             # ceiling cost_gap daily excess lookahead
+                                         # power risk survivor tail — see each docstring
 ```
 
 `scripts/check_dashboard.js` is the only JS test; `unittest` the only Python
@@ -116,7 +120,7 @@ working.
   - `dashboard_server.py` — stdlib HTTP; `/`, `/api/dashboard`, `/api/status`, `/api/curve`.
 - `scripts/` — thin entry points, all `python -m scripts.<name>`.
   `dashboard_data.py` precomputes the whole grid into `dashboard.json`.
-- `tests/` — 350 hermetic tests, no price files or network (`support.py`
+- `tests/` — 403 hermetic tests, no price files or network (`support.py`
   patches the data boundary). Property tests, a golden test, and an oracle test
   against `backtesting.py` (skips if that dev extra is absent).
   `scripts/preflight.py` is the integration test, `check_dashboard.js` the page one.
@@ -128,6 +132,9 @@ working.
   `waterfall` serializes empty (only fill "1" is gridded); `assets`/
   `single_name` are empty only after a `--stocks-only` build.
 - `pine/` — TradingView mirrors (4 scripts).
+- `experiments/` — ad-hoc hand comparisons (HAL, Manappuram, the DI stop) and
+  the 2026-09-08 gate report; not part of any pipeline, nothing imports them.
+  Run from the repo root: `python3 -m experiments.<name>`.
 - `data/` is gitignored except `data/keep/` (the four things nothing can rebuild).
 - `README.md` is stale overall, but its **Timeframes**, **2026-08-03
   closing-auction session change** and **Known limits** sections are accurate
@@ -159,8 +166,11 @@ and must never be blocked by it; viewing must work with neither.
 - **The live exposure is multiple testing, not contamination**: 19 variants
   ranked and a winner reported. The luck hurdle is a family-wise 95% bar; quote
   the `validation_summary` spread the page shows above the table.
-- **Survivorship is untouched and remains the largest known bias here**
-  (~4.9pp/yr); the credibility gate now tests each rule against random entries
+- **Survivorship is untouched and remains the largest known bias here.** The
+  one measurement so far (`scripts/wf_survivor.py`, 2026-09-08: delistings
+  applied to rule and hold alike) moves hold by 0.6–2.1 pts/yr and the
+  rule-vs-hold gap by under 0.2, and it is a floor — dead companies have no
+  price history to kill. The credibility gate now tests each rule against random entries
   on the same survivors, so their drift is no longer credited to the rule. No
   number in this project is a forecast.
 - The class spreadsheets (`*.xlsx`) are hand-picked examples, not backtests.
@@ -181,12 +191,13 @@ build and checked after; if inputs moved meanwhile the file is written with
 `inputs: null` and the page reports it stale rather than certifying stale
 numbers.
 
-**The code stamp uses file MTIMES, not contents.** Editing a docstring, a
-`git checkout`, a fresh clone — any of it invalidates the caches that depend
-on the touched file. Safe direction to be wrong in; budget for it: the last
-full rebuild took ~103 min (2026-09-07), the permutation test being the long
-stage (forked across `validation.PERMUTATION_WORKERS`; p is identical at any
-worker count because every round carries its own seed).
+**Editing a stamped module invalidates what depends on it, and that is the safe
+direction to be wrong in; budget for it.** The last two full rebuilds of the same
+code took 103 min (2026-09-07) and 146 min (2026-09-09) — the difference was the
+host, not the code (run the 0.44 s benchmark in the kitelab-history skill before
+quoting a duration). The permutation test is the long stage (forked across
+`validation.PERMUTATION_WORKERS`; p is identical at any worker count because
+every round carries its own seed).
 
 **A rebuild is cut into parts (2026-09-09), so "invalidates the caches" is no
 longer "invalidates all of them".** Two independent tiers:

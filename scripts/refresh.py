@@ -35,7 +35,8 @@ WHAT IT CHECKS, in order:
 
 Each step is skipped when it is not needed, so re-running this on an unchanged
 project costs a second and prints "already current". That matters because the
-rebuild is a ~30 minute job and should never be started out of doubt.
+rebuild is a 100-150 minute job (103 min on 2026-09-07, 146 on 2026-09-09 for
+the same code; the host sets the pace) and should never be started out of doubt.
 """
 from __future__ import annotations
 

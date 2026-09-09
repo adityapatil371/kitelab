@@ -129,7 +129,7 @@ def main() -> None:
     print(f"dashboard.json: built {d['built']}")
 
     buy, sell = fee_rates()
-    print(f"\nZerodha DELIVERY schedule, live from kitelab.backtest:")
+    print("\nZerodha DELIVERY schedule, live from kitelab.backtest:")
     print(f"  buy-side  {buy*100:.4f}% of value")
     print(f"  sell-side {sell*100:.4f}% of value (demat Rs{backtest.DP_PER_SELL} excluded: "
           f"the benchmark is scale-free)")
@@ -162,7 +162,7 @@ def main() -> None:
                      "median_cell_margin_after": round(med_margin - med_delta, 3),
                      "share_of_gap_explained_pct": round(100 * abs(med_delta) / abs(med_margin), 3)})
 
-    print(f"\nEvery margin on the board is biased against the rule by the last column.")
+    print("\nEvery margin on the board is biased against the rule by the last column.")
     print(f"Median cell margin as published: {med_margin:.2f} pts/yr")
     for r in rows:
         print(f"  at {r['round_trip_spread_pct']:.1f}% round-trip spread -> "

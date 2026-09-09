@@ -145,7 +145,7 @@ def report(d: dict, universe: str, writer) -> list[float]:
     print(f"\n  cells with a POSITIVE mean margin: {len(pos)}/{len(rows)}")
     print(f"  cells with sign-flip p <= 0.05    : {len(sig)}/{len(rows)}"
           f"   (smallest attainable p = {floor:.4f})")
-    print(f"\n  best 3 cells by mean margin:")
+    print("\n  best 3 cells by mean margin:")
     for r in rows[:3]:
         print(f"    {r['mean_excess']:>7.1f} pts/yr  p={r['p_sign_flip']:.4f}  "
               f"wins {r['wins']}/{r['windows']}  {r['strategy']} {r['scenario']}")

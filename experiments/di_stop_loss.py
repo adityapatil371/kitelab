@@ -1,6 +1,6 @@
 """Apply the entry-candle-low stop loss to the DI +/- table.
 
-Ad-hoc, not part of the pipeline (see turtle_vs_ema_hal.py for the precedent).
+Ad-hoc, not part of the pipeline (see experiments/turtle_vs_ema_hal.py for the precedent).
 
 The DI table already SIZED its positions off the entry candle's low -- share
 counts match min(floor(1000 / (entry - low)), floor(100000 / entry)) on all

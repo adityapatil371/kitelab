@@ -14,7 +14,9 @@ the measurement.
 
 1. **beats buy & hold** — the on-screen cell's CAGR (net of costs) against an
    **equal-weight portfolio** of the stocks in the on-screen universe from the
-   on-screen start year (gross of costs; `hold_cagr_by_scenario["all|2018"]`).
+   on-screen start year (`hold_cagr_by_scenario["all|2018"]`; net of the
+   proportional delivery charges since 2026-09-09, `_hold_retention`, worth
+   0.09 pts/yr — it was gross before).
    Until 2026-09-07 this was one whole-history, all-universe, *median-stock*
    number (11.9) reused for every cell; the equal-weight portfolio from 2018 is
    ~17.0 (right-skewed stock returns, Jensen). Owner's decision: gate on raw

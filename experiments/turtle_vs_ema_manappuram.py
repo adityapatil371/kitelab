@@ -1,6 +1,6 @@
 """20 EMA vs Turtle 55/20 on MANAPPURAM, both with a candle-low stop.
 
-Ad-hoc comparison, not part of the pipeline. Follows turtle_vs_ema_hal.py,
+Ad-hoc comparison, not part of the pipeline. Follows experiments/turtle_vs_ema_hal.py,
 with one difference the user asked for: there are no hand-drawn rectangles
 this time, so BOTH systems are generated from the price data here.
 
