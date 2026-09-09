@@ -164,7 +164,7 @@ const REQUIRED_CELL = ["cagr", "wiped", "final", "maxdd", "uw_long", "uw_now", "
   "skipped_tiny_cash", "skipped_tiny_risk", "skipped_size", "t_taken"];
 const REQUIRED_VAL = ["top_n", "breakeven", "bootstrap", "permutation", "fixed_gates",
   "walk_forward_by_scenario", "fixed_checks_by_universe"];
-const REQUIRED_CRED = ["n", "n_clusters", "mean_r", "drift_r", "se_r", "t_iid", "t_cluster", "t_stat",
+const REQUIRED_CRED = ["n", "n_clusters", "mean_r", "drift_r", "se_r", "t_iid", "t_cluster", "t_stat", "t_gate",
   "p05_mean_r", "p50_mean_r", "p95_mean_r", "p_neg", "p05", "p50", "p95"];
 const REQUIRED_PERM = ["observed", "shuffled_median", "beat_by", "rounds", "p", "distinguishable", "pool"];
 const REQUIRED_GATES = ["distinguishable", "breakeven_margin"];
@@ -300,7 +300,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
         fg ? fg.breakeven_margin : null,
         vsHold == null ? null : vsHold > 0,
         (wf && wf.total_windows) ? wf.wins * 2 > wf.total_windows : null,
-        (cred && cred.t_stat != null && VS.hurdle != null) ? cred.t_stat > VS.hurdle : null,
+        (cred && cred.t_gate != null && VS.hurdle != null) ? cred.t_gate > VS.hurdle : null,
       ];
       const validated = gates.every(g => g != null) ? gates.every(g => g === true) : null;
       const passed = gates.filter(g => g === true).length;

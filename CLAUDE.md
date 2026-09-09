@@ -93,7 +93,8 @@ breaks ties within each group. The five, in one line each: beats the on-screen
 equal-weight buy-&-hold; distinguishable from jointly-shuffled prices
 (p ≤ 0.05, 100 rounds); wins a strict majority of fixed 3-year windows against
 each window's own hold; survives a cost margin (breakeven bp); clears the
-family-wise luck hurdle (drift-adjusted, cluster-robust t ≥ ~2.41).
+family-wise luck hurdle (`t_gate`, the smaller of the cluster-robust t and its
+drift-adjusted twin, ≥ ~2.4 — both, since 2026-09-09).
 
 Quote the `validation_summary` spread (`tried`, `n_eff`, `hurdle`, `cleared`…),
 never a single headline number: the hurdle guards the t only, while the MAR the

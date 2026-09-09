@@ -1137,9 +1137,18 @@ def bootstrap_one(trades, risk_pct=RISK_PCT, draws=DRAWS, seed=SEED,
        distance, holding length, spread and charges, would have earned
        (random_entry_r). Random entries on pair|MW's stocks earned +0.46 R
        against the rule's +0.85, so measuring against zero credited the
-       rule with the market's own rise. The gate statistic is
+       rule with the market's own rise. The drift-adjusted statistic is
 
            t_stat = (mean_r - drift_r) / se_r
+
+       and THE GATE (since 2026-09-09) is t_gate = min(t_cluster, t_stat):
+       the rule must beat zero AND beat random timing. Until then t_stat
+       alone was gated, and because drift_r is about -0.29 R for every
+       daily-stop rule (random entries with a tight stop lose to noise),
+       subtracting it lifted those rules' t by ~3. On the 2026-09-09 board
+       17 of 19 cleared the family-wise bar of 2.44, five of them losing
+       money in every account on the page, with t_cluster of 1.2-2.1. A
+       rule that only beats a null that loses money has not shown an edge.
 
        with drift_r taken as 0 when it could not be simulated (None: no
        price files, or under MIN_TRADES random trades). `drift=False` skips
@@ -1191,6 +1200,10 @@ def bootstrap_one(trades, risk_pct=RISK_PCT, draws=DRAWS, seed=SEED,
         "t_iid": round(t_iid, 2) if t_iid is not None else None,
         "t_cluster": round(t_cluster, 2) if t_cluster is not None else None,
         "t_stat": round(t_stat, 2) if t_stat is not None else None,
+        # THE gate (2026-09-09): the smaller of the two -- beat zero AND beat
+        # random timing. See the docstring for why t_stat alone was not enough.
+        "t_gate": (round(min(t_cluster, t_stat), 2)
+                   if t_cluster is not None and t_stat is not None else None),
         "p05_mean_r": round(float(np.percentile(means, 5)), 4),
         "p50_mean_r": round(float(np.percentile(means, 50)), 4),
         "p95_mean_r": round(float(np.percentile(means, 95)), 4),
@@ -1370,6 +1383,12 @@ def luck_hurdle(n_eff: float, alpha: float = ALPHA) -> float:
     return NormalDist().inv_cdf(1.0 - alpha / max(float(n_eff), 1.0))
 
 
+def _gate_t(row: dict):
+    """The statistic the luck hurdle is applied to: t_gate where the row has
+    it, else t_stat (rows written before 2026-09-09 carry only that)."""
+    return row.get("t_gate", row.get("t_stat"))
+
+
 def multiple_testing_summary(bootstrap_rows: list[dict],
                               monthly_by_key: dict | None = None) -> dict | None:
     """The paragraph scripts/bootstrap.py prints last, structured.
@@ -1398,7 +1417,8 @@ def multiple_testing_summary(bootstrap_rows: list[dict],
 
     `expected_by_chance` = tried x ALPHA, the number of rules an edgeless
     board of this size clears at the UNCORRECTED bar -- context for
-    `cleared`, which counts rows whose t_stat clears the corrected hurdle.
+    `cleared`, which counts rows whose t_gate (min of t_cluster and t_stat,
+    2026-09-09; was t_stat alone) clears the corrected hurdle.
 
     `monthly_by_key` -- see effective_trials(): 19 variants tried is not 19
     INDEPENDENT trials when they are this correlated, and the hurdle is
@@ -1412,7 +1432,7 @@ def multiple_testing_summary(bootstrap_rows: list[dict],
     all: counting how many rules "look good" means nothing without knowing
     how many an edgeless menu of the same size would produce by chance.
     """
-    rows = [r for r in bootstrap_rows if r.get("t_stat") is not None]
+    rows = [r for r in bootstrap_rows if _gate_t(r) is not None]
     if not rows:
         return None
     tried = len(rows)
@@ -1421,14 +1441,14 @@ def multiple_testing_summary(bootstrap_rows: list[dict],
              else float(tried))
     hurdle = luck_hurdle(n_eff)
     expected_best = expected_best_of(n_eff, 1.0)
-    cleared = [r for r in rows if r["t_stat"] > hurdle]
-    best = max(rows, key=lambda r: r["t_stat"])
+    cleared = [r for r in rows if _gate_t(r) > hurdle]
+    best = max(rows, key=_gate_t)
     return {
         "tried": tried, "n_eff": round(n_eff, 1), "avg_correlation": round(avg_corr, 2),
         "alpha": ALPHA, "hurdle": round(hurdle, 2),
         "expected_best": round(expected_best, 2),
         "expected_by_chance": round(tried * ALPHA, 1),
-        "cleared": len(cleared), "best_t": best["t_stat"],
-        "best_key": best["key"], "clears_hurdle": best["t_stat"] > hurdle,
+        "cleared": len(cleared), "best_t": _gate_t(best),
+        "best_key": best["key"], "clears_hurdle": _gate_t(best) > hurdle,
         "cleared_keys": [r["key"] for r in cleared],
     }

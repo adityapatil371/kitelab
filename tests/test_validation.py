@@ -405,7 +405,7 @@ class BootstrapOneShape(unittest.TestCase):
         with no_prices():
             row = validation.bootstrap_one(self._trades(60), draws=200)
         for key in ("n", "n_clusters", "mean_r", "drift_r", "se_r", "t_iid", "t_cluster",
-                    "t_stat", "p05_mean_r", "p50_mean_r", "p95_mean_r", "p_neg", "cleared_95",
+                    "t_stat", "t_gate", "p05_mean_r", "p50_mean_r", "p95_mean_r", "p_neg", "cleared_95",
                     "obs_cagr", "obs_mar", "p05", "p50", "p95", "dd05"):
             self.assertIn(key, row)
         self.assertEqual(row["n"], 60)
@@ -418,6 +418,11 @@ class BootstrapOneShape(unittest.TestCase):
         self.assertLessEqual(row["dd05"], 0.0)
         self.assertIsInstance(row["cleared_95"], bool)
         json.dumps(row)
+
+    def test_gate_is_the_smaller_of_cluster_and_drift_adjusted_t(self):
+        with no_prices():
+            row = validation.bootstrap_one(self._trades(60), draws=200)
+        self.assertEqual(row["t_gate"], min(row["t_cluster"], row["t_stat"]))
 
     def test_below_floor_returns_none(self):
         self.assertIsNone(validation.bootstrap_one(self._trades(10)))
@@ -503,13 +508,32 @@ class MultipleTestingSummary(unittest.TestCase):
         return {k: {mo: float(v) for mo, v in zip(months, rng.normal(size=len(months)))}
                 for k in keys}
 
+    def test_the_gate_is_the_smaller_of_the_two_ts(self):
+        # 2026-09-09: a rule whose drift-adjusted t is high only because random
+        # timing LOSES on its stocks (negative drift_r) must not clear on that
+        # alone. Shaped like pair|WD on the live board (t_cluster 1.2, t_stat
+        # 4.3); with two independent rules the hurdle here is ~1.96.
+        rows = [{"key": "ema|0", "t_cluster": 1.2, "t_stat": 4.3, "t_gate": 1.2},
+                {"key": "real", "t_cluster": 4.3, "t_stat": 4.1, "t_gate": 4.1}]
+        monthly = self._independent_monthly([r["key"] for r in rows])
+        out = validation.multiple_testing_summary(rows, monthly)
+        self.assertEqual(out["cleared_keys"], ["real"])
+        self.assertEqual(out["best_key"], "real")
+        self.assertEqual(out["best_t"], 4.1)
+
+    def test_rows_without_t_gate_fall_back_to_t_stat(self):
+        rows = [{"key": f"old{i}", "t_stat": float(i)} for i in range(4)]
+        out = validation.multiple_testing_summary(rows, self._independent_monthly([r["key"] for r in rows]))
+        self.assertEqual(out["best_t"], 3.0)
+
     def test_counts_and_hurdle_are_internally_consistent(self):
-        rows = [{"key": f"rule{i}", "t_stat": float(i) - 4} for i in range(12)]
+        rows = [{"key": f"rule{i}", "t_stat": float(i) - 4, "t_cluster": float(i) - 4,
+                 "t_gate": float(i) - 4} for i in range(12)]
         monthly = self._independent_monthly([r["key"] for r in rows])
         out = validation.multiple_testing_summary(rows, monthly)
         self.assertEqual(out["tried"], 12)
         self.assertEqual(out["alpha"], 0.05)
-        self.assertEqual(out["cleared"], sum(1 for r in rows if r["t_stat"] > out["hurdle"]))
+        self.assertEqual(out["cleared"], sum(1 for r in rows if r["t_gate"] > out["hurdle"]))
         self.assertAlmostEqual(out["expected_by_chance"], 12 * 0.05, places=1)
         self.assertAlmostEqual(out["hurdle"], validation.luck_hurdle(out["n_eff"]), delta=0.02)
         self.assertAlmostEqual(out["expected_best"],

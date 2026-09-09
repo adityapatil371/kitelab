@@ -30,8 +30,13 @@ the measurement.
    half the windows positive", a bar a bull market clears for anything. A
    trailing window under 2 years is shown, marked partial, and not counted.
 4. **survives a cost margin** (breakeven bp, unchanged).
-5. **clears the luck hurdle** — the drift-adjusted, cluster-robust t
-   (`credibility.t_stat`) above `Φ⁻¹(1 − 0.05 / n_eff)`, a family-wise 95% bar
+5. **clears the luck hurdle** — `credibility.t_gate = min(t_cluster, t_stat)`,
+   the cluster-robust t and its drift-adjusted twin BOTH above
+   `Φ⁻¹(1 − 0.05 / n_eff)`, a family-wise 95% bar. Since 2026-09-09; gating
+   `t_stat` alone let 17 of 19 through, five of them losing money in every
+   account, because `drift_r` is about −0.29 R for every daily-stop rule and
+   subtracting it lifted their t by ~3 (t_cluster 1.2–2.1 vs hurdle 2.44). A
+   rule that only beats a null that loses money has not shown an edge. It was
    (≈2.41 at n_eff 6.2). Was `E[max]` of the null (1.32), which an edgeless
    board's best rule clears 46% of the time; 19 of 19 cleared it.
 
@@ -39,7 +44,7 @@ the measurement.
 
 `t_iid` (mean R over std/√n) treated 40k–240k overlapping trades as
 independent: pair|MW scored 20.3. `t_cluster` clusters the standard error by
-entry quarter (Liang–Zeger): 4.1. `t_stat`, the gate, subtracts `drift_r` —
+entry quarter (Liang–Zeger): 4.1. `t_stat` subtracts `drift_r` —
 the mean R that *random* entries on the same stocks with the same stop
 fraction, holding length and spread would earn — because these survivors drift
 up and random timing earns that drift too. Read the sign of `drift_r`: rules

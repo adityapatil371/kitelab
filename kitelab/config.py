@@ -426,7 +426,8 @@ class Config:
         bias is diluted rather than gone -- on large caps it moves the median
         buy-and-hold from +15.3% (101) to roughly +11.2% against the 399's
         +9.7%. Survivorship is untouched and remains the largest known bias in
-        every number this project produces (~4.9pp/yr). Neither was a reason to
+        every number this project produces (measured 2026-09-08 by scripts/wf_survivor.py
+        at 0.6-2.1 pts/yr on hold -- a floor, since only survivors can be killed). Neither was a reason to
         keep the split, and neither is repaired by dropping it.
         """
         return self._dedupe(self.symbols, self.extended, self.holdout, self.unseen)

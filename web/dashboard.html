@@ -517,8 +517,11 @@ function rows() {
          so total_windows is the count of full windows with a verdict. */
       const walkForwardMajority = (liveWf && liveWf.total_windows)
         ? liveWf.wins * 2 > liveWf.total_windows : null;
-      const clearsHurdle = (boot && boot.t_stat != null && hurdle != null)
-        ? boot.t_stat > hurdle : null;
+      /* t_gate = min(t_cluster, t_stat) since 2026-09-09: beat zero AND beat
+         random timing. Gating t_stat alone let five money-losing daily-stop
+         rules clear, lifted ~3 t-units by a negative drift_r. */
+      const clearsHurdle = (boot && boot.t_gate != null && hurdle != null)
+        ? boot.t_gate > hurdle : null;
       const gateVals = [fixedGates && fixedGates.distinguishable,
                         fixedGates && fixedGates.breakeven_margin,
                         beatsHold, walkForwardMajority, clearsHurdle];
@@ -660,7 +663,8 @@ const GLOSSARY = {
   "drift_r":   "What random entries earn: the mean net R that entries at random dates on the same stocks would have made, with the same holding length, the same stop rule (the entry day's low) and the same spread. A rising market pays a random buyer; Credibility subtracts this so the rule is credited only with what it adds over that.",
   "t_iid":     "The old Credibility statistic: mean net R ÷ (stdev ÷ √n), every trade counted as an independent draw. Shown for comparison only -- it overstates the evidence when hundreds of trades open in the same quarter on the same move.",
   "t_cluster": "Mean net R ÷ a cluster-robust standard error, where a cluster is every trade entered in one calendar quarter. Still credits the rule with market drift; t_stat is this minus drift_r in the numerator.",
-  "t_stat":    "(mean_r − drift_r) ÷ cluster-robust standard error. THE gate statistic behind the luck hurdle.",
+  "t_stat":    "(mean_r − drift_r) ÷ cluster-robust standard error: the drift-adjusted t. The gate is the smaller of this and t_cluster.",
+  "t_gate":    "min(t_cluster, t_stat): the rule must beat zero AND beat random timing on the same stocks. THE gate statistic behind the luck hurdle (since 2026-09-09; t_stat alone let rules whose only merit was beating a losing null through).",
   "t_taken":   "t_stat's clustered construction on the trades THIS account actually took at the scenario on screen (no drift term -- the pool is the account's own fills). Below 30 trades it is empty. When it is far below the row's Credibility, the account's cash constraint, not the rule, chose the trades.",
   "n_clusters":"Distinct calendar quarters with at least one entry -- the effective number of independent bets the clustered standard error is built on.",
   "hurdle":    "The t a single rule must clear for the whole board to keep a 5% family-wise false-positive rate: the normal quantile at 1 − alpha ÷ n_eff, where n_eff is the number of effectively independent rules on the board (correlated variants count as fractions of one).",
@@ -1036,7 +1040,8 @@ function credibilityCard(row, boot, credLive) {
              ? "what random entries earn -- not computable here" : "what random entries on the same stocks earn, same holding and stop")}
       ${stat("t_iid", t(boot.t_iid), "mean_r over a plain standard error: every trade an independent draw", tone(boot.t_iid))}
       ${stat("t_cluster", t(boot.t_cluster), "mean_r over the clustered standard error: one quarter, one bet", tone(boot.t_cluster))}
-      ${stat("t_stat", t(boot.t_stat), "(mean_r − drift_r) over the clustered standard error: THE gate", tone(boot.t_stat))}
+      ${stat("t_stat", t(boot.t_stat), "(mean_r − drift_r) over the clustered standard error: the drift-adjusted t", tone(boot.t_stat))}
+      ${stat("t_gate", t(boot.t_gate), "the smaller of t_cluster and t_stat: beat zero AND beat random timing -- THE gate", tone(boot.t_gate))}
       ${stat("t_taken", t(row.tTaken), "the same t on the trades this account took at this scenario", tone(row.tTaken))}
     </div>
     <p class="note">Resampling whole calendar quarters rather than single trades, the mean net R stays positive in
