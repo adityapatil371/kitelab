@@ -182,11 +182,38 @@ build and checked after; if inputs moved meanwhile the file is written with
 numbers.
 
 **The code stamp uses file MTIMES, not contents.** Editing a docstring, a
-`git checkout`, a fresh clone — any of it invalidates every cache and forces a
-full rebuild. Safe direction to be wrong in; budget for it: the last full
-rebuild took ~103 min (2026-09-07), the permutation test being the long stage
-(forked across `validation.PERMUTATION_WORKERS`; p is identical at any worker
-count because every round carries its own seed).
+`git checkout`, a fresh clone — any of it invalidates the caches that depend
+on the touched file. Safe direction to be wrong in; budget for it: the last
+full rebuild took ~103 min (2026-09-07), the permutation test being the long
+stage (forked across `validation.PERMUTATION_WORKERS`; p is identical at any
+worker count because every round carries its own seed).
+
+**A rebuild is cut into parts (2026-09-09), so "invalidates the caches" is no
+longer "invalidates all of them".** Two independent tiers:
+
+- *Signal caches* are stamped against the touched producer's **transitive
+  import closure** (`signals.reachable_from`, read out of the import
+  statements with `ast`) unioned with `_SUPPORT`, and `signals.producer_of`
+  resolves a cache name to its producer by longest prefix so no call site
+  passes it. Measured on the 19-variant board: editing `holygrail.py` rebuilds
+  1 strategy, `darvas.py` 4, `timeframes.py` 11, `backtest.py` all 19 (every
+  engine imports it), any `_SUPPORT` module all 19. `_SUPPORT` stays global on
+  purpose — `registry.py`, `strategies.py` and `trailing.py` are in nobody's
+  closure, and a closure-only rule would let a `registry.py` edit invalidate
+  nothing. An unrecognised cache name gets the whole-board digest, not the
+  loosest one.
+- *The grid* is one checkpoint per (fill, strategy, variant) under
+  `CLEAN/grid_ckpt`, written atomically as each partition finishes, so an
+  interrupted rebuild resumes instead of restarting. The digest covers the
+  trades themselves (pickled and hashed — exact, 0.21s for the largest list),
+  the universes, the axes and `_ACCOUNT`'s mtimes. **The producer modules are
+  deliberately excluded**: their effect is already in the trades hash, so
+  hashing them too would let a `darvas.py` docstring reprice Holy Grail.
+  `--no-grid-cache` forces a full recompute.
+
+Verified 2026-09-09 on the 3-symbol preflight board: building twice into one
+temp dir gave 0/19 partitions reused then 19/19, 78.1s then 0.8s, and all
+5,700 cells identical.
 
 ## Conventions the code holds to
 

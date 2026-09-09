@@ -93,15 +93,125 @@ _ACCOUNT = ["portfolio.py", "curves.py", "validation.py", "contracts.py",
             "../scripts/dashboard_data.py"]
 
 
-def _code_files() -> list[str]:
-    """Producer modules from the registry, plus the support modules above.
+# ------------------------------------------------------ per-producer code ----
+# WHY A CACHE SHOULD NOT CARE ABOUT EVERY OTHER STRATEGY'S CODE (2026-09-09).
+#
+# `code` was ONE digest over every producer plus _SUPPORT, so a one-line fix to
+# holygrail.py invalidated all 76 caches and cost a ~103-minute rebuild to
+# reproduce 18 strategies' trades byte for byte. That is the safe direction to
+# err in, and it was the right first version -- but it is not free, and the
+# cost was being paid on almost every engine edit.
+#
+# A cache may instead be stamped against the TRANSITIVE IMPORT CLOSURE of the
+# module that built it, unioned with _SUPPORT. Two properties make that safe:
+#
+#   Derived, not hand-kept. The closure is read out of the import statements
+#   with ast, so a producer that starts importing a new module is covered the
+#   moment it does. This is the 2026-09-02 lesson (a hand-kept list served a
+#   day of superseded numbers) applied one level down.
+#
+#   _SUPPORT STAYS GLOBAL, and that is not a detail. registry.py, strategies.py
+#   and trailing.py are in _SUPPORT precisely because NO producer imports them
+#   -- registry holds the parameter values baked into every cached trade. Under
+#   a closure-only rule they would land in nobody's closure and an edit to them
+#   would invalidate nothing, which is the 2026-09-05 hole reopened. Unioning
+#   _SUPPORT in shuts it.
+#
+# What it buys, measured on the board of 2026-09-09:
+#   edit holygrail.py     1 of 19 strategies rebuilt (was 19)
+#   edit darvas.py        4 of 19
+#   edit timeframes.py   11 of 19
+#   edit backtest.py     19 of 19 -- every producer imports it, correctly
+#   edit any _SUPPORT    19 of 19
+#
+# `producer=None` still means the old whole-board digest, and that is what the
+# dashboard's account stamp uses: the page depends on every strategy, so it
+# must refuse itself when any of them moves.
+
+
+def _imports(path: Path) -> set[str]:
+    """kitelab.<name> modules imported by one file, including relative forms.
+
+    Lifted out of tests/test_stamps.py on 2026-09-09, which had walked the
+    import graph to CHECK the stamp; the stamp now walks it to BUILD itself,
+    and the test imports this so the two can never drift apart.
+    """
+    import ast
+    tree = ast.parse(path.read_text())
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.startswith("kitelab."):
+                    out.add(a.name.split(".")[1])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "kitelab":
+                out |= {a.name for a in node.names}
+            elif node.module and node.module.startswith("kitelab."):
+                out.add(node.module.split(".")[1])
+            elif node.level and node.module:            # from .x import y
+                out.add(node.module.split(".")[0])
+            elif node.level and not node.module:        # from . import x, y
+                out |= {a.name for a in node.names}
+    here = path.resolve().parent
+    return {m for m in out if (here / f"{m}.py").exists()}
+
+
+def reachable_from(script: Path) -> set[str]:
+    """Every kitelab module `script` can reach, transitively. Module names."""
+    pkg = Path(__file__).resolve().parent
+    seen: set[str] = set()
+    todo = list(_imports(script))
+    while todo:
+        m = todo.pop()
+        if m in seen:
+            continue
+        seen.add(m)
+        todo.extend(_imports(pkg / f"{m}.py") - seen)
+    return seen
+
+
+def _code_files(producer: str | None = None) -> list[str]:
+    """The modules a cache's `code` digest covers.
+
+    `producer=None`  every producer on the board, plus _SUPPORT. The whole-board
+                     digest, unchanged since 2026-09-02.
+    `producer=X.py`  X's own transitive import closure, plus _SUPPORT. See the
+                     block above for why _SUPPORT is unioned in rather than
+                     derived, and what the narrowing is worth.
 
     Imported inside the function, not at module scope: registry imports the
     strategy modules, several of which import this one, and a module-level
     import here would close that loop.
     """
     from . import registry
-    return sorted(set(registry.modules()) | set(_SUPPORT))
+    if producer is None:
+        return sorted(set(registry.modules()) | set(_SUPPORT))
+    here = Path(__file__).resolve().parent
+    path = here / producer
+    if not path.exists():
+        raise ValueError(f"no such producer module: {producer}")
+    closure = {f"{m}.py" for m in reachable_from(path)} | {producer}
+    return sorted(closure | set(_SUPPORT))
+
+
+def producer_of(name: str) -> str | None:
+    """Which module built the cache called `name`, or None if nothing claims it.
+
+    Cache names are f"{strat.cache}_{suffix}" (suffix is the universe: all,
+    hold, 101). LONGEST PREFIX WINS, so EMA_MD_all resolves to the strategy
+    whose cache is EMA_MD and not to the one whose cache is EMA. An orphan --
+    a pickle left behind by a strategy that has since been deleted -- matches
+    nothing and gets None, which means the WHOLE-BOARD digest: an unclaimed
+    cache is held to the strictest standard, not the loosest.
+    """
+    from . import registry
+    best = None
+    for s in registry.REGISTRY:
+        if name == s.cache or name.startswith(s.cache + "_"):
+            if best is None or len(s.cache) > len(best[0]):
+                best = (s.cache, s.module)
+    return best[1] if best else None
 
 
 def _digest(parts) -> str:
@@ -112,19 +222,30 @@ def _digest(parts) -> str:
     return h.hexdigest()[:16]
 
 
-def stamp(symbols, account: bool = False) -> dict:
+def stamp(symbols, account: bool = False, producer: str | None = None) -> dict:
     """What this artefact depends on: the universe, the price files, the code.
 
     `account=False` (signal caches): producer modules + _SUPPORT.
     `account=True` (dashboard.json): those plus _ACCOUNT, so the dashboard
     refuses itself when the account engine, the curve metrics, the validation
     gates or the grid axes move. See _ACCOUNT for the 2026-09-07 measurement.
+    `producer="darvas.py"`: that module's import closure + _SUPPORT instead of
+    every producer, so one engine's caches survive another engine's edit. The
+    narrowing is RECORDED IN THE STAMP, so a narrow stamp can never be read as
+    a broad one -- widening a cache later refuses it rather than serving it.
+
+    The two are mutually exclusive: the dashboard depends on every strategy, so
+    narrowing its stamp would let it certify itself over superseded trades.
 
     `symbols` should include every instrument whose price file the artefact
     read -- for the dashboard that means the assets (BITCOIN, GOLD) as well as
     the stock universe, which write_stamp omitted until 2026-09-07: a GOLD
     refetch left the page reporting current.
     """
+    if account and producer is not None:
+        raise ValueError("the account stamp covers the whole board and cannot be "
+                         "narrowed to one producer -- dashboard.json depends on "
+                         "every strategy in the grid.")
     symbols = sorted(set(symbols))
     data = []
     for s in symbols:
@@ -134,20 +255,23 @@ def stamp(symbols, account: bool = False) -> dict:
                 st = p.stat()
                 data.append((p.name, st.st_size, st.st_mtime_ns))
     here = Path(__file__).resolve().parent
-    files = _code_files() + (_ACCOUNT if account else [])
+    files = _code_files(producer) + (_ACCOUNT if account else [])
     code = [(n, here.joinpath(n).resolve().stat().st_mtime_ns)
             for n in files if here.joinpath(n).exists()]
     out = {"universe": _digest(symbols), "n_symbols": len(symbols),
-           "data": _digest(data), "n_files": len(data), "code": _digest(code)}
+           "data": _digest(data), "n_files": len(data), "code": _digest(code),
+           "n_code": len(code)}
     if account:
         out["account"] = True
+    if producer is not None:
+        out["producer"] = producer
     return out
 
 
-def stamped_files(account: bool = False) -> list[str]:
+def stamped_files(account: bool = False, producer: str | None = None) -> list[str]:
     """The module paths a stamp covers, relative to kitelab/. For tests that
     assert every module on the numbers path is covered (tests/test_stamps.py)."""
-    return sorted(set(_code_files()) | (set(_ACCOUNT) if account else set()))
+    return sorted(set(_code_files(producer)) | (set(_ACCOUNT) if account else set()))
 
 
 def _explain(want: dict, got: dict) -> str:
@@ -157,9 +281,20 @@ def _explain(want: dict, got: dict) -> str:
     if got.get("data") != want["data"]:
         return (f"the PRICE FILES have changed since it was built "
                 f"({got.get('n_files', '?')} files, now {want['n_files']})")
+    if got.get("producer") != want.get("producer"):
+        return (f"it was stamped against {got.get('producer') or 'the whole board'} "
+                f"and is now checked against {want.get('producer') or 'the whole board'}")
     if got.get("code") != want["code"]:
-        return "the STRATEGY CODE has changed since it was built"
+        return (f"the STRATEGY CODE has changed since it was built "
+                f"({want.get('n_code', '?')} modules cover it)")
     return "its stamp does not match"
+
+
+def _narrow(name: str, account: bool) -> str | None:
+    """The producer a cache called `name` is stamped against, or None for the
+    whole board. RESOLVED FROM THE NAME, so no call site has to pass it and no
+    call site can pass the wrong one. account=True is never narrowed."""
+    return None if account else producer_of(name)
 
 
 def save(name: str, trades: list[dict], symbols, account: bool = False) -> None:
@@ -169,8 +304,9 @@ def save(name: str, trades: list[dict], symbols, account: bool = False) -> None:
     2026-09-07: that record was stamped narrowly, so a validation.py edit
     left it served as current."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    (CACHE / f"{name}.pkl").write_bytes(
-        pickle.dumps({"stamp": stamp(symbols, account=account), "trades": trades}))
+    (CACHE / f"{name}.pkl").write_bytes(pickle.dumps(
+        {"stamp": stamp(symbols, account=account, producer=_narrow(name, account)),
+         "trades": trades}))
 
 
 def load(name: str, symbols, allow_legacy: bool = True,
@@ -195,7 +331,8 @@ def load(name: str, symbols, allow_legacy: bool = True,
             _WARNED.add(name)
         return blob
 
-    want, got = stamp(symbols, account=account), blob.get("stamp", {})
+    want = stamp(symbols, account=account, producer=_narrow(name, account))
+    got = blob.get("stamp", {})
     if got != want:
         if name not in _WARNED:
             print(f"[kitelab] {name}: STALE cache -- {_explain(want, got)}. Rebuilding.")
@@ -219,8 +356,13 @@ def require(name: str, symbols) -> list[dict]:
 def status(symbols) -> list[tuple[str, str]]:
     """(name, verdict) for every cache on disk. Used by scripts.cache_status."""
     out = []
-    want = stamp(symbols)
     for p in sorted(CACHE.glob("*.pkl")):
+        # Per cache, not once: each is checked against the code ITS OWN producer
+        # depends on. Checking every pickle against one whole-board digest would
+        # report the other 18 strategies stale after a one-engine edit -- which
+        # is what this file did until 2026-09-09, and what the caches themselves
+        # then acted on.
+        want = stamp(symbols, producer=_narrow(p.stem, account=False))
         blob = pickle.loads(p.read_bytes())
         if isinstance(blob, list):
             out.append((p.stem, f"UNSTAMPED ({len(blob):,} trades)"))

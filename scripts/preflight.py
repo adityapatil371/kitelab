@@ -152,10 +152,17 @@ def main() -> None:
     validation.PERMUTATION_ROUNDS = 10
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="kitelab-preflight-"))
-    saved = (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, config.load)
+    saved = (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, dd.GRID_CKPT,
+             config.load)
     signals.CACHE = tmp / "signal_cache"
     dashboard_server.STAMP_PATH = tmp / "stamp.json"
     dd.OUT = tmp / "dashboard.json"
+    # ADDED 2026-09-09 with the grid checkpoints, and it was needed: the first
+    # preflight after they landed wrote 38 partitions into the real
+    # CLEAN/grid_ckpt. Nothing was served wrong -- a partition's digest covers
+    # the universes, so the 3-symbol files could only ever miss -- but they are
+    # the same class of leak the assert below exists to catch.
+    dd.GRID_CKPT = tmp / "grid_ckpt"
     config.load = lambda: small
 
     # REFUSE TO RUN unless every write now lands in the temp directory. If any
@@ -163,7 +170,8 @@ def main() -> None:
     # caches and the real payload.
     for name, path in (("signals.CACHE", signals.CACHE),
                        ("STAMP_PATH", dashboard_server.STAMP_PATH),
-                       ("dashboard_data.OUT", dd.OUT)):
+                       ("dashboard_data.OUT", dd.OUT),
+                       ("dashboard_data.GRID_CKPT", dd.GRID_CKPT)):
         assert tmp in path.parents or path.parent == tmp, \
             f"{name} was not redirected -- refusing to run"
 
@@ -180,7 +188,8 @@ def main() -> None:
         print("\n  BUILD FAILED. The rebuild would fail the same way.\n", flush=True)
         raise
     finally:
-        (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, config.load) = saved
+        (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, dd.GRID_CKPT,
+         config.load) = saved
 
     payload = json.loads((tmp / "dashboard.json").read_text())
     wanted, got = _page_keys(), set(payload)

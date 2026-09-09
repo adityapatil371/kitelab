@@ -35,6 +35,8 @@ import bisect
 import hashlib
 import json
 import os
+import pathlib
+import pickle
 import re
 
 import numpy as np
@@ -413,6 +415,93 @@ def run_payload(r):
             "curve": curve_payload(r["curve"], r.get("cash_curve"))}
 
 
+# ------------------------------------------------------- grid checkpoints ----
+# THE GRID IS REBUILT IN PARTS (2026-09-09).
+#
+# The grid was one indivisible 10,260-cell pass, ~59 minutes of the ~103-minute
+# rebuild. Two costs came out of that:
+#
+#   An interrupted rebuild lost everything. A crash or a Ctrl-C 50 minutes in
+#   left nothing on disk to resume from, which is exactly what CLAUDE.md's
+#   "checkpoint pipeline stages" rule exists to prevent.
+#
+#   A one-engine edit repriced all 19 variants. Once signals.py learned to
+#   stamp a cache against its own producer's import closure, holygrail.py's
+#   trades could change while the other 18 strategies' did not -- and the grid
+#   still recomputed all 19, because it had no idea whose trades had moved.
+#
+# So the grid is now cut into PARTITIONS of one (fill mode, strategy, variant),
+# each written to CLEAN/grid_ckpt as it completes. A partition is reused when
+# its digest matches, and the digest is taken over the things a cell actually
+# depends on:
+#
+#   the trades themselves    pickled and hashed, not fingerprinted by a chosen
+#                            subset of fields. 0.21s for the largest list on the
+#                            board (179,305 trades), and EXACT -- a field this
+#                            file does not read today but starts reading
+#                            tomorrow is already covered. Note this is taken
+#                            AFTER apply_spread, so it also pins the spread.
+#   the universes            ukey -> label + members, so a bucket that gains one
+#                            stock invalidates every partition, as it must.
+#   the axes                 RISKS, CAPITALS, START_YEARS, PRIORITIES and the
+#                            single-name priority rule; each is a multiplier on
+#                            the cell count and on the answers.
+#   the account modules      signals._ACCOUNT (portfolio, curves, validation,
+#                            contracts) and THIS FILE, by mtime. These turn a
+#                            trade list into a cell.
+#
+# The PRODUCER modules are deliberately NOT in the digest. Their effect is
+# already in the trades hash, and exactly, so hashing their mtimes as well
+# would throw away the per-producer narrowing this was built to exploit -- a
+# docstring edit in darvas.py would otherwise reprice Holy Grail.
+#
+# Cells are pickled whole. They are plain dicts of floats and lists at this
+# point (to_native runs later), so nothing lossy happens on the round trip; a
+# test asserts a reused partition is byte-identical to a computed one.
+GRID_CKPT = config.CLEAN / "grid_ckpt"
+
+
+def _grid_digest(trades, unis, risks, capitals, years, fkey) -> str:
+    """Everything a partition's cells depend on, in one hex string."""
+    h = hashlib.sha256()
+    h.update(pickle.dumps(trades, protocol=5))
+    h.update(repr([(k, lab, None if mem is None else sorted(mem))
+                   for k, (lab, mem) in sorted(unis.items())]).encode())
+    h.update(repr([risks, capitals, years, list(PRIORITIES), PRIORITY_DEFAULT,
+                   fkey, FILL_SPEC[fkey]]).encode())
+    here = pathlib.Path(signals.__file__).resolve().parent
+    h.update(repr(sorted((n, here.joinpath(n).resolve().stat().st_mtime_ns)
+                         for n in signals._ACCOUNT
+                         if here.joinpath(n).exists())).encode())
+    return h.hexdigest()[:32]
+
+
+def _ckpt_path(fkey: str, skey: str, band) -> pathlib.Path:
+    """One file per partition. The name is only a label -- the digest inside
+    decides whether it may be used -- so squashing odd characters is safe."""
+    raw = f"{fkey}__{skey}__{tag(band)}"
+    return GRID_CKPT / (re.sub(r"[^A-Za-z0-9_.-]", "_", raw) + ".pkl")
+
+
+def _ckpt_load(path: pathlib.Path, digest: str) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        blob = pickle.loads(path.read_bytes())
+    except Exception:
+        return None                      # truncated by an interrupted write
+    return blob["cells"] if blob.get("digest") == digest else None
+
+
+def _ckpt_save(path: pathlib.Path, digest: str, cells: dict) -> None:
+    """Written via a temporary file and renamed, so a kill mid-write leaves the
+    previous checkpoint intact rather than a half file that loads as garbage."""
+    GRID_CKPT.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".pkl.tmp")
+    tmp.write_bytes(pickle.dumps({"digest": digest, "cells": cells}, protocol=5))
+    os.replace(tmp, path)
+
+
 def cached_signals(name: str, build, over=None) -> list[dict]:
     """Trades for one signal list, rebuilt whenever the cache cannot be trusted.
 
@@ -711,6 +800,10 @@ def main() -> None:
     ap.add_argument("--stocks-only", action="store_true",
                     help="skip the non-equity instruments (Bitcoin, GOLD) -- "
                          "equity grid only, no assets pass")
+    ap.add_argument("--no-grid-cache", action="store_true",
+                    help="recompute every grid partition even when its checkpoint "
+                         "matches. The escape hatch for doubting the digest; a "
+                         "normal rebuild does not need it")
     args = ap.parse_args()
 
     cfg = config.load()
@@ -837,7 +930,7 @@ def main() -> None:
 
     grid = {}
 
-    def fill_grid(bar, source, unis, risks, capitals, years):
+    def fill_grid(bar, source, unis, risks, capitals, years, scope="equity"):
         """One pass of the grid, over every universe at every setting.
 
         The scanning-pool axis was removed on 2026-09-03. It and the Breadth
@@ -846,13 +939,38 @@ def main() -> None:
         row of the table as `skipped_cash` and `exposure`, which say it without
         a sweep. Signal priority is what remains, because that is the choice a
         trader actually makes when the cash runs out.
+
+        REBUILT IN PARTS since 2026-09-09: one checkpoint per (fill, strategy,
+        variant), reused when its digest matches. See GRID_CKPT above for what
+        the digest covers and why the producer modules are excluded from it.
+
+        `scope` only separates the two call sites' checkpoint files. Both grid
+        the same (fkey, skey, band) space over DIFFERENT universes -- equities
+        here, BITCOIN/GOLD in the assets pass -- so without it the two would
+        write to one path, each miss the other's digest, and overwrite it. The
+        result would not be wrong, but no partition would ever be reused.
         """
+        reused = 0
         for fkey in GRID_FILLS:
             execution(*FILL_SPEC[fkey])
             # `trades`, not `signals`: the latter is the module imported above,
             # and shadowing it here made kitelab.signals unreachable for the
             # whole body of the grid loop.
             for (skey, band), trades in source[fkey].items():
+                digest = _grid_digest(trades, unis, risks, capitals, years, fkey)
+                path = _ckpt_path(f"{scope}_{fkey}", skey, band)
+                if not args.no_grid_cache:
+                    hit = _ckpt_load(path, digest)
+                    if hit is not None:
+                        grid.update(hit)
+                        # Step the bar by what this partition would have cost,
+                        # not by one, or the progress line under-reports and
+                        # the final count never reaches the total.
+                        for _ in range(len(hit)):
+                            bar.step()
+                        reused += 1
+                        continue
+                cells = {}
                 for ukey, (ulabel, members) in unis.items():
                     subset = (trades if members is None
                               else [t for t in trades if t["symbol"] in members])
@@ -885,12 +1003,15 @@ def main() -> None:
                                     key = (f"{skey}|{tag(band)}|{ukey}|{risk:g}"
                                            f"|{capital}|{fkey}|{year}|{prio}")
                                     if not window:
-                                        grid[key] = None
+                                        cells[key] = None
                                         bar.step()
                                         continue
-                                    grid[key] = run_payload(portfolio.run(
+                                    cells[key] = run_payload(portfolio.run(
                                         window, capital, risk / 100, prio))
                                     bar.step()
+                grid.update(cells)
+                _ckpt_save(path, digest, cells)
+        return reused
 
     # Cells per (variant, universe, risk, capital): every start year crossed
     # with every signal priority, so no control pins another. Single-instrument
@@ -899,8 +1020,11 @@ def main() -> None:
     total = (len(GRID_FILLS) * len(sets[GRID_FILLS[0]]) * len(universes)
              * len(RISKS) * len(CAPITALS) * per_combo)
     bar = Bar(total, "grid")
-    fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS)
+    reused = fill_grid(bar, sets, universes, RISKS, CAPITALS, START_YEARS)
     bar.close()
+    n_parts = len(GRID_FILLS) * len(sets[GRID_FILLS[0]])
+    print(f"    grid: {reused}/{n_parts} partitions reused from checkpoints, "
+          f"{n_parts - reused} recomputed", flush=True)
 
     execution(False, False)
 
@@ -1046,7 +1170,8 @@ def main() -> None:
             a_total = (len(GRID_FILLS) * len(asset_base) * len(asset_universes)
                        * len(RISKS) * len(CAPITALS) * len(START_YEARS))
             a_bar = Bar(a_total, "assets")
-            fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS, START_YEARS)
+            fill_grid(a_bar, asset_sets, asset_universes, RISKS, CAPITALS,
+                      START_YEARS, scope="assets")
             a_bar.close()
             universes.update({k: (v[0], v[1]) for k, v in asset_universes.items()})
             # The single-name universes' benchmark is the instrument itself,
