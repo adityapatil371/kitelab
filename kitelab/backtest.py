@@ -56,6 +56,24 @@ SHARES = 10
 # exit and EMA-break exit all move one session later; the stop LEVEL is unchanged,
 # because that is the line drawn on the chart. This is the honest execution model and
 # it is measured, not assumed -- the opens are in our data.
+#
+# SINCE 2026-09-09 THIS IS THE WHOLE BOARD'S SWITCH, not just this module's. All four
+# producers read it -- timeframes.simulate_variant, darvas.simulate and
+# holygrail.simulate reach it as `backtest.NEXT_OPEN_FILLS`, never by value, so a
+# run-time override set by a diagnostic reaches every one of them. Before that date
+# only the three backtest.py rows could be measured honestly and the other sixteen
+# had no next-open path at all (scripts/wf_lookahead.py). It lives here rather than
+# in a module of its own because this is where it was defined, documented and
+# measured; moving it would strand that record and every caller.
+#
+# What "the next open" means per producer, because the base bar is not always a day:
+#   backtest.py     daily bars -- the next session's open
+#   darvas.py       daily bars -- the next session's open
+#   timeframes.py   aggregated bars, but frames.NAMED_AGG takes `open` from a bar's
+#                   FIRST session, so the next weekly/monthly bar's open is still the
+#                   very next SESSION. An exact one-session lag, not an approximation.
+#   holygrail.py    EXITS ONLY. Its entry is a resting buy-stop filled intrabar on a
+#                   later bar and already carries no fill-timing lookahead.
 NEXT_OPEN_FILLS = False
 
 # Hysteresis: enter only when price is BAND above every EMA, exit only when it is BAND

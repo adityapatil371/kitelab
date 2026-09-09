@@ -56,6 +56,13 @@ exit line sells at that close. Pass intrabar=True for the Turtle reading instead
 where the channel edges are live orders and a touch fills at the line -- a gap
 through it fills at the open, which is worse and honest.
 
+Where those closes get FILLED follows backtest.NEXT_OPEN_FILLS (2026-09-09),
+read through the module so a run-time override reaches here. True moves entry
+and both exits to the next session's open, which is what an end-of-day trader
+who cannot watch the screen actually does. It is refused with intrabar=True:
+that reading has no end-of-day decision to defer -- the orders are already
+resting on the exchange.
+
 Naming, so nobody is misled later: Nicolas Darvas drew BOXES around consolidation
 and bought the break of the box top. The 20-in/10-out channel implemented here is
 the Donchian rule the Turtles traded, which is what trading classes usually mean
@@ -69,7 +76,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import frames, sizing, slippage
+from . import backtest, frames, sizing, slippage
 from .backtest import charges
 
 ENTRY_LEN = 20
@@ -120,6 +127,10 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
     weekly=False drops the gate, giving the single-timeframe Turtle rule. That
     is the control this whole change is measured against, not a fallback.
     """
+    if backtest.NEXT_OPEN_FILLS and intrabar:
+        raise ValueError("NEXT_OPEN_FILLS defers a decision taken at a close; with "
+                         "intrabar=True the channel edges are resting orders and "
+                         "there is nothing to defer. Run them separately.")
     frame = channels(symbol, entry_len, exit_len)
     gate = (weekly_gate(frame) if weekly else np.ones(len(frame), dtype=bool))
     open_ = frame["open"].to_numpy(dtype=float)
@@ -148,18 +159,31 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             position += 1
             continue
 
-        # A gap straight through the line fills at the open, not at the line.
-        entry_price = (max(float(upper[position]), float(open_[position])) if intrabar
-                       else float(close[position]))
         stop = float(low[position])
+        if backtest.NEXT_OPEN_FILLS:
+            if position + 1 >= total:
+                break                  # breakout on the last bar; nothing to fill at
+            entry_index = position + 1
+            entry_price = float(open_[entry_index])
+        else:
+            # A gap straight through the line fills at the open, not at the line.
+            entry_index = position
+            entry_price = (max(float(upper[position]), float(open_[position])) if intrabar
+                           else float(close[position]))
         risk = entry_price - stop
         if risk <= 0:
-            # The entry closed at or below its own low -- nothing to defend.
+            # Nothing to defend, for either of two reasons: the breakout bar
+            # closed at or below its own low, or -- under next-open fills -- the
+            # next session opened at or below the line the stop sits on. Buying
+            # into a structure that has already failed is not the rule.
             position += 1
             continue
 
         exit_at = None
-        for step in range(position + 1, total):
+        # Under next-open fills the walk starts ON the entry bar: you are long
+        # from its open, so that same bar's close can stop you out.
+        for step in range(entry_index if backtest.NEXT_OPEN_FILLS else position + 1,
+                          total):
             # 1. the stop, checked FIRST so a bar that breaks both is charged the
             #    worse of the two. Same order as backtest.simulate.
             if intrabar:
@@ -190,18 +214,23 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             break                      # still open at the end of the data
 
         exit_index, exit_price, reason = exit_at
+        if backtest.NEXT_OPEN_FILLS:
+            if exit_index + 1 >= total:
+                break              # exit signalled on the last bar, unfillable
+            exit_index += 1
+            exit_price = float(open_[exit_index])
         shares, risk_taken, capped = sizing.position(entry_price, stop)
         if shares <= 0 or (not sizing.FRACTIONAL and shares < 1):
             position = exit_index + 1
             continue
 
         quoted_entry, quoted_exit = entry_price, exit_price
-        entry_price = slippage.fill(symbol, stamps[position], quoted_entry, +1)
+        entry_price = slippage.fill(symbol, stamps[entry_index], quoted_entry, +1)
         exit_price = slippage.fill(symbol, stamps[exit_index], quoted_exit, -1)
         buy_value = entry_price * shares
         sell_value = exit_price * shares
         gross = (exit_price - entry_price) * shares
-        same_session = stamps[position].date() == stamps[exit_index].date()
+        same_session = stamps[entry_index].date() == stamps[exit_index].date()
         # ONE fee convention, everywhere: a trade that opens and closes in the same
         # session is billed at intraday rates, which is what Zerodha actually
         # charges and what portfolio.run has always done. It used to be billed
@@ -212,7 +241,7 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
 
         trades.append({
             "symbol": symbol,
-            "entry_ts": stamps[position],
+            "entry_ts": stamps[entry_index],
             "exit_ts": stamps[exit_index],
             "same_session": same_session,
             "entry_time": "EOD",
@@ -224,10 +253,10 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             "range": risk,
             "target": None,
             "final_stop": stop,
-            "bars_held": exit_index - position,
+            "bars_held": exit_index - entry_index,
             "charges_best": cost_best,
             "net_profit_best": gross - cost_best,
-            "entry_date": stamps[position],
+            "entry_date": stamps[entry_index],
             "entry_price": entry_price,
             "quoted_entry": quoted_entry,
             "quoted_exit": quoted_exit,
@@ -237,8 +266,8 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             "exit_date": stamps[exit_index],
             "exit_price": exit_price,
             "exit_reason": reason,
-            "days_held": (stamps[exit_index] - stamps[position]).days,
-            "sessions_held": exit_index - position,
+            "days_held": (stamps[exit_index] - stamps[entry_index]).days,
+            "sessions_held": exit_index - entry_index,
             "shares": shares,
             "cost_of_entry": buy_value,
             "gross_profit": gross,

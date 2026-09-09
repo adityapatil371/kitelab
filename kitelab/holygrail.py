@@ -86,7 +86,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import frames, indicators, levels, sizing, slippage
+from . import backtest, frames, indicators, levels, sizing, slippage
 from .backtest import charges
 
 EMA_LENGTH = 20
@@ -253,6 +253,16 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
                        2026-09-07 what the board row trades
     stop="pivot"       the last swing low confirmed by the signal bar, kept
                        for comparison; off the board
+
+    backtest.NEXT_OPEN_FILLS MOVES THE EXITS ONLY (2026-09-09). This rule is the
+    one producer on the board whose ENTRY carries no fill-timing lookahead to
+    remove: it is a resting buy-stop at the signal candle's high, placed after
+    that candle has closed and filled intrabar on a LATER bar, gap-adjusted to
+    the open. There is no decision-at-a-close to defer, so the entry is
+    unchanged and the flag is not refused -- it simply has less to do here than
+    in backtest.py, darvas.py and timeframes.py. Both exits ARE read at closes
+    (2026-09-07), so both move to the next session's open: the half banked at
+    the target at its own fill bar, the remainder at its own.
     """
     frame = setups(frames.daily(symbol), rules, trend, span)
     if len(frame) < 3 * span + EMA_LENGTH:
@@ -381,6 +391,16 @@ def simulate(symbol: str, stop: str = "signal_low", span: int = PIVOT_SPAN,
             break                                # still open at the end of the data
 
         exit_index, exit_price, reason = exit_at
+        if backtest.NEXT_OPEN_FILLS:
+            if exit_index + 1 >= total:
+                break                    # exit signalled on the last bar, unfillable
+            if banked_index is not None:
+                # Safe without its own bound check: a bar cannot both bank and
+                # exit (the stop is tested first and breaks the loop), so
+                # banked_index < exit_index, and exit_index + 1 < total above.
+                banked_price = float(open_[banked_index + 1])
+            exit_index += 1
+            exit_price = float(open_[exit_index])
         # Half came off at the target; the rest at the trail. One blended exit
         # price keeps the trade in the same shape as every other producer here.
         if banked_index is not None:

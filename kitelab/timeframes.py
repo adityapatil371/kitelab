@@ -174,7 +174,32 @@ def simulate_variant(symbol: str, variant: str,
 
     stop_on_close=True is the class convention (everything checked at bar
     closes only); False is the pre-2026-08-28 broker convention.
+
+    FILLS FOLLOW backtest.NEXT_OPEN_FILLS (2026-09-09). It is read through the
+    module, never imported by value, so a run-time override reaches here too.
+    False is the class convention and every stored number: the decision and the
+    fill share one close. True moves entry, stop exit and EMA-break exit to the
+    NEXT bar's open -- which on every base this file trades is the very next
+    SESSION, because frames.NAMED_AGG takes `open` from a bar's first session.
+    The weekly bar after a Friday close opens on the Monday; the monthly bar
+    after a month-end close opens on the first session of the next month. So
+    this is an exact one-session lag, not an approximation of one.
+
+    The stop LEVEL never moves -- it is the line drawn on the chart. A signal
+    whose next open is already at or below that line is DROPPED rather than
+    filled: you would not buy into a structure that has already failed. Same
+    rule, same reason, in the NEXT_OPEN_FILLS branch of backtest.simulate.
+
+    THE STAMP MOVES WITH THE FILL. Under the close convention a trade is
+    stamped on `end_ts`, the session the bar closed on. Under next-open fills
+    it is stamped on the FILL bar's `ts`, the session that bar opened on.
+    Stamping a next-open fill with `end_ts` would date a weekly entry on the
+    Friday of the week it was bought at the start of -- four sessions late, and
+    portfolio.run commits cash by that date.
     """
+    if backtest.NEXT_OPEN_FILLS and not stop_on_close:
+        raise ValueError("NEXT_OPEN_FILLS assumes decisions are taken at closes; it is "
+                         "meaningless with a live intrabar stop (stop_on_close=False).")
     base, highers = _stack_frames(symbol, variant)
     signal = stack_signal(base, highers, band=band, ath_band=ath_band)
     entry_ok = signal["entry_ok"].to_numpy()
@@ -188,6 +213,9 @@ def simulate_variant(symbol: str, variant: str,
     # existed, and made the daily curve mark a position from Monday at Friday's
     # price. Non-aggregated bases (daily, hourly) are unaffected: stamp == session.
     stamps = (signal["end_ts"] if "end_ts" in signal.columns else signal["ts"]).tolist()
+    # The session each bar OPENED on, which is what a next-open fill happens in.
+    # On a non-aggregated base (daily, hourly) this is the same list as `stamps`.
+    opened = signal["ts"].tolist()
     total = len(signal)
 
     trades: list[dict] = []
@@ -200,10 +228,23 @@ def simulate_variant(symbol: str, variant: str,
         if not fresh or not near_ath[position]:
             position += 1
             continue
-        entry_price = float(close[position])
         stop = float(low[position])
+        if backtest.NEXT_OPEN_FILLS:
+            if position + 1 >= total:
+                break                    # signal on the last bar; nothing to fill at
+            entry_index = position + 1
+            entry_price = float(open_[entry_index])
+            if entry_price <= stop:
+                position += 1
+                continue
+        else:
+            entry_index = position
+            entry_price = float(close[position])
         exit_at = None
-        for step in range(position + 1, total):
+        # Under next-open fills the walk starts ON the entry bar: you are long
+        # from its open, so that same bar's close can stop you out.
+        for step in range(entry_index if backtest.NEXT_OPEN_FILLS else position + 1,
+                          total):
             if stop_on_close:
                 if close[step] <= stop:
                     exit_at = (step, float(close[step]), "stop (close)")
@@ -219,6 +260,13 @@ def simulate_variant(symbol: str, variant: str,
         if exit_at is None:
             break  # still open; not a closed trade
         exit_index, exit_price, reason = exit_at
+        if backtest.NEXT_OPEN_FILLS:
+            if exit_index + 1 >= total:
+                break                    # exit signalled on the last bar, unfillable
+            exit_index += 1
+            exit_price = float(open_[exit_index])
+        entry_ts = opened[entry_index] if backtest.NEXT_OPEN_FILLS else stamps[position]
+        exit_ts = opened[exit_index] if backtest.NEXT_OPEN_FILLS else stamps[exit_index]
         shares, risk_taken, capped = sizing.position(entry_price, stop)
         if shares <= 0:
             position = exit_index + 1
@@ -226,11 +274,11 @@ def simulate_variant(symbol: str, variant: str,
         gross = (exit_price - entry_price) * shares
         buy_value = entry_price * shares
         sell_value = exit_price * shares
-        same_session = stamps[position].date() == stamps[exit_index].date()
+        same_session = entry_ts.date() == exit_ts.date()
         trades.append({
             "symbol": symbol,
-            "entry_ts": stamps[position],
-            "exit_ts": stamps[exit_index],
+            "entry_ts": entry_ts,
+            "exit_ts": exit_ts,
             "entry_price": entry_price,
             "stop": stop,
             "exit_price": exit_price,
@@ -242,8 +290,8 @@ def simulate_variant(symbol: str, variant: str,
             "charges": backtest.charges(buy_value, sell_value,
                                         intraday=same_session),
             "r_multiple": (gross / risk_taken) if risk_taken else 0.0,
-            "bars_held": exit_index - position,
-            "days_held": (stamps[exit_index] - stamps[position]).days,
+            "bars_held": exit_index - entry_index,
+            "days_held": (exit_ts - entry_ts).days,
             "stop_pct": (entry_price - stop) / entry_price * 100,
             "top_tf_done": int(signal["top_tf_done"].iloc[position]),
         })
