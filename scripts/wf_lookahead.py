@@ -32,8 +32,16 @@ without an edit.
 ONE FAMILY MOVES LESS THAN THE OTHERS, and it is not a gap. holygrail.py's
 ENTRY is a resting buy-stop at the signal candle's high, filled intrabar on a
 LATER bar -- it never had the fill-timing lookahead to remove. The flag moves
-its two exits and nothing else, so a near-zero reading on the hg row means the
-rule was already honest at entry, not that the measurement failed.
+its two exits and nothing else. That does NOT make the hg row near zero, as
+this paragraph once claimed: measured 2026-09-09 on the cached 11,256 arm-A
+trades against each bar's own close, the next open sits +0.05 R above a
+close-triggered stop or trail exit and +0.16 R above the close that banks the
+target half (only 34% and 24% of cases go the other way), together +14.5% of
+the rule's total net profit. Both exits are read at closes that the next open
+tends to beat, so arm B is BETTER for hg -- which is what the -3.87 pts/yr
+median (all 10 cells negative) on the 2026-09-09 full run says. Overnight
+drift after a weak close, momentum after a strong one; the code path was
+right, the prediction was wrong.
 
 TWO TRAPS THIS IS BUILT AROUND.
 
@@ -111,7 +119,7 @@ REQUIRED = ("symbol", "entry_ts", "exit_ts", "entry_price", "exit_price",
 MOVES = {"backtest.py":   "entry + exits",
          "timeframes.py": "entry + exits",
          "darvas.py":     "entry + exits",
-         "holygrail.py":  "exits only (entry is a resting buy-stop already)"}
+         "holygrail.py":  "exits only (entry is a resting buy-stop already; NOT near zero, see above)"}
 
 
 def eligible() -> list:
