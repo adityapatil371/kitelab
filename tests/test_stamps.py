@@ -58,6 +58,24 @@ class DashboardStampCoversTheNumbersPath(unittest.TestCase):
         self.assertTrue(b.get("account"))
 
 
+class StatusChecksEachCacheAgainstItsOwnStamp(unittest.TestCase):
+    """scripts.cache_status must agree with refresh --check. It did not until
+    2026-09-09: status() stamped every pickle as account=False, so the
+    validation summary -- saved with the wider account=True digest -- was
+    called STALE on every run over a cache that was current."""
+
+    def test_an_account_stamped_cache_is_reported_ok(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(signals, "CACHE", pathlib.Path(tmp)):
+                signals.save("_validation_summary_v99", [], [], account=True)
+                signals.save("EMA_b0_all", [], [], account=False)
+                verdicts = dict(signals.status([]))
+        self.assertTrue(verdicts["_validation_summary_v99"].startswith("ok"), verdicts)
+        self.assertTrue(verdicts["EMA_b0_all"].startswith("ok"), verdicts)
+
+
 if __name__ == "__main__":
     unittest.main()
 

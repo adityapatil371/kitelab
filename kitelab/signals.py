@@ -394,11 +394,18 @@ def status(symbols) -> list[tuple[str, str]]:
         # report the other 18 strategies stale after a one-engine edit -- which
         # is what this file did until 2026-09-09, and what the caches themselves
         # then acted on.
-        want = stamp(symbols, producer=_narrow(p.stem, account=False))
         blob = pickle.loads(p.read_bytes())
         if isinstance(blob, list):
             out.append((p.stem, f"UNSTAMPED ({len(blob):,} trades)"))
-        elif blob.get("stamp") == want:
+            continue
+        # Check the cache against the stamp it was WRITTEN with. Until
+        # 2026-09-09 every pickle was checked as account=False, so the
+        # validation summary (saved account=True, the wider digest) was
+        # reported STALE on every run while refresh --check said current.
+        account = bool(blob.get("stamp", {}).get("account"))
+        want = stamp(symbols, account=account,
+                     producer=_narrow(p.stem, account=account))
+        if blob.get("stamp") == want:
             out.append((p.stem, f"ok ({len(blob['trades']):,} trades)"))
         else:
             out.append((p.stem, f"STALE -- {_explain(want, blob.get('stamp', {}))}"))
