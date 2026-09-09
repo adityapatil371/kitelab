@@ -1,5 +1,5 @@
 {
- "written": "2026-09-07T19:57:48+05:30",
+ "written": "2026-09-09T12:25:13+05:30",
  "note": "The universe every number is quoted on: the four [universe] lists in config.local.toml merged, with config.EXCLUDED applied. Restore into [universe] unseen (any list works; they merge). The in-sample/holdout split was deleted 2026-09-07.",
  "universe": [
   "A2ZINFRA",
@@ -1097,7 +1097,7 @@
   "TRANSCOR": "GATE: history 0.0y / 7 bars < 5.0y",
   "TURTLEMINT": "GATE: history 0.2y / 42 bars < 5.0y",
   "TVSSRICHAK": "PADDING: 275 zero-volume bars at Rs39.90 before the first real trade at Rs107.65 (2007-02-13). Produces a trade on that exact day, worth -Rs5,256 on the EMA list.",
-  "UNITECH": "NO SPLIT (kept out pending re-screen): the -49.7% on 2008-10-24 (61.60 -> 31.00 on 6.3x volume, +38% the next session) is the market-wide crash day on which half the universe fell over 8%, not a corporate action. The stock is a Rs1-2 penny stock since 2019 (2.10 -> 1.25 on 2019-02-21); whether its full-history turnover still clears the gate is for the next re-screen.",
+  "UNITECH": "NO SPLIT (kept out pending re-screen): the -49.7% on 2008-10-24 (61.60 -> 31.00 on 6.3x volume, +38% the next session) is the market-wide crash day on which half the universe fell over 8%, not a corporate action. The stock is a Rs1-2 penny stock since 2019, and the 2026-09-07 gate rejects it on its own: 2.10 -> 1.25 on 2019-02-21 (-40.5%) reads as a suspected demerger, and it is not one -- it is what a Rs2 stock does.",
   "VHL": "GATE: turnover Rs426,748 < Rs2,000,000",
   "VINCOFE": "GATE: history 1.9y / 459 bars < 5.0y",
   "VINEETLAB": "SEAM x2: Rs1,556 -> Rs41 across a 350-day gap (2018-05-23 -> 2019-05-08), then Rs1,547 -> Rs43 across 769 days. Also carried 6 zero-volume bars at Rs7.60 that cost the Q/M/W reference account a manufactured -Rs43,200.",
