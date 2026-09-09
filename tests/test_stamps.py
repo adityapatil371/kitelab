@@ -68,8 +68,8 @@ class PerProducerNarrowing(unittest.TestCase):
     Added 2026-09-09. The property under test is not "the digests differ" --
     they differ trivially, because the file NAMES differ. It is that a module
     another engine owns is ABSENT FROM THE FILE LIST, which is what makes its
-    mtime unable to enter the digest at all. Testing the list rather than
-    poking mtimes also keeps the suite from writing to the source tree.
+    content unable to enter the digest at all. Testing the list rather than
+    editing files also keeps the suite from writing to the source tree.
     """
 
     def test_one_engine_is_not_in_another_engines_stamp(self):
@@ -136,3 +136,64 @@ class CacheNamesResolveToTheirProducer(unittest.TestCase):
         # serve it forever.
         self.assertIsNone(signals.producer_of("_validation_summary_v9"))
         self.assertIsNone(signals.producer_of("no_such_strategy_all"))
+
+
+class TheCodeDigestReadsBytesNotTimestamps(unittest.TestCase):
+    """The 2026-09-09 regression: a branch switch must not invalidate a cache.
+
+    Merging a finished branch into main rewrote 28 working-tree files -- back
+    to their older versions on `git switch`, then forward again on the
+    fast-forward. Not one byte differed at the end; every timestamp was new.
+    All 19 live caches went stale and `refresh --check` announced "the STRATEGY
+    CODE has changed", which was false, and the old timestamps were recorded
+    nowhere so it could not be undone. These tests fail if the digest ever goes
+    back to reading the clock.
+    """
+
+    def test_a_touch_does_not_change_the_content_hash(self):
+        # _content is a pure function of the bytes, so this is provable on a
+        # temp file without going near the source tree.
+        import os, tempfile, time
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "m.py"
+            f.write_text("x = 1\n")
+            before = signals._content(f)
+            os.utime(f, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+            self.assertEqual(before, signals._content(f),
+                             "the digest moved when only the timestamp did")
+
+    def test_one_changed_character_does_change_it(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "m.py"
+            f.write_text("x = 1\n")
+            before = signals._content(f)
+            f.write_text("x = 2\n")
+            self.assertNotEqual(before, signals._content(f))
+
+    def test_a_rewrite_with_identical_bytes_is_invisible(self):
+        # What `git switch` does: same content, new file, new timestamp.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "m.py"
+            f.write_text("x = 1\n")
+            before = signals._content(f)
+            f.unlink()
+            f.write_text("x = 1\n")
+            self.assertEqual(before, signals._content(f))
+
+    def test_touching_a_real_module_leaves_every_stamp_alone(self):
+        # The end-to-end property, on the real package. Safe to run because the
+        # timestamp is restored, and safe even if it were not: after this fix a
+        # stray mtime cannot reach the digest, which is the whole point.
+        import os, time
+        target = PKG / "holygrail.py"
+        keep = target.stat()
+        before = signals.stamp([], producer="holygrail.py")
+        wide = signals.stamp([], account=True)
+        try:
+            os.utime(target, ns=(keep.st_atime_ns, time.time_ns()))
+            self.assertEqual(before, signals.stamp([], producer="holygrail.py"))
+            self.assertEqual(wide, signals.stamp([], account=True))
+        finally:
+            os.utime(target, ns=(keep.st_atime_ns, keep.st_mtime_ns))

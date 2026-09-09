@@ -12,7 +12,7 @@ Two failures would be expensive and silent, so both are pinned here:
   numbers nobody computed, which is worse than the slow rebuild it replaced.
 
   A digest that moves when a PRODUCER module is touched. The producers' effect
-  is already in the trades hash, exactly; hashing their mtimes as well would
+  is already in the trades hash, exactly; hashing their contents as well would
   throw away the narrowing the checkpoints exist to exploit, and a docstring
   edit in darvas.py would reprice Holy Grail.
 """
@@ -117,8 +117,8 @@ class TheDigestCoversWhatACellDependsOn(unittest.TestCase):
 class TheDigestIgnoresTheProducers(unittest.TestCase):
     """The property the whole per-part scheme rests on."""
 
-    def test_no_producer_module_is_in_the_hashed_mtime_set(self):
-        # _grid_digest hashes the mtimes of signals._ACCOUNT and nothing else,
+    def test_no_producer_module_is_in_the_hashed_code_set(self):
+        # _grid_digest hashes the CONTENTS of signals._ACCOUNT and nothing else,
         # so this is what makes a darvas.py edit unable to reprice Holy Grail.
         # The trades hash already carries any real effect a producer had.
         account = {pathlib.Path(f).name for f in signals._ACCOUNT}
@@ -127,7 +127,7 @@ class TheDigestIgnoresTheProducers(unittest.TestCase):
                          "a producer module is in the grid digest -- the "
                          "per-partition reuse is defeated")
 
-    def test_this_file_is_in_the_hashed_mtime_set(self):
+    def test_this_file_is_in_the_hashed_code_set(self):
         # run_payload lives here, so an edit to it must invalidate every
         # partition. It is in _ACCOUNT under its scripts/ path.
         self.assertIn("../scripts/dashboard_data.py", signals._ACCOUNT)

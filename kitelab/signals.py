@@ -16,7 +16,7 @@ A cache now carries a STAMP and is refused when it does not match:
 
     universe   which symbols it was built over
     data       every price file those symbols read -- size and modification time
-    code       the strategy modules' own mtimes
+    code       the strategy modules' own CONTENTS (sha256 of the bytes)
 
 Legacy caches (no stamp) are still readable, because refusing them outright would
 break every report until a full rebuild. They warn, loudly, every time.
@@ -214,6 +214,38 @@ def producer_of(name: str) -> str | None:
     return best[1] if best else None
 
 
+# ---------------------------------------------------------- code identity ----
+# WHY THE CODE DIGEST READS BYTES AND NOT TIMESTAMPS (2026-09-09).
+#
+# This used to hash each module's st_mtime_ns. That is not a property of the
+# CODE, it is a property of the FILESYSTEM, and the two part company routinely:
+#
+#   git switch, git checkout, git stash, git pull, and a fast-forward merge all
+#   REWRITE working-tree files. Contents land exactly where they started and
+#   every timestamp is new.
+#
+# It happened for real on 2026-09-09. Merging a finished branch into main moved
+# through `git switch main` (28 files rewritten backwards) and then a
+# fast-forward (the same 28 rewritten forwards). `git diff` between the commit
+# that built the caches and the tree afterwards was two lines, both of them
+# timestamps inside data/keep -- no code at all. All 19 live caches nevertheless
+# went stale at once and `refresh --check` reported "the STRATEGY CODE has
+# changed since they were built", which was simply false. The cost of believing
+# it would have been a 103-minute rebuild that reproduced the numbers exactly.
+#
+# The old timestamps are recorded nowhere, so that damage could not be undone --
+# only prevented. Hashing the bytes prevents it: a rewrite that restores the
+# same content is now invisible, an edit of one character is not.
+#
+# The PRICE files deliberately stay on (size, mtime), just below. They are
+# 593 MB of parquet, git never touches them, and they are replaced wholesale by
+# a refetch rather than edited -- so timestamps tell the truth there and reading
+# every byte to learn it would be an absurd price.
+def _content(path: Path) -> str:
+    """sha256 of a source file's bytes. Survives a checkout; catches an edit."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
 def _digest(parts) -> str:
     h = hashlib.sha256()
     for p in parts:
@@ -256,7 +288,7 @@ def stamp(symbols, account: bool = False, producer: str | None = None) -> dict:
                 data.append((p.name, st.st_size, st.st_mtime_ns))
     here = Path(__file__).resolve().parent
     files = _code_files(producer) + (_ACCOUNT if account else [])
-    code = [(n, here.joinpath(n).resolve().stat().st_mtime_ns)
+    code = [(n, _content(here.joinpath(n).resolve()))
             for n in files if here.joinpath(n).exists()]
     out = {"universe": _digest(symbols), "n_symbols": len(symbols),
            "data": _digest(data), "n_files": len(data), "code": _digest(code),

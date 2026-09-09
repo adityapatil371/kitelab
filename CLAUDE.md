@@ -206,7 +206,7 @@ longer "invalidates all of them".** Two independent tiers:
   `CLEAN/grid_ckpt`, written atomically as each partition finishes, so an
   interrupted rebuild resumes instead of restarting. The digest covers the
   trades themselves (pickled and hashed — exact, 0.21s for the largest list),
-  the universes, the axes and `_ACCOUNT`'s mtimes. **The producer modules are
+  the universes, the axes and `_ACCOUNT`'s contents. **The producer modules are
   deliberately excluded**: their effect is already in the trades hash, so
   hashing them too would let a `darvas.py` docstring reprice Holy Grail.
   `--no-grid-cache` forces a full recompute.
@@ -214,6 +214,26 @@ longer "invalidates all of them".** Two independent tiers:
 Verified 2026-09-09 on the 3-symbol preflight board: building twice into one
 temp dir gave 0/19 partitions reused then 19/19, 78.1s then 0.8s, and all
 5,700 cells identical.
+
+**The code digest reads bytes, not timestamps (2026-09-09).** It used to hash
+each module's `st_mtime_ns`, which is a fact about the filesystem and not about
+the code. Merging a finished branch into `main` went through `git switch` (28
+files rewritten backwards) and then a fast-forward (the same 28 rewritten
+forwards); `git diff` between the commit that built the caches and the tree
+afterwards was two lines, both timestamps inside `data/keep`, no code at all.
+All 19 live caches went stale at once and `refresh --check` announced *"the
+STRATEGY CODE has changed since they were built"*, which was false — a
+103-minute rebuild to reproduce identical numbers. `git checkout`, `stash` and
+`pull` all do the same thing. `signals._content` now hashes the file's bytes,
+so a rewrite that restores the same content is invisible and a one-character
+edit is not; proved both ways on the real board. **Price files deliberately stay
+on (size, mtime)**: 593 MB of parquet that git never touches and a refetch
+replaces wholesale, so timestamps tell the truth there.
+
+The old timestamps were recorded nowhere, so that incident could not be undone,
+only prevented — the 19 caches were re-stamped by hand after git proved not one
+file they depend on had changed. If it ever happens again, check that first:
+adopt only when every part of the stamp except `code` already matches.
 
 ## Conventions the code holds to
 

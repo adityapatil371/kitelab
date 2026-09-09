@@ -447,11 +447,15 @@ def run_payload(r):
 #                            single-name priority rule; each is a multiplier on
 #                            the cell count and on the answers.
 #   the account modules      signals._ACCOUNT (portfolio, curves, validation,
-#                            contracts) and THIS FILE, by mtime. These turn a
-#                            trade list into a cell.
+#                            contracts) and THIS FILE, BY CONTENT. These turn a
+#                            trade list into a cell. Contents and not timestamps
+#                            for the reason set out in signals._content: a
+#                            branch switch rewrites these files without changing
+#                            a byte, and on 2026-09-09 that alone would have
+#                            discarded all 38 partitions.
 #
 # The PRODUCER modules are deliberately NOT in the digest. Their effect is
-# already in the trades hash, and exactly, so hashing their mtimes as well
+# already in the trades hash, and exactly, so hashing their contents as well
 # would throw away the per-producer narrowing this was built to exploit -- a
 # docstring edit in darvas.py would otherwise reprice Holy Grail.
 #
@@ -470,7 +474,7 @@ def _grid_digest(trades, unis, risks, capitals, years, fkey) -> str:
     h.update(repr([risks, capitals, years, list(PRIORITIES), PRIORITY_DEFAULT,
                    fkey, FILL_SPEC[fkey]]).encode())
     here = pathlib.Path(signals.__file__).resolve().parent
-    h.update(repr(sorted((n, here.joinpath(n).resolve().stat().st_mtime_ns)
+    h.update(repr(sorted((n, signals._content(here.joinpath(n).resolve()))
                          for n in signals._ACCOUNT
                          if here.joinpath(n).exists())).encode())
     return h.hexdigest()[:32]
