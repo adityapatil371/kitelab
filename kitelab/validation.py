@@ -136,6 +136,34 @@ def _day64(stamp) -> np.datetime64:
 
 
 # ------------------------------------------------------------ benchmark ----
+def _hold_retention() -> float:
+    """Fraction of gross wealth a buy-once/sell-once member keeps after fees.
+
+    ADDED 2026-09-09. The rule pays the Zerodha schedule on every round trip;
+    this benchmark used to pay nothing, ever, so every margin on the board was
+    biased against the rule. _hold buys each member once and sells it once, so
+    the fee is a single multiplicative haircut -- identical for every member
+    and independent of the price path, which is why no prices and no rebuild
+    of the trade lists are needed to apply it.
+
+    Proportional delivery charges only: STT, exchange transaction, SEBI, stamp
+    duty and GST on the fee components. The fixed Rs15.34 per-scrip demat fee
+    is deliberately EXCLUDED -- _hold is scale-free (Rs1 per member), so a
+    rupee fee has no meaning in it and would let an arbitrary account size
+    drive the answer. Spread is excluded too: the benchmark trades at the same
+    closes the unspread cell does. Read live from backtest so this cannot
+    drift from the engine. Worth 0.09 pts/yr; it corrects the bookkeeping and
+    changes no verdict (scripts/wf_cost_gap.py).
+    """
+    dp = backtest.DP_PER_SELL          # charges() adds it on every delivery call
+    buy = backtest.charges(1.0, 0.0, intraday=False) - dp
+    sell = backtest.charges(0.0, 1.0, intraday=False) - dp
+    if not (0 < buy < 0.01 and 0 < sell < 0.01):
+        raise ValueError(f"implausible fee rates: buy {buy}, sell {sell} -- "
+                         f"has the schedule in kitelab/backtest.py changed shape?")
+    return (1.0 - sell) / (1.0 + buy)
+
+
 def _hold(members, start=None, end=None) -> float | None:
     """Equal-weight portfolio CAGR of `members` between `start` and `end`.
 
@@ -172,7 +200,8 @@ def _hold(members, start=None, end=None) -> float | None:
     years = (last_ts - first_ts) / np.timedelta64(1, "D") / 365.25
     if years <= 0:
         return None
-    return float(((wealth / count) ** (1.0 / years) - 1.0) * 100.0)
+    net = wealth * _hold_retention()      # see _hold_retention: one haircut, no prices
+    return float(((net / count) ** (1.0 / years) - 1.0) * 100.0)
 
 
 def buy_and_hold(members, start_year=None, end_ts=None) -> float | None:

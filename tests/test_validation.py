@@ -18,7 +18,7 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
-from kitelab import frames, validation
+from kitelab import backtest, frames, validation
 from tests import support
 
 TS = pd.Timestamp
@@ -83,9 +83,30 @@ class BuyAndHold(unittest.TestCase):
             got = validation.buy_and_hold(["A", "B", "C", "D"], start_year=2018)
         # Rs1 in each of A, B, C: 2.0 + 1.0 + 1.5 = 4.5 on Rs3, over the span
         # from A's first bar to A's last bar (C ends earlier, D is skipped).
+        # Since 2026-09-09 the benchmark also pays one round trip, so the
+        # gross 4.5 is haircut once -- see validation._hold_retention.
         years = (TS("2018-01-01") + pd.Timedelta(days=699) - TS("2018-01-01")).days / 365.25
-        want = ((4.5 / 3) ** (1 / years) - 1) * 100
+        want = ((4.5 * validation._hold_retention() / 3) ** (1 / years) - 1) * 100
         self.assertAlmostEqual(got, want, places=6)
+
+    def test_benchmark_pays_one_round_trip(self):
+        """The rule pays the Zerodha schedule; before 2026-09-09 the benchmark
+        paid nothing, which biased every margin on the board against the rule.
+        The haircut is checked against backtest.charges directly, not against
+        validation's own helper, so a schedule change cannot pass silently."""
+        dp = backtest.DP_PER_SELL
+        buy = backtest.charges(1.0, 0.0, intraday=False) - dp
+        sell = backtest.charges(0.0, 1.0, intraday=False) - dp
+        self.assertAlmostEqual(validation._hold_retention(),
+                               (1.0 - sell) / (1.0 + buy), places=12)
+
+        # and it must actually reach the reported CAGR: net below gross.
+        with prices(self._universe()):
+            net = validation.buy_and_hold(["A", "B", "C"], start_year=2018)
+        years = (TS("2018-01-01") + pd.Timedelta(days=699) - TS("2018-01-01")).days / 365.25
+        gross = ((4.5 / 3) ** (1 / years) - 1) * 100
+        self.assertLess(net, gross)
+        self.assertAlmostEqual(net, gross, delta=0.5)   # a haircut, not a rewrite
 
     def test_not_the_median_stock(self):
         """Jensen: a right-skewed set of stock returns has a portfolio CAGR
