@@ -28,7 +28,7 @@ python3 -m scripts.refresh               # --check | --force | --stocks-only
 # BEFORE a rebuild — catches what import cannot (NameError in main(), a payload
 # key the build stopped emitting). Five of six rebuilds on 2026-09-03 were spent
 # finding faults these would have caught in minutes.
-python3 -m unittest discover -s tests -t .   # 403 tests, ~2s
+python3 -m unittest discover -s tests -t .   # ~400 tests, ~2s
 python3 -m pyflakes kitelab scripts tests    # undefined names, instant
 python3 -m scripts.preflight                 # build path, one symbol per bucket, ~2 min
 
@@ -120,7 +120,7 @@ working.
   - `dashboard_server.py` — stdlib HTTP; `/`, `/api/dashboard`, `/api/status`, `/api/curve`.
 - `scripts/` — thin entry points, all `python -m scripts.<name>`.
   `dashboard_data.py` precomputes the whole grid into `dashboard.json`.
-- `tests/` — 403 hermetic tests, no price files or network (`support.py`
+- `tests/` — ~400 hermetic tests, no price files or network (`support.py`
   patches the data boundary). Property tests, a golden test, and an oracle test
   against `backtesting.py` (skips if that dev extra is absent).
   `scripts/preflight.py` is the integration test, `check_dashboard.js` the page one.
