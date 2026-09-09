@@ -1,5 +1,5 @@
 {
- "written": "2026-09-09T17:32:11+05:30",
+ "written": "2026-09-09T23:18:05+05:30",
  "note": "The universe every number is quoted on: the four [universe] lists in config.local.toml merged, with config.EXCLUDED applied. Restore into [universe] unseen (any list works; they merge). The in-sample/holdout split was deleted 2026-09-07.",
  "universe": [
   "A2ZINFRA",
