@@ -20,7 +20,13 @@ the dev container (Linux) that venv is a dead symlink — use plain `python3`
 
 ```bash
 # view the dashboard — stdlib only, no keys. Run on the HOST, not in the container.
-./run_dashboard.sh                       # port 8765
+# Safari enforces HTTPS-Only on this Mac, so ./run_dashboard.sh (plain http)
+# fails with "navigation failed because request was an http url with https
+# enabled". The server is FINE when that happens — do not debug the project.
+# Serve over TLS instead and open https://localhost:8765 (with the s):
+python3 ~/.kitelab-dev-tls/serve_https.py     # port 8765, Ctrl-C to stop
+
+./run_dashboard.sh                       # port 8765, http — blocked in Safari
 
 # rebuild whatever is stale — no keys, needs pandas
 python3 -m scripts.refresh               # --check | --force | --stocks-only
@@ -279,6 +285,22 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 - `dashboard_server.serve()` binds `127.0.0.1` with no host parameter: a
   server inside the dev container is unreachable from the host browser and
   `-p 8765:8765` does not help. `curl` in-container proves only liveness.
+- **The Mac views the dashboard over HTTPS, not `./run_dashboard.sh`.** Safari
+  enforces HTTPS-Only there and refuses a plain-http navigation outright. The
+  fix is a trusted self-signed cert, NOT an http allowlist — so the browser is
+  satisfied rather than bypassed. `~/.kitelab-dev-tls/serve_https.py` imports
+  `Handler` from `dashboard_server` and wraps the socket in TLS; same page,
+  same data. It lives OUTSIDE the repo and is not in git, so a machine rebuild
+  loses it. To recreate (cert good 825 days, covers both names):
+
+      mkdir -p ~/.kitelab-dev-tls && openssl req -x509 -newkey rsa:2048 -nodes \
+        -days 825 -keyout ~/.kitelab-dev-tls/key.pem \
+        -out ~/.kitelab-dev-tls/cert.pem -subj "/CN=localhost" \
+        -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+  then trust `cert.pem` in Keychain. The wrapper skips `run_dashboard.sh`'s
+  data-dir discovery, so if the page says "No data yet", prefix the command
+  with `KITELAB_CLEAN_DIR="$HOME/data/clean/kitelab"`.
 - `pkill -f "scripts.dashboard"` matches its own shell and kills the session.
   Use PIDs; `pgrep -a -f` has the same problem.
 - `/tmp` is cleared between sessions. Long-running logs go in `output/`.
