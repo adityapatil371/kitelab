@@ -181,6 +181,12 @@ const REQUIRED_TS = ["trades", "wins", "win_rate", "pf", "rr", "expectancy", "av
   console.log(`  grid cells: ${Object.keys(DATA.grid || {}).length}, validation records: ${Object.keys(DATA.validation || {}).length}`);
 }
 const VS = DATA.validation_summary || {};
+/* The diagnostics block is OPTIONAL by design: scripts.dashboard_data writes
+   the payload and scripts.wf_attach + scripts.attach_diagnostics add this
+   afterwards, so a payload checked between those stages is not broken. When
+   it IS present its contract is enforced below, and the whole checker
+   switches to the daily gate, exactly as the page does. */
+const DG = DATA.diagnostics || null;
 {
   const m = missing(VS, REQUIRED_SUMMARY);
   m.length ? bad(`validation_summary missing: ${m.join(", ")}`) : ok("validation_summary carries the multiple-testing arithmetic and hold_cagr_by_scenario");
@@ -246,6 +252,51 @@ const VS = DATA.validation_summary || {};
   stale ? bad(`${stale} validation records still carry hold_cagr -- removed from the contract 2026-09-07`)
         : ok("no validation record carries the retired hold_cagr");
 }
+const REQUIRED_DIAG = ["alpha", "n_tested", "bh_threshold", "bonferroni_threshold",
+  "n_uncorrected", "n_bh", "n_bonferroni", "expected_by_chance", "median_mde_80",
+  "median_days", "walk_forward_mde_80", "n_fill_timing", "arm_b_provisional", "arm_b_verified"];
+const REQUIRED_DAILY = ["days", "nw_lag", "t_hac", "p", "excess_pts", "mde_80"];
+const REQUIRED_FILL = ["cagr", "taken", "wiped", "beats_hold"];
+{
+  if (!DG) {
+    ok("no diagnostics block -- Validated falls back to the seven-window gate " +
+       "(run scripts.wf_attach then scripts.attach_diagnostics to add the daily test)");
+  } else {
+    const m = missing(DG, REQUIRED_DIAG);
+    m.length ? bad(`diagnostics missing: ${m.join(", ")}`)
+             : ok(`diagnostics carries all ${REQUIRED_DIAG.length} keys the page reads`);
+    const de = DATA.daily_excess || {}, ft = DATA.fill_timing || {};
+    const problems = [], orphans = [];
+    for (const [key, c] of Object.entries(de)) {
+      for (const mk of missing(c, REQUIRED_DAILY)) problems.push(`daily ${key}: ${mk}`);
+      if (!has(DATA.grid, key)) orphans.push(key);
+      if (c.p != null && (c.p < 0 || c.p > 1)) problems.push(`daily ${key}: p=${c.p} out of [0,1]`);
+      if (c.days != null && c.days < 250) problems.push(`daily ${key}: ${c.days} days, below the 250 floor`);
+    }
+    for (const [key, c] of Object.entries(ft)) {
+      for (const mk of missing(c, REQUIRED_FILL)) problems.push(`fill ${key}: ${mk}`);
+      if (!has(DATA.grid, key)) orphans.push(key);
+    }
+    problems.length ? bad(`diagnostic cells: ${problems.length} contract problems, e.g. ${problems.slice(0, 4).join("; ")}`)
+                    : ok(`every diagnostic cell carries its fields (${Object.keys(de).length} daily, ${Object.keys(ft).length} fill)`);
+    orphans.length ? bad(`${orphans.length} diagnostic cells are not in the grid, e.g. ${orphans.slice(0, 3).join(", ")}`)
+                   : ok("every diagnostic cell keys a real grid cell");
+    if (DG.n_tested !== Object.keys(de).length)
+      bad(`diagnostics.n_tested ${DG.n_tested} but daily_excess has ${Object.keys(de).length} cells`);
+    // THE BH BAR, RECOMPUTED. The page trusts one number to decide 9,500
+    // verdicts; if attach_diagnostics ever mis-sorts, every verdict moves at
+    // once and nothing else on this page would notice.
+    const ps = Object.values(de).map(c => c.p).filter(p => p != null).sort((a, b) => a - b);
+    let want = 0;
+    ps.forEach((p, i) => { if (p <= DG.alpha * (i + 1) / ps.length) want = p; });
+    Math.abs(want - DG.bh_threshold) > 1e-8
+      ? bad(`diagnostics.bh_threshold ${DG.bh_threshold} but recomputing Benjamini-Hochberg gives ${want}`)
+      : ok(`the Benjamini-Hochberg bar (p <= ${DG.bh_threshold}) recomputes from the ${ps.length} p-values`);
+    const nbh = ps.filter(p => DG.bh_threshold && p <= DG.bh_threshold).length;
+    nbh !== DG.n_bh ? bad(`diagnostics.n_bh ${DG.n_bh} but ${nbh} p-values clear the bar`)
+                    : ok(`${DG.n_bh} of ${ps.length} cells clear it, ${DG.n_uncorrected} clear an uncorrected 0.05`);
+  }
+}
 {
   const problems = [];
   for (const [key, t] of Object.entries(DATA.trade_stats || {}))
@@ -286,7 +337,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
       if (!cell) {
         out.push({ key, family, setting: setting === "—" ? "no trades" : `${setting} · no trades`,
                    noTrades: true, validated: null, gates: null, mar: null,
-                   cells: ["—", "—", "—", "—", "—", "—", "—", "—"] });
+                   cells: ["—", "—", "—", "—", "—", "—", "—", "—", "—", "—"] });
         continue;
       }
       const fcu = val && val.fixed_checks_by_universe;
@@ -295,11 +346,20 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
       const cred = fc && fc.credibility, fg = fc && fc.fixed_gates;
       const wf = val && (val.walk_forward_by_scenario || {})[`${uni}|${prio}|${capital}`];
       const vsHold = (hold != null && !cell.wiped && cell.cagr != null) ? cell.cagr - hold : null;
+      // The daily test since 2026-09-10, with the same fallback the page uses:
+      // no diagnostics block means the payload predates it and the seven-window
+      // gate is still what the verdict was actually built on.
+      const daily = (DATA.daily_excess || {})[key] || null;
+      const dailyExcess = (daily && daily.p != null && DG)
+        ? daily.p <= DG.bh_threshold : null;
+      const fill = (DATA.fill_timing || {})[key] || null;
+      const fillDelta = (fill && fill.cagr != null && cell.cagr != null && !cell.wiped)
+        ? fill.cagr - cell.cagr : null;
       const gates = [
         fg ? fg.distinguishable : null,
         fg ? fg.breakeven_margin : null,
         vsHold == null ? null : vsHold > 0,
-        (wf && wf.total_windows) ? wf.wins * 2 > wf.total_windows : null,
+        DG ? dailyExcess : ((wf && wf.total_windows) ? wf.wins * 2 > wf.total_windows : null),
         (cred && cred.t_gate != null && VS.hurdle != null) ? cred.t_gate > VS.hurdle : null,
       ];
       const validated = gates.every(g => g != null) ? gates.every(g => g === true) : null;
@@ -311,6 +371,8 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
           fmt.signed1(vsHold),
           fmt.pct1(cell.maxdd),
           fmt.num2(cell.mar),
+          daily && daily.t_hac != null ? "t=" + daily.t_hac.toFixed(1) : "—",
+          fillDelta == null ? "—" : (fillDelta > 0 ? "+" : "") + fillDelta.toFixed(1),
           wf ? `${wf.wins}/${wf.total_windows}` : "—",
           cred && cred.t_stat != null ? "t=" + cred.t_stat.toFixed(1) : "—",
           fmt.int(cell.taken),
@@ -319,7 +381,8 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
     }
   return out;
 }
-const HEAD = ["Strategy", "Setting", "Validated", "CAGR", "vs Hold", "Drawdown", "MAR", "Walk-fwd", "Credibility", "Trades", "Captured"];
+const HEAD = ["Strategy", "Setting", "Validated", "CAGR", "vs Hold", "Drawdown", "MAR",
+              "Daily edge", "Next open", "Walk-fwd", "Credibility", "Trades", "Captured"];
 
 function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
   S.view = "compare"; S.uni = uni; S.year = year; S.cap = capIdx; S.risk = riskIdx;
@@ -407,7 +470,7 @@ console.log("\n== multiple-testing banner ==");
   const formulas = text((els["cmp-formulas"] || {}).innerHTML);
   for (const word of ["drift_r", "t_taken", "t_cluster", "hurdle", "Fully deployed", "₹2L / 1% / most-liquid-first", "strict majority", "selected start year"])
     formulas.includes(word) ? ok(`formulas/glossary mention "${word}"`) : bad(`formulas/glossary lack "${word}"`);
-  /5,000|block-resampled/.test(formulas) && bad("formulas still describe the 5,000-round block bootstrap");
+  /5,000[- ]round|5,000 resample|block-resampled/.test(formulas) && bad("formulas still describe the 5,000-round block bootstrap");
   /\bthe 24\b|\b13 variants\b/.test(formulas) && bad("formulas carry a literal board size");
 }
 
@@ -455,7 +518,7 @@ async function checkDetail() {
   eq("t_cluster", f2(cred.t_cluster));
   eq("t_stat", f2(cred.t_stat));
   eq("t_taken", f2(cell.t_taken));
-  /5,000|block-resampled/i.test(t) ? bad("Detail still describes the 5,000-round block bootstrap") : ok("Detail describes the clustered, drift-adjusted t");
+  /5,000[- ]round|5,000 resample|block-resampled/i.test(t) ? bad("Detail still describes the 5,000-round block bootstrap") : ok("Detail describes the clustered, drift-adjusted t");
   t.includes("one quarter as one bet") || t.includes("one quarter, one bet") ? ok("credibility caption explains the clustering") : bad("credibility caption lacks the one-quarter-one-bet explanation");
   // walk-forward table
   const wf = (val.walk_forward_by_scenario || {})[`all|${prio}|${capital}`];

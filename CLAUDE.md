@@ -30,6 +30,12 @@ python3 ~/.kitelab-dev-tls/serve_https.py     # port 8765, Ctrl-C to stop
 
 # rebuild whatever is stale — no keys, needs pandas
 python3 -m scripts.refresh               # --check | --force | --stocks-only
+                                         # also runs the two diagnostics below;
+                                         # --skip-diagnostics stops after the grid
+
+# the two out-of-band diagnostics, if run by hand (refresh does both for you)
+python3 -m scripts.wf_attach             # --pilot N to time one strategy first
+python3 -m scripts.attach_diagnostics    # --check | --strip
 
 # BEFORE a rebuild — catches what import cannot (NameError in main(), a payload
 # key the build stopped emitting). Five of six rebuilds on 2026-09-03 were spent
@@ -97,10 +103,30 @@ The Compare table's **Validated** column is a *gate, not a score*: failing any
 one of five checks ranks a row below every row that passes all five; MAR
 breaks ties within each group. The five, in one line each: beats the on-screen
 equal-weight buy-&-hold; distinguishable from jointly-shuffled prices
-(p ≤ 0.05, 100 rounds); wins a strict majority of fixed 3-year windows against
-each window's own hold; survives a cost margin (breakeven bp); clears the
-family-wise luck hurdle (`t_gate`, the smaller of the cluster-robust t and its
-drift-adjusted twin, ≥ ~2.4 — both, since 2026-09-09).
+(p ≤ 0.05, 100 rounds); **beats the hold day by day** (see below); survives a
+cost margin (breakeven bp); clears the family-wise luck hurdle (`t_gate`, the
+smaller of the cluster-robust t and its drift-adjusted twin, ≥ ~2.4 — both,
+since 2026-09-09).
+
+**The fourth gate changed on 2026-09-10.** It used to be "wins a strict
+majority of fixed 3-year windows". Seven windows is seven bits of evidence, and
+`scripts/wf_power.py` measured what that buys: the smallest edge the majority
+rule spots 80% of the time is **20 CAGR points a year**, and a rule with *no*
+edge passes it **49.8%** of the time. A gate a coin flip clears half the time
+describes rather than tests. The replacement asks the same question of ~5,000
+daily rule-minus-hold returns instead of 7 win/lose bits, with a Newey-West HAC
+standard error — lag `max(4·(n/100)^(2/9), 21)` — so overlapping positions and
+volatility clustering are not counted as independent evidence. Detectable edge
+falls to **~11.8 pts/yr**. Walk-forward keeps its column and its Detail table:
+it answers *when* the edge was there, which a whole-sample test cannot.
+
+The bar is **not** a nominal 0.05. 9,500 cells tested at once is 9,500 chances
+to be lucky (~475 would clear 0.05 with no edge at all), so the gate is a
+**Benjamini-Hochberg** false-discovery-rate threshold across every tested cell;
+the uncorrected and Bonferroni counts are shown beside it, never gated on. BH
+rather than Bonferroni because these cells are heavily correlated — 19 rules
+re-run over overlapping universes and start years — and Bonferroni on
+correlated tests is far stricter than its own nominal level.
 
 Quote the `validation_summary` spread (`tried`, `n_eff`, `hurdle`, `cleared`…),
 never a single headline number: the hurdle guards the t only, while the MAR the
@@ -110,6 +136,37 @@ credibility statistic, drift_r, the holdout stand-ins table, how to add a
 strategy — is in the **kitelab-validation** skill. The 2026-09-07 audit made
 every gate stricter; the board looking worse than 2026-09-05 is the repair
 working.
+
+### The two out-of-band diagnostics
+
+Both are computed **outside** `scripts/dashboard_data.py`, and that is a
+deliberate cost decision, not laziness. Every file in `kitelab.signals._ACCOUNT`
+— which includes `'../scripts/dashboard_data.py'` — is content-hashed into
+`_grid_digest`, so adding thirty lines to the build script invalidates all 38
+grid partitions *and* the validation summary, costing a ~140-minute rebuild to
+compute something that needs none of it. The standalone harness loads the same
+signal caches, applies `slippage.apply_spread` under
+`ENABLED=True, MAX_PARTICIPATION=0.01`, and calls `portfolio.run` — verified to
+reproduce a board cell exactly (`SELF_CHECK_KEY` in `wf_attach.py`, which exits
+non-zero if it ever stops matching).
+
+| Script | What it adds | Gated? |
+|---|---|---|
+| `scripts/wf_attach.py` | arm A: the daily-excess test. arm B: the same accounts refilled at the **next session's open** instead of the signal's own close | A yes, B no |
+| `scripts/attach_diagnostics.py` | merges `output/wf_attach_<date>.json` into `dashboard.json` as `daily_excess`, `fill_timing`, `diagnostics`; computes the BH bar | — |
+
+`scripts/refresh.py` runs both after the grid (`--skip-diagnostics` to stop
+short). A payload without the block is **not broken**: the page falls back to
+the seven-window gate and says so in a banner, and `check_dashboard.js` reports
+the fallback as `ok`.
+
+**Arm B is shown, never gated**, and the reason is written on the page rather
+than buried: `NEXT_OPEN_FILLS` (`kitelab/backtest.py:77`, default `False`) has
+per-producer semantics, and its next-open branch is independently verified for
+**`backtest.py` only** — one engine of the nineteen rules on the board. Gating a
+verdict on a computation whose own code has not been checked is worse than
+showing the number with a provisional flag. Promote engines into
+`ARM_B_VERIFIED` as they are checked; the page's wording follows the constant.
 
 ## Layout
 
@@ -278,6 +335,14 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 
 ## Traps
 
+- **A diagnostic that never reaches the page is not done.** The day-by-day
+  test existed as `scripts/wf_daily.py` for two days before anything on the
+  dashboard read it, because reaching the page depended on someone remembering
+  to run it. Anything meant to change a verdict goes into `refresh.py`,
+  `dashboard.html` and `check_dashboard.js` in the same change as the maths.
+- **Never edit `scripts/dashboard_data.py` to add a measurement.** It is in
+  `signals._ACCOUNT`, so a comment in it costs a ~140-minute rebuild. Read the
+  finished payload from a new script instead — see the two above.
 - **Compiling is not working.** Most bugs here passed every static check — a
   missing import, MAR computed but never put in the payload, numpy scalars
   that will not serialise. Dry-run the page against the built file

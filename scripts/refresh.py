@@ -5,6 +5,7 @@
     python -m scripts.refresh --force            # rebuild even if it looks current
     python -m scripts.refresh --skip-preflight   # skip the 40s smoke test
     python -m scripts.refresh --stocks-only      # skip Bitcoin/GOLD in the rebuild
+    python -m scripts.refresh --skip-diagnostics # stop after the grid (see step 3)
 
 A rebuild is preceded by scripts.preflight, which runs the whole build over three
 symbols into a temp directory. It costs about forty seconds and refuses to let the
@@ -33,10 +34,25 @@ WHAT IT CHECKS, in order:
        numbers describe something other than what you are trading now.
        ->  runs scripts.dashboard_data
 
+    3. Are the OUT-OF-BAND DIAGNOSTICS behind the dashboard?
+       Two checks the page shows cannot be computed inside the build: the
+       day-by-day excess test (Validated's fourth gate) and the next-open
+       fill arm. Both are stamped with the payload's own build time, so a
+       new dashboard leaves them stale by definition.
+       ->  runs scripts.wf_attach, then scripts.attach_diagnostics
+
+       They live outside dashboard_data on purpose. Every file listed in
+       kitelab.signals._ACCOUNT -- which includes scripts/dashboard_data.py
+       itself -- is hashed into the grid's digest, so adding thirty lines to
+       the build script invalidates all 38 grid partitions and the validation
+       summary, costing a full rebuild to compute something that needs none of
+       it. Bolted on here, they read the finished payload and add to it.
+
 Each step is skipped when it is not needed, so re-running this on an unchanged
 project costs a second and prints "already current". That matters because the
 rebuild is a 100-150 minute job (103 min on 2026-09-07, 146 on 2026-09-09 for
-the same code; the host sets the pace) and should never be started out of doubt.
+the same code; the host sets the pace), plus the diagnostics in step 3, and
+should never be started out of doubt.
 """
 from __future__ import annotations
 
@@ -109,6 +125,10 @@ def main() -> None:
                     help="clean and rebuild even if nothing looks stale")
     ap.add_argument("--skip-preflight", action="store_true",
                     help="start the long build without the 40s smoke test first")
+    ap.add_argument("--skip-diagnostics", action="store_true",
+                    help="stop after the grid, without the day-by-day test and "
+                         "the next-open fill arm (the page then falls back to "
+                         "the seven-window gate and says so)")
     ap.add_argument("--stocks-only", action="store_true",
                     help="skip the non-equity instruments in the rebuild "
                          "(passed through to scripts.dashboard_data)")
@@ -180,6 +200,19 @@ def main() -> None:
             run("scripts.preflight", "smoke test before the long build")
         run("scripts.dashboard_data", verdict.get("message", "--force")[:60],
             ["--stocks-only"] if args.stocks_only else [])
+
+    # ---- 3. the diagnostics the page shows but the build cannot make -------
+    # AFTER dashboard_data, unconditionally once we are past the early return:
+    # both are keyed to the payload's build stamp, so any rebuild above makes
+    # the previous run's file stale and attach_diagnostics refuses to merge it.
+    #
+    # Wired in rather than left as two commands to remember, for the same
+    # reason backup_inputs is: on 2026-09-10 the day-by-day test had existed
+    # as scripts/wf_daily.py for two days and had never once reached the page,
+    # because reaching it depended on someone remembering to run it.
+    if not args.skip_diagnostics:
+        run("scripts.wf_attach", "day-by-day excess test and next-open fills")
+        run("scripts.attach_diagnostics", "merging them into the payload")
 
     # Last, and only after a real rebuild: refresh the copies of the few files
     # nothing can regenerate. Wired in here rather than left as a script to
