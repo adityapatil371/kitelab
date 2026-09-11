@@ -101,6 +101,43 @@ RISKS = [0.5, 1.0]
 START_YEARS = [2006, 2012, 2018, 2022, 2024]
 START_DEFAULT = 2018
 
+
+def gridded_years(stamps, years=None):
+    """The start years that are DISTINCT tests for one (strategy, universe).
+
+    A start year earlier than the rule's FIRST trade in that universe slices
+    nothing off: the window it produces is the whole sorted list, which is
+    exactly the window the next start year up produces. Same trades, same
+    account, same number -- one backtest wearing an earlier label. So among the
+    years that cut nothing, only the LATEST is a real scenario, and it is the
+    latest rather than the earliest because that is the year you could actually
+    have started; an earlier label is a claim the data cannot support.
+
+    MEASURED 2026-09-11 on the 13-strategy board, which is what put this here.
+    `recent` holds 187 names with no positive-turnover bar before 2018, so its
+    2006, 2012 and 2018 cells were byte-identical -- 156 of 156 on both pairs,
+    equal to within 1e-9, while no other bucket had more than 1 of 156 agreeing
+    by chance. That is 216 of 2,700 cells on the 9-strategy board, 8%.
+
+    The waste was never the point; the multiple-testing count was. The
+    Benjamini-Hochberg gate divides by how many chances you gave yourself to be
+    lucky, and three copies of one test are one chance, not three. It does not
+    move today's verdict (nothing clears the bar), but a `recent` cell that ever
+    did clear it would have entered the FDR ranking three times over.
+
+    Detected from the trade stamps rather than from a list of bucket names or a
+    hardcoded 2018, so it stays true if the buckets are recut or a start year is
+    added -- the same reasoning as the `single`-universe priority collapse in
+    fill_grid. Returns a list; callers skip the years not in it.
+    """
+    years = list(START_YEARS if years is None else years)
+    cuts = [bisect.bisect_left(stamps, pd.Timestamp(f"{y}-01-01")) for y in years]
+    # `cuts` is non-decreasing in year, so the years that cut nothing form a
+    # prefix of the list; keep from the last of them onward. No year cutting
+    # nothing (the rule traded before the earliest start year) keeps them all.
+    dead = [i for i, c in enumerate(cuts) if c == 0]
+    return years[dead[-1]:] if dead else years
+
 # The execution dimension, and it is TWO independent things, not one.
 #
 #   TRADING COSTS -- you cross a spread and you move the price you trade against.
@@ -1003,9 +1040,15 @@ def main() -> None:
                     # the slice is a bisect rather than a fresh filter per year.
                     subset = sorted(subset, key=lambda t: t["entry_ts"])
                     stamps = [pd.Timestamp(t["entry_ts"]) for t in subset]
+                    # Start years that cut nothing off are the same backtest
+                    # under an earlier label -- see gridded_years. They are
+                    # written as None rather than omitted, so the key space
+                    # stays rectangular and the page's payload contract (every
+                    # key PRESENT, null allowed) still holds.
+                    live_years = gridded_years(stamps, years)
                     for year in years:
                         cut = bisect.bisect_left(stamps, pd.Timestamp(f"{year}-01-01"))
-                        window = subset[cut:]
+                        window = subset[cut:] if year in live_years else []
                         # EVERY PRIORITY AT EVERY START YEAR -- except where
                         # priority cannot mean anything.
                         #

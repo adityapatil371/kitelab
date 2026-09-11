@@ -330,9 +330,13 @@ def cells_for(strat, trades, unis, assets_trades, holds, arm, hold_cagr):
         stamps = [pd.Timestamp(t["entry_ts"]) for t in subset]
         hold = holds.get(ukey)
         single = members is not None and len(members) == 1
+        # Same duplicate-start-year collapse the grid applies, from the same
+        # function, so the two loops cannot drift apart: a cell the grid wrote
+        # as None must not come back carrying a daily-excess test.
+        live_years = dd.gridded_years(stamps)
         for year in dd.START_YEARS:
             cut = bisect.bisect_left(stamps, pd.Timestamp(f"{year}-01-01"))
-            window = subset[cut:]
+            window = subset[cut:] if year in live_years else []
             if not window:
                 continue
             for prio in ([dd.PRIORITY_DEFAULT] if single else dd.PRIORITIES):

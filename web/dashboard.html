@@ -378,9 +378,32 @@ const settingLabel = (skey, v) =>
      The percentage form stays live for the day BANDS is widened again. */
   (v ? (v * 100).toFixed(0) + "% band" : "—");
 
-const keyFor = (skey, v) =>
+const keyFor = (skey, v, year = S.year) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
-  `|${S.year}|${S.prio || DATA.priority_default}`;
+  `|${year}|${S.prio || DATA.priority_default}`;
+
+/* "SAME AS 2018" IS NOT "NO TRADES" (2026-09-11). The build stops gridding a
+   start year that is earlier than the rule's first trade in that universe,
+   because the window it produces is the window the next start year up already
+   produced -- one backtest wearing an older label. `recent` (names with no
+   traded value before 2018) was three identical copies of itself at 2006, 2012
+   and 2018, and the multiple-testing gate counted three chances to be lucky
+   where there was one.
+
+   Those cells are written as null, which the page ALREADY renders as "no
+   trades" -- and that would be a lie here: the account traded, just not this
+   early. The two cases are told apart from the grid alone, with no extra
+   payload: start-year windows are nested, so a live cell at a LATER year can
+   only mean the earlier null was a collapse. A genuine drought is null all the
+   way up. Returns the year this cell duplicates, or null. */
+const collapsedInto = (skey, v) => {
+  for (const y of yearsAvailable())
+    if (y > S.year && DATA.grid[keyFor(skey, v, y)]) return y;
+  return null;
+};
+
+// What an empty row's columns say instead of a number.
+const emptyNote = r => r.sameAs ? `same as ${r.sameAs}` : "no trades";
 
 /* validation is keyed the same way a row's own id is built ("skey|tag(v)").
    SPLIT 2026-09-05 so "Validated" answers "for the scenario on screen", not
@@ -482,9 +505,9 @@ function holdFor(uni, year) {
 }
 
 /* Every field a row carries, for a cell the account never traded. */
-function emptyRow(id, skey, v, label, val, holdCagr) {
+function emptyRow(id, skey, v, label, val, holdCagr, sameAs = null) {
   return { id, skey, v, family: label, setting: settingLabel(skey, v),
-           r: null, val, noTrades: true,
+           r: null, val, noTrades: true, sameAs,
            cagr: null, maxdd: null, mar: null, ulcer: null, final: null,
            taken: null, sharpe: null, sortino: null, exposure: null,
            capture: null, full: null, wiped: false, vsHold: null, holdCagr,
@@ -515,7 +538,11 @@ function rows() {
          which is a different fault with a different fix. It renders as
          dashes with a "no trades" note and sorts to the bottom under every
          column, because it has no value on any of them. */
-      if (!r) { out.push(emptyRow(id, skey, v, label, val, holdCagr)); continue; }
+      if (!r) {
+        out.push(emptyRow(id, skey, v, label, val, holdCagr,
+                          collapsedInto(skey, v)));
+        continue;
+      }
       const fc = fixedChecksFor(val);
       const boot = fc.credibility;
       const fixedGates = fc.fixed_gates;
@@ -580,6 +607,7 @@ function rows() {
       const validated = gateVals.every(g => g != null) ? gateVals.every(g => g === true) : null;
       out.push({ id, skey, v, family: label,
                  setting: settingLabel(skey, v), r, val, noTrades: false,
+                 sameAs: null,
                  cagr: r.wiped ? null : r.cagr, maxdd: r.maxdd, mar,
                  ulcer: r.ulcer, final: r.final, taken: r.taken,
                  sharpe: r.sharpe, sortino: r.sortino, exposure: r.exposure,
@@ -630,7 +658,7 @@ const EXPORT_COLS = [
   ["Setting",   r => r.setting],
   ["Validated", r => r.validated == null ? null : (r.validated ? "yes" : "no")],
   ["Gates passed", r => r.gatesPassed == null ? null : `${r.gatesPassed}/${r.gatesTotal}`],
-  ["CAGR %",    r => r.noTrades ? "no trades" : r.wiped ? "wiped" : r.cagr],
+  ["CAGR %",    r => r.noTrades ? emptyNote(r) : r.wiped ? "wiped" : r.cagr],
   ["vs Hold pp", r => r.vsHold],
   // The benchmark itself, so the difference can be checked in the sheet.
   ["Hold CAGR %", r => r.holdCagr],
@@ -744,7 +772,8 @@ const GLOSSARY = {
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
   ["setting", "Setting",  r => !r.noTrades ? r.setting
-                                : (r.setting === "—" ? "no trades" : `${r.setting} · no trades`), "l"],
+                                : (r.setting === "—" ? emptyNote(r)
+                                                     : `${r.setting} · ${emptyNote(r)}`), "l"],
   ["validated", "Validated", r => r.validated == null ? "—"
                                 : (r.validated ? "✓" : "✗")
                                   + (r.gatesTotal != null ? ` ${r.gatesPassed}/${r.gatesTotal}` : "")],
@@ -821,7 +850,11 @@ function renderCompare() {
     if (S.sel === r.id) tr.className = "sel";
     tr.addEventListener("click", () => { S.sel = r.id; S.view = "detail"; render(); });
     const c0 = tr.insertCell(); c0.className = "rank l"; c0.textContent = i + 1;
-    if (r.noTrades) tr.title = "The account took no trade on this rule at this scenario -- "
+    if (r.noTrades) tr.title = r.sameAs
+      ? `Not gridded, because it would repeat the ${r.sameAs} row exactly: this rule's `
+        + "first trade in this universe comes after " + S.year + ", so starting earlier "
+        + "buys the same trades under an older label. Read the " + r.sameAs + " row."
+      : "The account took no trade on this rule at this scenario -- "
       + "nothing affordable, or nothing signalled in the span. Every column is empty for want "
       + "of a value, not for want of a computation.";
     for (const [key, , fmt, cls] of COLS) {
@@ -1433,8 +1466,13 @@ function renderDetail() {
     body.innerHTML = `<div class="card"><h3>${row.family} <span class="pill">${row.setting}</span></h3>
       <p class="sub">${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])} ·
         ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}</p>
-      <div class="empty">No trades — the account took nothing on this rule at this scenario:
-        nothing affordable, or nothing signalled in the span. There is no account to draw.</div></div>`;
+      <div class="empty">${row.sameAs
+        ? `Not gridded — this rule's first trade in this universe comes after ${S.year},
+           so a ${S.year} start buys exactly the trades a ${row.sameAs} start buys. The
+           cell would be a duplicate of the ${row.sameAs} one, which is the one to read.`
+        : `No trades — the account took nothing on this rule at this scenario:
+           nothing affordable, or nothing signalled in the span. There is no account to draw.`
+      }</div></div>`;
     return Promise.resolve(null);
   }
   /* The stats are in hand; the charts are a disk seek away. Draw what we have
