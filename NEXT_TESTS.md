@@ -4,8 +4,11 @@ Last updated **2026-09-11, fourth session** (the Pine timeframe ladder). Superse
 2026-09-09 note that memory still points at (that file never existed on disk; this one does).
 
 **Nothing on the board or the dashboard changed this session.** `dashboard.json` is still
-the 20:44 IST 9-strategy build; the only commits are three new ones on `scripts/wf_pine.py`,
-which is in NEITHER stamp tier and so invalidated nothing. `main` is at `eee7367` (+3).
+the 20:44 IST 9-strategy build and `refresh --check` is quiet; the only commits touch
+`scripts/wf_pine.py` and this file, neither in a stamp tier, so nothing was invalidated.
+`main` is at `b34e8c5`, **11 ahead of origin/main as measured** — `origin/main` is a stale
+local ref in the container (no fetch credentials), so measure it with
+`git rev-list --count origin/main..HEAD` rather than trusting any number written down.
 
 ## The board as it stands
 
