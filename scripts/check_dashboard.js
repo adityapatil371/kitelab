@@ -215,6 +215,37 @@ const DG = DATA.diagnostics || null;
   const cagrs = cells.map(([, c]) => c && c.cagr).filter(v => v != null);
   new Set(cagrs).size > 1 && cagrs.some(v => v !== 0)
     ? ok("cagr varies across the grid") : bad("cagr is constant/zero across the grid -- the build emitted a placeholder");
+
+  /* NULL START YEARS MUST FORM A PREFIX (2026-09-11). The build stops gridding
+     a start year earlier than the rule's first trade in that universe, because
+     that window is the next start year's window exactly. Start-year windows
+     are NESTED -- an earlier start can only ever see MORE trades -- so a live
+     cell at an early year with a null above it is arithmetically impossible,
+     and a gap in the middle means the collapse kept the wrong end. Either
+     would be silent: both render as dashes and neither throws. Checked here
+     from the payload alone, with no knowledge of which universe is which. */
+  const yrs = DATA.start_years || [];
+  const runs = {};
+  for (const [k, c] of cells) {
+    const p = k.split("|");
+    const year = +p[6];
+    (runs[p.slice(0, 6).join("|") + "|" + p[7]] ||= {})[year] = c !== null;
+  }
+  const broken = [];
+  let collapsed = 0;
+  for (const [scen, live] of Object.entries(runs)) {
+    let seenLive = false;
+    for (const y of yrs) {
+      if (live[y] === undefined) continue;
+      if (live[y]) seenLive = true;
+      else if (seenLive) { broken.push(`${scen} @ ${y}`); break; }
+      else collapsed++;
+    }
+  }
+  broken.length
+    ? bad(`${broken.length} scenario(s) go live and then null again at a LATER start year, `
+          + `which nested windows make impossible: ${broken.slice(0, 3).join(", ")}`)
+    : ok(`null start years form a prefix in every scenario (${collapsed} cells collapsed into a later year)`);
 }
 {
   const problems = [];
@@ -335,7 +366,18 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
       const val = (DATA.validation || {})[`${skey}|${v}`] || null;
       const setting = settingLabel(skey, v);
       if (!cell) {
-        out.push({ key, family, setting: setting === "—" ? "no trades" : `${setting} · no trades`,
+        /* "same as 2018" is not "no trades": the build skips a start year
+           EARLIER than the rule's first trade, because that window is the next
+           start year's window exactly. Derived here the way the page derives
+           it -- a live cell at a LATER year can only mean this null is a
+           collapse -- so the two are computed independently and compared. */
+        let sameAs = null;
+        for (const y of DATA.start_years)
+          if (y > year && DATA.grid[`${skey}|${v}|${uni}|${risk}|${capital}|${S.fill}|${y}|${prio}`]) {
+            sameAs = y; break;
+          }
+        const note = sameAs ? `same as ${sameAs}` : "no trades";
+        out.push({ key, family, setting: setting === "—" ? note : `${setting} · ${note}`,
                    noTrades: true, validated: null, gates: null, mar: null,
                    cells: ["—", "—", "—", "—", "—", "—", "—", "—", "—", "—"] });
         continue;
@@ -428,6 +470,8 @@ function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
     : ok(`${label}: ${got.length} rows × ${HEAD.length - 2} value cells match the payload; ${tableValidated} Validated; order holds`);
   const nt = got.filter(c => c[2].endsWith("no trades")).length;
   if (nt) ok(`${label}: ${nt} no-trade row(s) rendered as dashes at the bottom`);
+  const dup = got.filter(c => /same as \d{4}$/.test(c[2])).length;
+  if (dup) ok(`${label}: ${dup} row(s) rendered as "same as <year>", not as a drought`);
 }
 
 console.log("\n== compare table values vs payload ==");
@@ -570,11 +614,17 @@ async function checkDetail() {
   const nullKey = Object.keys(DATA.grid).find(k => DATA.grid[k] === null);
   if (nullKey) {
     const [skey, v, u, risk, cap, fill, y, pr] = nullKey.split("|");
+    // Which of the two empty-cell stories this one should tell -- see expectedRows.
+    const laterLive = (DATA.start_years || []).some(yy =>
+      yy > +y && DATA.grid[`${skey}|${v}|${u}|${risk}|${cap}|${fill}|${yy}|${pr}`]);
     S.uni = u; S.year = +y; S.fill = fill; S.prio = (DATA.single_name || []).includes(u) ? null : pr;
     S.cap = DATA.capitals.findIndex(c => String(c) === cap); S.risk = DATA.risks.findIndex(r => String(r) === risk);
     S.sel = `${skey}|${v}`;
     try { await render(); const h = text((els["det-body"] || {}).innerHTML);
-      h.includes("No trades") ? ok(`Detail on a null cell (${skey}|${v} @ ${u}/${y}) says No trades`) : bad("Detail on a null cell shows something other than No trades");
+      const wantWord = laterLive ? "Not gridded" : "No trades";
+      h.includes(wantWord)
+        ? ok(`Detail on a null cell (${skey}|${v} @ ${u}/${y}) says ${wantWord}`)
+        : bad(`Detail on a null cell says neither -- expected "${wantWord}" for this one`);
     } catch (e) { bad(`Detail on a null cell threw: ${e.message}`); }
     S.uni = "all"; S.year = DATA.start_default; S.prio = null; S.cap = 0; S.risk = 1; S.fill = DATA.fills[0][0];
   }
