@@ -297,13 +297,25 @@ function buildScenario() {
     /* WHICH SIGNAL WINS THE CASH. Scanning is free and the whole market is
        watched, so a small account sees more signals than it can fund -- 52% of
        the EMA stack's are skipped over 500 stocks. This picks who gets the
-       money, it is NOT part of any strategy, and re-ordering was measured at an
-       8-10 CAGR point swing. "illiquid" is a control: if it scores like
-       "liquidity" then that rule was never doing anything. */
+       money and it is NOT part of any strategy.
+
+       Cut from five orderings to three on 2026-09-11, after the first run that
+       gave the axis a null to beat: 20 seeded random orderings per cell. Four
+       of the five shipped orderings did no better than that coin flip, the
+       shipped DEFAULT ("liquidity") worst of them at 13 of 38 cells. The three
+       left are the three that beat it. The controls that established this are
+       gone from the board along with the losers -- it can now show that
+       momentum beat tight stops, not that either beat chance -- so that
+       evidence lives in output/measurements/, not here.
+
+       This comment used to say re-ordering was "an 8-10 CAGR point swing".
+       Measured across the whole board it is a median 6.7 points, the SMALLEST
+       of the three framing axes: start year moves 14.75 and the choice of
+       strategy 24.35. */
     /* Offered only where it can mean something. On a universe of ONE
        instrument nothing ever competes for the cash -- the account holds one
        position per symbol, so there is never a second candidate to order --
-       and all five settings return the identical number. Showing the control
+       and all three settings return the identical number. Showing the axis
        there invites the reader to conclude the ordering does not matter, when
        what it really shows is that this universe cannot ask the question. */
     ...(singleName() ? [] : [
@@ -692,7 +704,7 @@ function exportCsv() {
 const FORMULA = {
   family:  "The rule. Registered in kitelab/registry.py.",
   setting: "What distinguishes this row from the others in its family -- channel pair, timeframe pair, or stop reading. An em dash means the family has only one row on the board, so there is nothing to distinguish: the EMA stack families trade the bare 20-EMA cross and have no setting of their own.",
-  validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, beats the hold day by day (the fourth check was a strict majority of walk-forward windows until 2026-09-10 -- see Daily edge for why it was replaced, and note the board falls back to the window version on any payload built without the daily test), survives a cost margin, and clears the family-wise luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. Beats-buy-&-hold recomputes for your current Universe and start year, walk-forward for your current Universe/Priority/Capital. The other three -- distinguishable-from-shuffled-prices, survives-a-cost-margin, the luck hurdle -- recompute for your current Universe only, and always at ₹2L / 1% risk / most-liquid-first whatever Capital, Risk and Priority are on screen: they run on the rule's trade list before any account simulation, so the account settings cannot move them. Default sort: validated rows first, MAR breaking ties within each group.",
+  validated: "Passes five checks (see the breakdown on click, or the Detail view): beats buy & hold, distinguishable from shuffled prices, beats the hold day by day (the fourth check was a strict majority of walk-forward windows until 2026-09-10 -- see Daily edge for why it was replaced, and note the board falls back to the window version on any payload built without the daily test), survives a cost margin, and clears the family-wise luck hurdle. GATED, not scored: a strategy failing even one check ranks below every strategy that passes all of them, regardless of how good its other numbers look. Beats-buy-&-hold recomputes for your current Universe and start year, walk-forward for your current Universe/Priority/Capital. The other three -- distinguishable-from-shuffled-prices, survives-a-cost-margin, the luck hurdle -- recompute for your current Universe only, and always at ₹2L / 1% risk / strongest-12-month-first whatever Capital, Risk and Priority are on screen: they run on the rule's trade list before any account simulation, so the account settings cannot move them. Default sort: validated rows first, MAR breaking ties within each group.",
   cagr:    "CAGR = (final / starting capital) ^ (1 / years) - 1. Empty when the account was wiped -- there is no such rate, and a zero would read as breaking even.",
   vsHold:  "This row's own CAGR (above, at whatever Universe/Capital/Risk/Fill/Year/Priority is chosen) minus an equal-weight buy & hold of the stocks in this universe from the selected start year to the end of data, gross of costs; the rule is net of costs. A stock listed after the start year joins the hold at its first close. The only comparison that matters -- a rule can rank first on this whole board and still lose to doing nothing. One of the five gates behind Validated (needs > 0). The benchmark moves with Universe and start year; the rule's CAGR moves with everything.",
   maxdd:   "Drawdown = the lowest value of (equity / running peak - 1), in percent -- the deepest fall from any peak the account reached, not necessarily the final one. Sometimes called \"max drawdown\".",
@@ -700,7 +712,7 @@ const FORMULA = {
   walkFrac:"NO LONGER A GATE since 2026-09-10 -- kept as a column because it answers WHEN the edge was there, which the daily test cannot. Windows won / windows counted. Fixed 3-year CALENDAR windows shared by every rule (2006-2009, 2009-2012, ... ), each judged against that window's own equal-weight hold of the same universe; a window is won when the rule's CAGR beats the hold's. It needs a STRICT majority (wins × 2 > windows counted), so 3 of 6 fails. Seven windows is seven bits of evidence and that is not enough to gate on: scripts.wf_power measured a 20 CAGR-point-a-year edge as the smallest this majority rule spots 80% of the time, and measured a rule with NO edge at all passing it 49.8% of the time. A gate that a coin flip clears half the time is a description, not a test, so Daily edge took its place in Validated and this stayed visible. A trailing window spanning under two years of data is partial -- shown in Detail, not counted -- and a window with under 20 trades has no verdict and is not counted either. For THIS row's current Universe/Priority/Capital (not Risk or Year -- risk mainly scales a window's size, not its sign, and the windows already cover every year). The start-year axis above is cumulative -- every window ends today, so one strong stretch flatters them all; these windows do not overlap, so a rule cannot pass by being lucky once and riding it.",
   dailyT:  "The fourth gate behind Validated. Every day the account was running, subtract the equal-weight buy & hold's return for that same day from the rule's; average what is left, and divide by a Newey-West (HAC) standard error. In t units, one-sided. HAC -- heteroskedasticity and autocorrelation consistent -- matters because these daily differences are not independent draws: positions stay open for weeks, so today's difference is largely yesterday's again, and quiet months and violent months have very different spreads. Counting ~5,000 correlated days as 5,000 independent ones would inflate t by roughly the square root of the overlap. The lag is max(4 x (n/100)^(2/9), 21) days -- the standard Newey-West rule with a 21-day floor, one trading month, because no position here turns over faster than that. WHY IT REPLACED WALK-FORWARD: the seven-window majority needs a 20 CAGR-point-a-year edge to be seen 80% of the time; this needs about 11.8, because ~5,000 daily observations carry far more information than 7 win/lose bits. WHAT IT DOES NOT DO: it says nothing about WHEN the edge was there -- a rule that was wonderful until 2015 and useless since can still pass it, which is exactly what the Walk-fwd column is for. The bar is not 0.05: 9,500 cells are tested at once, so the gate is a Benjamini-Hochberg false-discovery-rate threshold across all of them (shown in the note above the table, alongside the uncorrected and Bonferroni counts). Computed out of band by scripts.wf_attach against the SAME realistic-fill trade list the CAGR column uses; Detail shows the days, the lag, the edge in CAGR points and the smallest edge this cell could have detected.",
   fillDelta: "SHOWN, NEVER GATED. The whole board fills a trade at the close of the bar that produced its signal -- you cannot see a day's close and also trade at it, so this column re-runs the identical account filling at the NEXT session's open instead, and prints the CAGR difference in percentage points. Negative means the board's number was flattered by the impossible fill. A rule reading -3 lost three CAGR points a year to a fill it could never have got; a rule near 0 does not depend on the timing. It is not a gate for one reason, stated plainly rather than buried: kitelab/backtest.py's next-open branch has been independently verified for one engine (backtest.py) out of the nineteen rules on this board, so for the rest this is a measurement whose own code has not been checked, and gating a verdict on an unverified computation is worse than showing it. The note above the table lists which engines are verified. Same costs, same spread, same 1%-of-turnover size cap as the CAGR column; scripts.wf_attach, arm B.",
-  tStat:   "Mean net R per trade, minus what random entries on the same stocks would earn (same holding length, same stop rule, same spread -- the drift term), divided by a standard error that treats all trades entered in one calendar quarter as one bet. In t units: above about 2 is hard to get by chance on one rule; the banner above the table says how high it must be once every rule on the board has had its go. Two things the plain version got wrong, both fixed 2026-09-07: it counted 150,000 overlapping trades as 150,000 independent draws, and it credited the rule with the market's own upward drift. Scale-invariant, unlike a compounded-CAGR version: more trades narrow the standard error instead of inflating the point estimate. LIVE per Universe (it runs on the rule's trade list before any account simulation, at ₹2L / 1% / most-liquid-first whatever is on screen, so Priority/Risk/Capital cannot move it -- only which stocks are in scope can). On a single-instrument view this falls back to the All-stocks figure, shown dimmed. Detail shows the same number on the trades THIS account took (t_taken), alongside the unclustered and undrifted versions.",
+  tStat:   "Mean net R per trade, minus what random entries on the same stocks would earn (same holding length, same stop rule, same spread -- the drift term), divided by a standard error that treats all trades entered in one calendar quarter as one bet. In t units: above about 2 is hard to get by chance on one rule; the banner above the table says how high it must be once every rule on the board has had its go. Two things the plain version got wrong, both fixed 2026-09-07: it counted 150,000 overlapping trades as 150,000 independent draws, and it credited the rule with the market's own upward drift. Scale-invariant, unlike a compounded-CAGR version: more trades narrow the standard error instead of inflating the point estimate. LIVE per Universe (it runs on the rule's trade list before any account simulation, at ₹2L / 1% / strongest-12-month-first whatever is on screen, so Priority/Risk/Capital cannot move it -- only which stocks are in scope can). On a single-instrument view this falls back to the All-stocks figure, shown dimmed. Detail shows the same number on the trades THIS account took (t_taken), alongside the unclustered and undrifted versions.",
   ulcer:   "Ulcer Index = sqrt(mean(drawdown^2)) across every day. Unlike drawdown it counts how LONG you were underwater, not just how deep it got. Detail view only -- see that page for the reasoning.",
   sharpe:  "Sharpe = mean(daily return) / stdev(daily return) x sqrt(252). Population stdev; these are the realised returns, not a sample. Empty when volatility is zero. Detail view only.",
   sortino: "Sortino = mean(daily return) / downside deviation x sqrt(252), where downside deviation = sqrt(sum(min(r,0)^2) / N) over ALL N days. Upside volatility is not risk. Detail view only.",
@@ -1010,14 +1022,20 @@ const fillName = () =>
 /* Which signal wins the cash. Named in the subtitle because on a starved
    account it decides as much as the rule does, and a reader who does not know
    which ordering produced the table cannot reproduce it. */
-const PRIO_LABEL = { liquidity: "Most liquid", illiquid: "Least liquid",
-                     wide: "Widest stop", tight: "Tightest stop",
-                     time: "No preference" };
+const PRIO_LABEL = { mom_hi: "Strongest 12-month", nearhigh_hi: "Nearest its high",
+                     tight: "Tightest stop",
+                     /* Retired 2026-09-11 and kept here on purpose: prioName()
+                        falls back to the raw key, so a payload built before the
+                        cut would otherwise label its column "liquidity". */
+                     liquidity: "Most liquid", illiquid: "Least liquid",
+                     wide: "Widest stop", time: "No preference" };
 
 /* What each ordering means, in the same place as the column formulas. These are
    not part of any strategy: they decide which signal gets the money when the
    account cannot fund them all, which on these settings is about half of them. */
 const PRIO_FORMULA = {
+  mom_hi:    "Strongest trailing 12-month return first, measured at the PREVIOUS close (250 sessions, portfolio.momentum_at) so nothing is read that was not on the tape. A signal with under a year of history has no figure and sorts LAST. The default since 2026-09-11, and the only ordering here measured to beat chance decisively: against 20 seeded random orderings per cell it won 35 of 38 cells by a median +3.84 CAGR points, while its mirror -- weakest first -- lost all 38. It reallocates a rule's own signals; it does not rescue a losing rule.",
+  nearhigh_hi: "Closest to its own trailing 252-session high first, as previous close over that high (portfolio.from_high_at); 0.0 sits at the high, negative below it. Not the same question as momentum -- a stock that drifted up 8% sits at its high and so does one that doubled -- which is why it is a separate ordering and not a proxy. +2.37 points, 29 of 38 cells.",
   liquidity: "Most liquid first, by trailing traded value as of the previous close. The standing rule: a trader facing three signals takes the one they can actually fill.",
   illiquid:  "Least liquid first. A CONTROL, not a proposal -- if it scores like 'most liquid', that rule was never doing anything and the swing lives elsewhere.",
   wide:      "Widest stop first, as a percentage of entry. For a fixed rupee risk, position value = risk / stop%, so a wide stop is a CHEAP position: this funds the most trades.",
@@ -1276,7 +1294,7 @@ function validationBlock(row) {
   const permText = !perm ? "not enough trades in the shuffled pool" :
     `${perm.observed.toFixed(1)}% real vs ${perm.shuffled_median.toFixed(1)}% median of shuffled ` +
     `prices (${perm.beat_by >= 0 ? "+" : ""}${perm.beat_by.toFixed(1)}pp; p = ${perm.p == null ? "—" : perm.p.toFixed(3)} ` +
-    `over ${perm.rounds ?? "—"} shuffles of a ${perm.pool ?? "—"}-stock pool, at ₹2L / 1% / most-liquid-first) &mdash; ` +
+    `over ${perm.rounds ?? "—"} shuffles of a ${perm.pool ?? "—"}-stock pool, at ₹2L / 1% / strongest-12-month-first) &mdash; ` +
     (perm.distinguishable
       ? "<b>distinguishable from noise</b>"
       : "<b>NOT distinguishable from noise</b> -- this earns as much on shuffled prices as on real ones");
@@ -1299,7 +1317,7 @@ function validationBlock(row) {
       ${DATA.universes[S.uni]} / ${prioName()} first / ${inr(capital)}. The three trade-level checks
       (shuffled prices, cost margin, credibility) are for ${DATA.universes[S.uni]}${credLive ? "" :
         " -- falling back to All stocks, since a single instrument has no shuffled-price test or " +
-        "bootstrap of its own"} and always run at ₹2L / 1% / most-liquid-first whatever is on
+        "bootstrap of its own"} and always run at ₹2L / 1% / strongest-12-month-first whatever is on
       screen: they use the rule's trade list before any account simulation. All five run on the
       same "Realistic fills" trades (costs, spread, market impact, size cap) the CAGR column does --
       including the day-by-day test, which is computed out of band by scripts.wf_attach against
@@ -1331,7 +1349,7 @@ function validationBlock(row) {
         <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted (fixed baseline)</div></div>
       <div class="stat"><div class="k">Breakeven cost</div>
         <div class="v">${beText}</div>
-        <div class="d">at ₹2L / 1% / most-liquid-first; Zerodha + modelled spread run ~15&ndash;40 bp/side and the gate needs &gt;40bp margin over that</div></div>
+        <div class="d">at ₹2L / 1% / strongest-12-month-first; Zerodha + modelled spread run ~15&ndash;40 bp/side and the gate needs &gt;40bp margin over that</div></div>
       <div class="stat"><div class="k">Most correlated with</div>
         <div class="v" style="font-size:15px">${corr ? corr.key : "—"}</div>
         <div class="d">${corr ? `r = ${corr.r.toFixed(2)}` : "no strong match"}</div></div>

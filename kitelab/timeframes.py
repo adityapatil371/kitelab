@@ -41,14 +41,17 @@ PAIRS = [
     ("MD", "M/D", "monthly over DAILY closes, skipping the weekly"),
     ("MW", "M/W", "monthly over WEEKLY closes"),
     ("QW", "Q/W", "quarterly over WEEKLY closes, skipping the monthly"),
-    # ADDED 2026-09-05 so the ATH filter can be asked on them (see
-    # registry.ATH_STACKS). They are registered as plain pairs too, without the
-    # filter, because otherwise a good ATH-on-Q/M row cannot be read: there
-    # would be nothing to say whether the credit belongs to the filter or to the
-    # Q/M stack underneath it. Every ATH row on the board now has its own
-    # unfiltered control.
-    ("QM", "Q/M", "quarterly over MONTHLY closes"),
-    ("QD", "Q/D", "quarterly over DAILY closes, skipping monthly and weekly"),
+    # QM AND QD ARE GONE, 2026-09-11. They were added 2026-09-05 only so the
+    # ATH filter could be asked on them -- they were CONTROLS, not proposals,
+    # registered unfiltered so a good ATH-on-Q/M row could be read against the
+    # stack underneath it. The re-rank on the momentum board cut both ATH rows
+    # they existed to control (eath|QM last but one of 19; eath|QD redundant at
+    # corr 0.93/0.92 with the two ATH rows kept), and a control with nothing
+    # left to control is just two more cells. On their own merits they ranked
+    # 15th and 16th of 19.
+    #
+    # The rule they were added under still stands: every ATH row on the board
+    # has its own unfiltered control. eath|MW -> pair|MW, eath|WD -> pair|WD.
 ]
 
 

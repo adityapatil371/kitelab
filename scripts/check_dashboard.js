@@ -468,7 +468,12 @@ console.log("\n== multiple-testing banner ==");
     ? ok("banner opens with 'N of M rules clear a family-wise 95% bar'") : bad(`banner wording: "${t.slice(0, 120)}"`);
   /the \d+\b/.test(t.replace(new RegExp(`the ${VS.tried}\\b`), "")) && bad(`banner still has a literal count: "${t.match(/the \d+\b/)[0]}"`);
   const formulas = text((els["cmp-formulas"] || {}).innerHTML);
-  for (const word of ["drift_r", "t_taken", "t_cluster", "hurdle", "Fully deployed", "₹2L / 1% / most-liquid-first", "strict majority", "selected start year"])
+  // The account phrase is the one the gates actually run at: validation.cagr_of
+  // takes priority=None, which portfolio._order resolves to TIE_BREAK. It read
+  // "most-liquid-first" until TIE_BREAK became mom_hi on 2026-09-11, and this
+  // assertion then FAILED the corrected page for not repeating the stale claim.
+  // If TIE_BREAK moves again, both this and web/dashboard.html change together.
+  for (const word of ["drift_r", "t_taken", "t_cluster", "hurdle", "Fully deployed", "₹2L / 1% / strongest-12-month-first", "strict majority", "selected start year"])
     formulas.includes(word) ? ok(`formulas/glossary mention "${word}"`) : bad(`formulas/glossary lack "${word}"`);
   /5,000[- ]round|5,000 resample|block-resampled/.test(formulas) && bad("formulas still describe the 5,000-round block bootstrap");
   /\bthe 24\b|\b13 variants\b/.test(formulas) && bad("formulas carry a literal board size");
@@ -535,9 +540,9 @@ async function checkDetail() {
                        : ok(`all ${wf.windows.length} walk-forward windows rendered with from/to/rule/hold/win${wf.windows.some(w => w.partial) ? "/partial" : ""}`);
   }
   const perm = (val.fixed_checks_by_universe && val.fixed_checks_by_universe.all) ? val.fixed_checks_by_universe.all.permutation : val.permutation;
-  t.includes(`p = ${perm.p == null ? "—" : perm.p.toFixed(3)} over ${perm.rounds} shuffles of a ${perm.pool}-stock pool, at ₹2L / 1% / most-liquid-first`)
+  t.includes(`p = ${perm.p == null ? "—" : perm.p.toFixed(3)} over ${perm.rounds} shuffles of a ${perm.pool}-stock pool, at ₹2L / 1% / strongest-12-month-first`)
     ? ok("shuffled-price note quotes p, rounds, pool and the fixed account settings") : bad("shuffled-price note lacks p/rounds/pool/settings");
-  t.includes("Breakeven cost") && t.includes("at ₹2L / 1% / most-liquid-first") ? ok("cost caption states the fixed account settings") : bad("cost caption lacks the fixed account settings");
+  t.includes("Breakeven cost") && t.includes("at ₹2L / 1% / strongest-12-month-first") ? ok("cost caption states the fixed account settings") : bad("cost caption lacks the fixed account settings");
   // trade quality: R first, rupees captioned with the payload's paper book
   const ts = (DATA.trade_stats || {})[pick.id];
   if (!ts) bad(`no trade_stats for ${pick.id}`);
@@ -609,8 +614,14 @@ function smoke() {
   S.uni = "all";
 
   console.log("\n== Holy Grail stop on the board ==");
+  // The family was cut from the board on 2026-09-11 (registry.HG_VARIANTS is
+  // empty), so ZERO is the expected count now and this asserts it is gone
+  // rather than asserting it is present. If a row ever comes back it must
+  // still be exactly one, and must still describe its stop.
   const hg = variantsOf("hg");
-  hg.length === 1 ? ok(`hg variants: ${hg.join(", ")}`) : bad(`hg variants: ${hg.join(", ")}, expected 1`);
+  hg.length === 0 ? ok("hg is off the board, as registry.HG_VARIANTS says")
+    : hg.length === 1 ? ok(`hg variants: ${hg.join(", ")}`)
+    : bad(`hg variants: ${hg.join(", ")}, expected 0 or 1`);
   for (const v of hg) { const l = settingLabel("hg", v); /^stop at /.test(l) ? ok(`  "${v}" -> "${l}"`) : bad(`  "${v}" -> "${l}"`); }
 
   console.log("\n== detail strategy picker ==");
@@ -624,10 +635,16 @@ function smoke() {
   S.sel = null; S.view = "compare";
 
   console.log("\n== tailoring is live ==");
-  S.uni = "all"; S.prio = "liquidity"; render();
+  // Two priorities off the payload, not written out here: this pair was
+  // "liquidity"/"illiquid" until the 2026-09-11 cut retired both, and the test
+  // then compared a fallback render against itself and reported the lookup
+  // broken when it was fine.
+  const prioA = DATA.priority_default;
+  const prioB = (DATA.priorities || []).find(p => p !== prioA) || prioA;
+  S.uni = "all"; S.prio = prioA; render();
   const snap = () => rows().filter(r => r.val).map(r => ({ validated: r.validated, walkText: r.walkText, tStat: r.tStat,
     d: r.fixedGates && r.fixedGates.distinguishable, b: r.fixedGates && r.fixedGates.breakeven_margin, vs: r.vsHold }));
-  const a = snap(); S.prio = "illiquid"; render(); const b = snap();
+  const a = snap(); S.prio = prioB; render(); const b = snap();
   a.filter((x, i) => x.validated !== b[i].validated || x.walkText !== b[i].walkText).length
     ? ok("Validated/Walk-fwd change between two priorities") : bad("NOTHING changed between two priorities -- walk_forward_by_scenario lookup is broken");
   a.filter((x, i) => x.tStat !== b[i].tStat || x.d !== b[i].d || x.b !== b[i].b).length

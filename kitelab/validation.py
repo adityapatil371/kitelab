@@ -50,6 +50,14 @@ from . import backtest, frames, portfolio, signals, slippage, strategies
 # the default priority. Breakeven cost and the permutation test's CAGRs both
 # go through portfolio.run at these settings whatever the page has on screen;
 # see fixed_checks_by_universe for why that is stated rather than hidden.
+# THE FIXED GATE ACCOUNT. breakeven_cost and the permutation test call cagr_of,
+# which takes priority=None -- and portfolio._order resolves None to
+# portfolio.TIE_BREAK. The docstrings below said priority "liquidity" until
+# 2026-09-11, when TIE_BREAK became mom_hi and they silently started describing
+# an ordering the board no longer uses. They now name TIE_BREAK instead of a
+# literal, so the next change to it cannot leave them wrong. (web/dashboard.html
+# and scripts/check_dashboard.js carry the reader-facing version of the same
+# phrase and DO spell it out; they were corrected the same day.)
 CAPITAL = 200_000
 RISK = 0.01
 TOP_N = (1, 5, 10, 25)
@@ -409,7 +417,7 @@ def fixed_checks_by_universe(strat, trades, full_universe, universes: dict, rng,
           term simulates random entries on the same stocks, also without an
           account. Priority and Capital genuinely cannot move it.
       Survives-cost (breakeven)    -- portfolio.run at CAPITAL (Rs2L), RISK
-          (1%), priority "liquidity", whatever the page shows: the bisection
+          (1%), priority TIE_BREAK, whatever the page shows: the bisection
           re-runs THAT account with extra basis points charged per side.
       Beats-shuffled-prices (permutation) -- the same fixed account, for
           both the observed CAGR and each shuffled round.
@@ -482,7 +490,7 @@ def breakeven_cost(trades, hi=200.0):
     """Basis points per side at which the edge reaches zero. None if already
     negative, or if it survives even `hi`.
 
-    Runs the fixed account (CAPITAL, RISK, priority "liquidity") through
+    Runs the fixed account (CAPITAL, RISK, priority TIE_BREAK) through
     cagr_of at every bisection step -- an account-level number, not a
     trade-level one, at one fixed account.
     """
@@ -567,7 +575,7 @@ def permutation_test(strat, universe, rounds, rng, sample=PERMUTATION_SAMPLE, tr
     silently misses.
 
     Both CAGRs come from cagr_of, i.e. portfolio.run on the fixed CAPITAL /
-    RISK / "liquidity" account, with whatever slippage.ENABLED and size-cap
+    RISK / TIE_BREAK account, with whatever slippage.ENABLED and size-cap
     state the caller has set -- the same on both sides.
     """
     names = sorted(str(s) for s in universe)
@@ -1252,7 +1260,7 @@ def validation_summary(strat, trades, universe, rng, permutation_rounds=PERMUTAT
     WHAT EACH PART RUNS ON. Credibility (bootstrap) and top_n deletion read
     the trade list and no account. breakeven and permutation call cagr_of,
     i.e. portfolio.run at CAPITAL (Rs2L), RISK (1%) and priority
-    "liquidity" -- one fixed account, whatever scenario is on screen. The
+    TIE_BREAK -- one fixed account, whatever scenario is on screen. The
     docstring here used to say none of these ever ran an account; two of
     them do, and the page's tooltips now say at what settings.
 

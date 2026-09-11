@@ -44,11 +44,15 @@ import pandas as pd
 from . import frames, sizing, slippage
 
 # How same-day signals are ordered when the account cannot afford them all.
-#   "liquidity" -- most liquid first (the rule, see run()); deterministic
+#   "mom_hi"    -- strongest 12-month return first (the rule, see run());
+#                  deterministic. Was "liquidity" until 2026-09-11, when the
+#                  coin-flip test retired that ordering -- see PRIORITIES below.
+#                  This is what validation.py's fixed account uses, so the
+#                  breakeven-cost and permutation numbers move with it.
 #   None        -- timestamp only, leaving ties to the caller's list order, which
 #                  is what every result before 2026-08-31 did. Kept so those
 #                  numbers can still be reproduced, not because it is defensible.
-TIE_BREAK: str | None = "liquidity"
+TIE_BREAK: str | None = "mom_hi"
 
 # WHICH SIGNAL DO YOU TAKE WHEN YOU CANNOT AFFORD THEM ALL?
 #
@@ -69,20 +73,69 @@ TIE_BREAK: str | None = "liquidity"
 # candidates by how they turned out, which is not a priority rule but a time
 # machine. Only entry_price, stop and trailing liquidity are consulted.
 #
-#   liquidity  most liquid first. The standing rule: a trader facing three
-#              breakouts takes the one they can actually fill, and it steers the
-#              account away from thin names where spread and impact bite.
-#   illiquid   least liquid first. A CONTROL, not a proposal -- if it scores like
-#              `liquidity` then the liquidity rule was never doing anything and
-#              the 8-10 point swing lives somewhere else.
-#   wide       widest stop first, as a percentage of entry. For a fixed rupee
-#              risk, position value is risk / stop%, so a wide stop is a CHEAP
-#              position: this funds the most trades and diversifies hardest.
-#   tight      tightest stop first. The mirror: the best risk-reward geometry per
-#              trade, bought by tying up the most cash in each one.
-#   time       timestamp only, ties left to list order. What every result before
-#              2026-08-31 did. Kept as the null rule, not because it is sane.
-PRIORITIES = ["liquidity", "illiquid", "wide", "tight", "time"]
+# WHICH THREE, AND THE MEASUREMENT THAT CHOSE THEM (2026-09-11). The five below
+# were swept for eight days without ever being tested against a NULL, so the
+# board could say which of the five won but not whether winning meant anything.
+# scripts/priority_control.py supplied one: 20 seeded shuffles per cell, costs
+# on and the 1% participation cap applied, 19 strategies x 2 account sizes =
+# 38 cells, 1,254 runs. Four of the five shipped orderings lost to a coin flip.
+# The axis was then cut to the three that beat it.
+#
+#   mom_hi      strongest trailing 12-month return first. THE DEFAULT since
+#               2026-09-11 and the only ordering measured here to beat chance
+#               decisively: +3.84 CAGR points against the mean of the 20
+#               shuffles, winning 35 of 38 cells. Its mirror -- weakest first --
+#               lost all 38, and that reversal is what separates a signal from
+#               noise. Replicated out of sample: the rule was chosen on 7
+#               strategies (+4.68, 14 of 14) and the 12 never looked at gave
+#               +3.84, 21 of 24. Those figures are the SECOND pass. The first
+#               said +4.94 and 37 of 38, measured by a control script whose NaN
+#               sentinel sorted no-history trades first instead of last, the
+#               opposite of what _order does below; 5.8%-14.0% of trades per
+#               cache have no 12-month history, and the fix cost about a point.
+#               See the note above _desc in scripts/priority_control.py.
+#   nearhigh_hi closest to its trailing 252-session high first. +2.37 pts, 29 of
+#               38. A cousin of mom_hi but NOT redundant with it, which was the
+#               prediction I got wrong: a stock that drifted up 8% over the year
+#               sits at its high, and so does one that doubled -- the distance
+#               from the high says nothing about the size of the climb.
+#   tight       tightest stop first, as a percentage of entry. +1.06 pts, 29 of
+#               38. Kept because it is the one survivor with a DIFFERENT
+#               mechanism: position value is risk / stop%, so this ranks on
+#               position SIZE, not price strength. Rank correlation with
+#               momentum runs -0.282 to +0.081, so the two axes stay
+#               independent. It wins by concentrating -- it funds 0.87x a
+#               shuffle's trades -- which is also why pairing it WITH momentum
+#               scores worse (+1.18) than momentum alone.
+#
+# RETIRED FROM THE BOARD the same day. The implementations stay below so every
+# earlier result and every control script still reproduces:
+#   liquidity   most liquid first. Shipped as the default from 2026-09-03 on the
+#               reasoning that a trader takes the breakout they can fill. It beat
+#               the shuffle mean in 13 of 38 cells (-0.57 pts) and is the most
+#               concentrated ordering measured, funding 0.75x a shuffle's trades
+#               -- the worst of the five it was chosen from.
+#   illiquid    least liquid first. Bimodal rather than merely bad: median -0.32
+#               pts, yet decisive in 10 cells, because it holds 2.49x the
+#               concurrent positions of a shuffle. Uncapped it looks superb, and
+#               that is the artefact wf_daily.py diagnosed -- Rs5cr into names
+#               trading Rs0.4cr in a day.
+#   wide        widest stop first, the cheapest position. -0.80 pts, 16 of 38.
+#   time        timestamp only, ties left to list order. Never a null, though the
+#               board treated it as one: the cached list is grouped by symbol in
+#               config order, so it means "the symbol nearer the top of config.py
+#               wins the cash, every day, for twenty years". Kept because
+#               scripts/priority_control.py installs arbitrary orderings through
+#               it without editing this file.
+#
+# WHAT THE BOARD CAN NO LONGER TELL YOU. With every losing ordering gone, nothing
+# on the page compares a survivor against chance: the grid can show mom_hi beat
+# tight, not that either beat a coin flip. That evidence is NOT recoverable from
+# dashboard.json -- quote it from output/measurements/priority_control_2026-09-11.csv
+# (1,254 runs; its mom_hi column is the pre-fix one, so take mom_hi from
+# output/measurements/mom_hi_engine_recheck_2026-09-11.csv beside it) or re-run
+# scripts/priority_control.py, which needs no rebuild.
+PRIORITIES = ["mom_hi", "nearhigh_hi", "tight"]
 
 
 def _stop_pct(t) -> float:
@@ -90,6 +143,77 @@ def _stop_pct(t) -> float:
     two fields every producer sets, so this works for every strategy."""
     entry = t["entry_price"]
     return (entry - t["stop"]) / entry if entry else 0.0
+
+
+# TRAILING PRICE STRENGTH, for the mom_hi and nearhigh_hi orderings.
+#
+# EVERY VALUE IS READ STRICTLY BEFORE THE ENTRY SESSION, matching
+# slippage.liquidity_at, which shifts for the same reason: ranking today's
+# candidates on today's bar would be lookahead, and the ranking happens before
+# the market opens. Both memoise on (symbol, stamp) exactly as
+# slippage._liquidity_memo does -- the grid re-sorts the same trade lists across
+# thousands of cells, so the lookup must be paid once.
+#
+# A symbol with no usable history returns -inf, i.e. sorts LAST under either
+# rule, which is slippage.liquidity_at's "returns 0.0 ... sorts such a name
+# last" convention restated for a signed quantity.
+YEAR_SESSIONS = 250      # this project's convention; see scripts/priority_control.py
+HIGH_WINDOW = 252        # trailing sessions for the "near its high" rule
+
+_strength_memo: dict = {}
+
+
+@lru_cache(maxsize=None)
+def _daily_strength(symbol: str):
+    """(stamps, closes, highs) for a symbol, or None when it has no frame."""
+    try:
+        day = frames.daily(symbol)
+    except SystemExit:          # no price file: not an equity, or never fetched
+        return None
+    return (day["ts"].to_numpy().astype("datetime64[ns]"),
+            day["close"].to_numpy().astype(float),
+            day["high"].to_numpy().astype(float))
+
+
+def _prev_session(ts, stamp) -> int:
+    """Index of the last session STRICTLY BEFORE the one `stamp` falls in."""
+    day = np.datetime64(pd.Timestamp(stamp).normalize(), "ns")
+    return int(np.searchsorted(ts, day, side="left")) - 1
+
+
+def momentum_at(symbol: str, stamp) -> float:
+    """Trailing 12-month return as at the previous close. -inf without history."""
+    key = (symbol, stamp)
+    hit = _strength_memo.get(key)
+    if hit is None:
+        got = _daily_strength(symbol)
+        hit = -math.inf
+        if got is not None:
+            ts, close, _high = got
+            i = _prev_session(ts, stamp)
+            if i >= YEAR_SESSIONS and close[i - YEAR_SESSIONS] > 0:
+                hit = float(close[i] / close[i - YEAR_SESSIONS] - 1.0)
+        _strength_memo[key] = hit
+    return hit
+
+
+def from_high_at(symbol: str, stamp) -> float:
+    """Previous close over the trailing 252-session high, minus one: 0.0 at the
+    high, negative below it. -inf without history."""
+    key = ("fh", symbol, stamp)
+    hit = _strength_memo.get(key)
+    if hit is None:
+        got = _daily_strength(symbol)
+        hit = -math.inf
+        if got is not None:
+            ts, close, high = got
+            i = _prev_session(ts, stamp)
+            if i >= 0:
+                peak = float(high[max(0, i - HIGH_WINDOW + 1):i + 1].max())
+                if peak > 0:
+                    hit = float(close[i] / peak - 1.0)
+        _strength_memo[key] = hit
+    return hit
 
 
 def _order(trades: list[dict], priority: str | None) -> list[dict]:
@@ -100,6 +224,11 @@ def _order(trades: list[dict], priority: str | None) -> list[dict]:
     if priority in (None, "time"):
         return sorted(trades, key=lambda t: t["entry_ts"])
     keys = {
+        # on the board
+        "mom_hi":      lambda t: -momentum_at(t["symbol"], t["entry_ts"]),
+        "nearhigh_hi": lambda t: -from_high_at(t["symbol"], t["entry_ts"]),
+        # retired 2026-09-11, kept so earlier results and the control scripts
+        # still reproduce -- see the note above PRIORITIES
         "liquidity": lambda t: -slippage.liquidity_at(t["symbol"], t["entry_ts"]),
         "illiquid":  lambda t: slippage.liquidity_at(t["symbol"], t["entry_ts"]),
         "wide":      lambda t: -_stop_pct(t),

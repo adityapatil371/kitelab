@@ -15,7 +15,7 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-from kitelab import signals
+from kitelab import registry, signals
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PKG = ROOT / "kitelab"
@@ -114,9 +114,29 @@ class PerProducerNarrowing(unittest.TestCase):
                 self.assertIn(orphan, files, f"{orphan} missing from {m}")
 
     def test_narrow_is_a_subset_of_the_whole_board(self):
+        # Over the producers the board actually REGISTERS, read from the
+        # registry rather than written out here. This list held holygrail.py
+        # until 2026-09-11, when the Holy Grail family was cut and that module
+        # stopped being a board producer. Its own narrow stamp still contains
+        # holygrail.py -- correctly; the closure walk does not care whether a
+        # module is registered -- but the whole-board stamp no longer does, so
+        # the subset relation is genuinely false for it. The invariant is about
+        # what is ON the board, so the list has to come from the board.
         whole = set(signals.stamped_files())
-        for m in ("backtest.py", "darvas.py", "holygrail.py", "timeframes.py"):
+        producers = sorted(registry.modules())
+        self.assertTrue(producers, "the board registers no producers at all")
+        for m in producers:
             self.assertLessEqual(set(signals.stamped_files(producer=m)), whole, m)
+
+    def test_an_unregistered_engine_is_not_in_the_whole_board_stamp(self):
+        # The other half of the line above, pinned so a silent re-registration
+        # is caught. holygrail.py is still on disk and still stampable on its
+        # own, but nothing on the board is produced by it -- so editing it must
+        # no longer invalidate a single cached trade. If the family comes back,
+        # this test fails and says so.
+        self.assertNotIn("holygrail.py", set(signals.stamped_files()))
+        self.assertIn("holygrail.py",
+                      set(signals.stamped_files(producer="holygrail.py")))
 
     def test_the_account_stamp_cannot_be_narrowed(self):
         with self.assertRaises(ValueError):

@@ -127,18 +127,27 @@ ATH_BAND = 0.10
 # passed all five gates: this family spans both, so it can say whether the ATH
 # filter rescues the daily side or merely rides the weekly one.
 #
-# MWD is backtest.py's stack; the other four are timeframes.py pairs and are
-# named there (PAIRS). Each has an unfiltered twin already on the board -- ema
-# for MWD, pair|<key> for the rest -- so every row here can be read against the
-# same stack without the filter. That pairing is the point; do not add an ATH
-# stack without its control.
+# Both remaining rows are timeframes.py pairs and are named there (PAIRS).
+# Each has an unfiltered twin already on the board -- eath|MW -> pair|MW,
+# eath|WD -> pair|WD -- so every row here can be read against the same stack
+# without the filter. That pairing is the point; do not add an ATH stack
+# without its control. (Until 2026-09-11 the family also held MWD, whose twin
+# was ema rather than a pair, because MWD is backtest.py's own stack.)
 #
 # And since 2026-09-07 the pairing is exact: every trade an ATH row takes is a
 # trade its control takes (same symbol, same entry stamp), because the filter
 # now only DECLINES crosses rather than manufacturing entries of its own when
 # price climbs back inside the band. tests.test_ath_filter pins that subset
 # property; backtest.ema_stack_signal carries the measurement that forced it.
-ATH_STACKS = ["MWD", "MW", "QM", "QD", "WD"]
+# CUT 5 -> 2 ON 2026-09-11, on the re-rank of all 19 over the rebuilt
+# momentum board (5,700 cells, every one carrying the daily-excess test).
+# Removed: QM (rank 18 of 19 -- 1.0% of its 300 cells beat buy-and-hold, lowest
+# own-exit contribution and lowest effect on the board), QD (rank 14, but
+# correlating 0.93 and 0.92 with the two rows kept -- a third label on one
+# cluster), and MWD (rank 10, correlating 0.968 with WD at a median gap of
+# 0.00 -- indistinguishable, not merely similar, and WD ranks higher).
+# Their unfiltered controls pair|QM and pair|QD went with them.
+ATH_STACKS = ["MW", "WD"]
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
 
@@ -175,16 +184,26 @@ DARVAS_GATED = [True, False]
 # The variant key "swing" and the cache stem "HolyGrail_swing" are unchanged
 # on purpose -- the page and the build key on them -- and the cache is
 # invalidated anyway, because this file is in the stamp (signals._SUPPORT).
-HG_VARIANTS = [("swing", "signal_low")]
+# THE FAMILY IS OFF THE BOARD, 2026-09-11, and the list is empty rather than
+# deleted so the row above reads as history and the family can come back by
+# re-adding one tuple. It was last of 19 on every view of the re-rank: 0.0% of
+# its 300 cells beat buy-and-hold, and its LUCKIEST cell of 300 still lost 3.1
+# CAGR points. A best-of-300 maximum is mostly luck and so cannot justify
+# KEEPING a rule -- but "even the lucky tail loses" is sound grounds for
+# dropping one. holygrail.py stays on disk, unregistered and untouched, with
+# its stop measurement intact.
+HG_VARIANTS: list[tuple[str, str]] = []
 
 FAMILY_LABELS = {
     "ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W", "pair": "EMA · one higher TF",
-    # The percentage lives HERE, once, because it is the same on all five rows
-    # and the Setting column carries the stack instead. It was in Strategy.label
+    # The percentage lives HERE, once, because it is the same on every row of
+    # the family (five until the 2026-09-11 cut, two after it) and the Setting
+    # column carries the stack instead. It was in Strategy.label
     # only, which the payload never publishes -- so until 2026-09-05 the page
     # never showed the 10% anywhere at all.
     "e1": "EMA · daily only", "eath": f"EMA · within {ATH_BAND:.0%} of the high",
-    "dv": "Turtle channel", "hg": "Holy Grail · ADX",
+    "dv": "Turtle channel",
+    # "hg": "Holy Grail · ADX" -- family removed 2026-09-11, see HG_VARIANTS.
 }
 
 # The variant each family shows wherever only one can be shown -- the per-stock
@@ -197,8 +216,13 @@ FAMILY_LABELS = {
 ATH_STACK_LABEL = {k: label for k, label, _ in
                    (*timeframes.VARIANTS, *timeframes.PAIRS)}
 
+# "eath" was "MWD" until 2026-09-11 and that stack is no longer registered.
+# It becomes "WD" -- the same stack "pair" defaults to -- so the filtered and
+# unfiltered families are shown at the SAME setting and the Detail view
+# compares like with like. Picked for that reason, not because WD ranked
+# higher; a default chosen on rank is the luckiest variant by another name.
 PRIMARY = {"ema": 0.0, "qmw": 0.0, "pair": "WD", "e1": "daily",
-           "eath": "MWD", "dv": "20-10", "hg": "swing"}
+           "eath": "WD", "dv": "20-10"}
 
 
 def _padded(key: str, band: float, ath_band: float | None = None):

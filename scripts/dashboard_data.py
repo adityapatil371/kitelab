@@ -14,9 +14,12 @@ Everything is combinable with everything:
                 liquidity buckets and the post-cut listings, sizes counted
                 from config, never hardcoded) x risk x capital x signal
                 priority x start year
-    assets      the non-equity instruments in ASSETS (BITCOIN, GOLD) run
-                through the SAME registry as the equities, so a newly added
-                strategy is tested on them too
+    assets      the non-equity instruments in ASSETS run through the SAME
+                registry as the equities, so a newly added strategy is tested
+                on them too. ASSETS is EMPTY since 2026-09-11 (BITCOIN and GOLD
+                removed), so this section and `single_name` serialise empty --
+                the same state a --stocks-only build produces. The machinery is
+                left in place; re-adding a series is one line at ASSETS.
 
 Everything here is displayed. Sections the page did not read were removed on
 2026-09-03: scaleout, scaleout_r, tradestats, timeframes and nifty were computed
@@ -183,7 +186,15 @@ CAPITALS = [200_000, 10_000_000]
 # and every start year (see fill_grid), so no other control pins this one down --
 # "does the ordering rule matter" gets asked under every scenario, not once.
 PRIORITIES = portfolio.PRIORITIES
-PRIORITY_DEFAULT = "liquidity"
+# WAS "liquidity" until 2026-09-11. scripts/priority_control.py scored every
+# ordering against 20 seeded shuffles per cell, costs on, across all 19
+# strategies at both account sizes, and `liquidity` beat the shuffle mean in 13
+# of 38 cells -- worse than chance, and the most concentrated ordering measured.
+# `mom_hi` (strongest trailing 12-month return first) beat it in 35 of 38,
+# +3.84 CAGR points, and replicated on the 12 strategies the hypothesis was not
+# formed on. The axis itself was cut from five orderings to three at the same
+# time; portfolio.PRIORITIES carries the full table.
+PRIORITY_DEFAULT = "mom_hi"
 # EXCLUDED, with the measurement that justifies it -- the same discipline
 # config.EXCLUDED applies to equities. Found 2026-09-03 when these became
 # universes and their buy-and-hold benchmarks were checked:
@@ -216,7 +227,17 @@ ASSET_EXCLUDED = {
     "NIFTY 50": "spot index, not a tradeable contract -- needs the NFO futures series",
     "NIFTY BANK": "spot index, not a tradeable contract -- needs the NFO futures series",
 }
-ASSETS = [("BITCOIN", "30m", 0.0010), ("GOLD", "1d", 0.0005)]
+# EMPTIED 2026-09-11 (user: "remove bit coin and gold they arent necessary").
+# This project is a workbench for NSE EQUITIES: the universe, the liquidity
+# buckets, the 1% participation cap and every benchmark on the page are equity
+# machinery, and two non-equity series carried at one priority each could never
+# be compared with any of it. They were also the only rows on the board with no
+# universe axis. Nothing else changes -- `assets` and `single_name` serialise
+# empty, which is the state a --stocks-only build already produced and which
+# check_dashboard.js already reports as ok. The fetch side is untouched
+# (scripts/fetch_assets.py, ASSET_EXCLUDED below), so putting a series back is
+# one line here.
+ASSETS: list[tuple[str, str, float]] = []
 BANDS = registry.BANDS
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
 # computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
