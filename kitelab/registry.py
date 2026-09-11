@@ -127,12 +127,12 @@ ATH_BAND = 0.10
 # passed all five gates: this family spans both, so it can say whether the ATH
 # filter rescues the daily side or merely rides the weekly one.
 #
-# Both remaining rows are timeframes.py pairs and are named there (PAIRS).
-# Each has an unfiltered twin already on the board -- eath|MW -> pair|MW,
-# eath|WD -> pair|WD -- so every row here can be read against the same stack
-# without the filter. That pairing is the point; do not add an ATH stack
-# without its control. (Until 2026-09-11 the family also held MWD, whose twin
-# was ema rather than a pair, because MWD is backtest.py's own stack.)
+# The one remaining row is a timeframes.py pair and is named there (PAIRS).
+# It has an unfiltered twin already on the board -- eath|MW -> pair|MW -- so it
+# can be read against the same stack without the filter. That pairing is the
+# point; do not add an ATH stack without its control. (Until 2026-09-11 the
+# family also held MWD, whose twin was ema rather than a pair, because MWD is
+# backtest.py's own stack.)
 #
 # And since 2026-09-07 the pairing is exact: every trade an ATH row takes is a
 # trade its control takes (same symbol, same entry stamp), because the filter
@@ -147,7 +147,24 @@ ATH_BAND = 0.10
 # cluster), and MWD (rank 10, correlating 0.968 with WD at a median gap of
 # 0.00 -- indistinguishable, not merely similar, and WD ranks higher).
 # Their unfiltered controls pair|QM and pair|QD went with them.
-ATH_STACKS = ["MW", "WD"]
+#
+# CUT 2 -> 1 ON 2026-09-11 (second cut, same day), on the redundancy pass in
+# scripts/redundancy.py rather than on rank: the board's 13 labels carried only
+# 3-9 independent ideas and six of the thirteen were EMA rules chained at
+# r >= 0.65. WD went because its own control pair|WD was one of those six
+# (r = 0.895 raw / 0.817 demeaned with ema|0), and an ATH row cannot stay when
+# the control it is read against leaves. eath|MW stays: at a nearest-twin
+# r = 0.294 it is among the most DISTINCT rows on the board, which is the whole
+# reason the family is worth a row at all.
+ATH_STACKS = ["MW"]
+# WHICH PAIRS ARE ON THE BOARD, narrowed 2026-09-11 from all four of
+# timeframes.PAIRS to two. The table there says which stacks EXIST and is left
+# whole, because ATH_STACK_LABEL reads it for display names; this list says
+# which ones are REGISTERED. Dropped: QW (r = 0.963 with qmw|0 and 0.936 with
+# pair|MW -- the tightest pair on the board, two labels on one rule) and WD
+# (r = 0.895 with ema|0, and it was the last thing holding eath|WD on).
+# Restoring one is one edit here plus a rebuild.
+PAIR_STACKS = ["MD", "MW"]
 DARVAS_WINDOWS = [(20, 10), (55, 20)]
 DARVAS_GATED = [True, False]
 
@@ -194,8 +211,21 @@ DARVAS_GATED = [True, False]
 # its stop measurement intact.
 HG_VARIANTS: list[tuple[str, str]] = []
 
+# THE qmw FAMILY (EMA Q/M/W, one row) IS GONE, 2026-09-11, on the redundancy
+# pass and not on rank -- it ranked 3rd of 13 on the six-view table. It
+# correlated 0.963 with pair|QW and 0.961 with pair|MW across all 300 shared
+# scenarios, and 0.922 / 0.921 after each scenario's cross-strategy mean is
+# subtracted, so the duplication is a fact about the rules and not about the
+# scenarios they share. Three of the top four ranked rows were that one cluster;
+# the board paid for three rows and learned from one. pair|MW was kept as the
+# cluster's representative (best average rank, 4.67). Nothing re-measured qmw
+# on its own merits: it was not beaten, it was duplicated.
+# timeframes.py still implements "QMW" and _padded can still build it; this file
+# simply no longer registers it.
+
 FAMILY_LABELS = {
-    "ema": "EMA · M/W/D", "qmw": "EMA · Q/M/W", "pair": "EMA · one higher TF",
+    "ema": "EMA · M/W/D", "pair": "EMA · one higher TF",
+    # "qmw": "EMA · Q/M/W" -- family removed 2026-09-11, see the note above.
     # The percentage lives HERE, once, because it is the same on every row of
     # the family (five until the 2026-09-11 cut, two after it) and the Setting
     # column carries the stack instead. It was in Strategy.label
@@ -216,13 +246,16 @@ FAMILY_LABELS = {
 ATH_STACK_LABEL = {k: label for k, label, _ in
                    (*timeframes.VARIANTS, *timeframes.PAIRS)}
 
-# "eath" was "MWD" until 2026-09-11 and that stack is no longer registered.
-# It becomes "WD" -- the same stack "pair" defaults to -- so the filtered and
-# unfiltered families are shown at the SAME setting and the Detail view
-# compares like with like. Picked for that reason, not because WD ranked
-# higher; a default chosen on rank is the luckiest variant by another name.
-PRIMARY = {"ema": 0.0, "qmw": 0.0, "pair": "WD", "e1": "daily",
-           "eath": "WD", "dv": "20-10"}
+# "eath" was "MWD" until 2026-09-11 and that stack is no longer registered. It
+# became "WD" -- the same stack "pair" defaulted to -- so the filtered and
+# unfiltered families are shown at the SAME setting and the Detail view compares
+# like with like. BOTH BECAME "MW" LATER THE SAME DAY, when the redundancy cut
+# took pair|WD and eath|WD off the board: a default has to name a row that is
+# registered, and MW is the only stack the two families still share. Picked for
+# that reason, not because MW ranked higher; a default chosen on rank is the
+# luckiest variant by another name.
+PRIMARY = {"ema": 0.0, "pair": "MW", "e1": "daily",
+           "eath": "MW", "dv": "20-10"}
 
 
 def _padded(key: str, band: float, ath_band: float | None = None):
@@ -258,8 +291,7 @@ def _build_registry() -> list[Strategy]:
         out.append(Strategy("ema", band, f"EMA · M/W/D · {note}",
                             f"EMA{stem}", "backtest.py",
                             lambda s, b=band: backtest.simulate(s, band=b)))
-        out.append(Strategy("qmw", band, f"EMA · Q/M/W · {note}",
-                            f"QMW{stem}", "timeframes.py", _padded("QMW", band)))
+        # THE qmw FAMILY IS GONE, 2026-09-11 -- see QMW_RETIRED above.
     # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a
     # trade list built before that is a different strategy under the same label.
     # The old caches are UNSTAMPED and load() would hand them back without
@@ -275,6 +307,8 @@ def _build_registry() -> list[Strategy]:
                 lambda s, a=entry_len, b=exit_len, g=gated:
                     darvas.simulate(s, a, b, weekly=g)))
     for pair_key, pair_label, _ in timeframes.PAIRS:
+        if pair_key not in PAIR_STACKS:
+            continue
         out.append(Strategy("pair", pair_key, f"EMA · {pair_label}",
                             f"EMA_{pair_key}", "timeframes.py",
                             _padded(pair_key, SOLO_BAND)))
