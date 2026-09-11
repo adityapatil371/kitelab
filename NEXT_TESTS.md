@@ -1,7 +1,11 @@
 # START HERE — kitelab open state
 
-Last updated **2026-09-11, third session** (post-rebuild). Supersedes the 2026-09-09 note
-that memory still points at (that file never existed on disk; this one does).
+Last updated **2026-09-11, fourth session** (the Pine timeframe ladder). Supersedes the
+2026-09-09 note that memory still points at (that file never existed on disk; this one does).
+
+**Nothing on the board or the dashboard changed this session.** `dashboard.json` is still
+the 20:44 IST 9-strategy build; the only commits are three new ones on `scripts/wf_pine.py`,
+which is in NEITHER stamp tier and so invalidated nothing. `main` is at `eee7367` (+3).
 
 ## The board as it stands
 
@@ -119,6 +123,133 @@ count, not its expectation. (On the 13-board that read 12 vs ~195; on the
 9-board it is 0 vs ~124.) What a duplicate-free board changes is the
 evidential weight of the leaderboard's top rows, not the verdict.
 
+## The user's Pine strategy, measured on three timeframes (2026-09-11, session four)
+
+The user supplied a TradingView Pine v5 strategy — `HA + RSI Entry / HTF EMA Trend
+Filter` — and asked for it to be tested thoroughly, then on weekly bars, then on
+monthly. All three are DONE. The harness is `scripts/wf_pine.py` (commits
+`6244e81`, `ddf2965`, `eee7367`), a standalone out-of-band script on the
+`wf_attach` pattern: it loads the signal caches and the built `dashboard.json`,
+applies `slippage.apply_spread`, and calls the same `portfolio.run`, so its cells
+are comparable with the board's. **It is in neither stamp tier — running or
+editing it costs no rebuild.** That is why it exists as a script rather than a
+registered strategy.
+
+The rule: enter long when a Heikin Ashi candle closes bullish with a lower wick
+under 8% of its range, RSI(14) is above 50 and rising, and price is above a
+higher-timeframe EMA(20); stop 1.5xATR, target 3xATR, exit on an HA colour flip.
+
+### The command
+
+    python3 -m scripts.wf_pine --tf D|W|M            # the full run, ~6-10 min
+    python3 -m scripts.wf_pine --verify RELIANCE --tf W   # hand-checks, instant
+    python3 -m scripts.wf_pine --pilot 40 --tf M    # time it first, ~3 s
+    python3 -m scripts.wf_pine --ablate --tf W      # which entry leg earns its place
+
+`--tf` is the "one step up" ladder: D = daily bars / weekly EMA(20) filter (the
+Pine as written), W = weekly / monthly, M = monthly / quarterly. **W is not a
+weekly filter on a weekly chart** — that would compare a close against an EMA of
+itself; the one-step-up reading matches `timeframes.py`'s own `"MW"`. Outputs and
+the checkpoint dir carry the timeframe, so the three runs cannot overwrite each
+other.
+
+### The result, and it is the same verdict three times
+
+| | D | W | M |
+|---|---|---|---|
+| trades | 195,482 | 42,787 | 9,468 |
+| win rate | 35.2% | 39.3% | 46.6% |
+| expectancy AFTER costs | -0.020 R | +0.105 R | +0.351 R |
+| charges | Rs 743M | Rs 85M | Rs 11M |
+| median hold | 5 days | 22 days | 91 days |
+| median cell CAGR | -25.35 | +4.00 | +6.40 |
+| median excess vs hold | -38.86 | -8.97 | -5.93 |
+| cells beating hold | 0.0% | 0.7% | 15.2% |
+| max drawdown | -99.2% | -52.7% | -51.2% |
+| **cells passing mde_80** | **0 of 1,380** | **0 of 1,380** | **0 of 1,320** |
+
+**The entry was never the problem; the turnover was.** The daily gross edge
+(+0.0965 R/trade over 195,482 trades) is real and was spent entirely on spread
+and brokerage — together ~1.6x the edge. Trading the same three conditions 20x
+less keeps the edge and cuts the bill 67x. Every column above improves
+monotonically with the timeframe.
+
+**But it converges on buy-and-hold from below and never crosses.** The M default
+cell `atrfill-open` posts t_hac = **-0.005** — indistinguishable from hold, not
+better. Best cell anywhere (M, `atr-close`, small, 2018, 1% risk, Rs 2L,
+`nearhigh_hi`): CAGR 21.3 vs hold 11.53, excess **+9.15** against an mde_80 of
+**9.67**. It misses by half a point, as the max over 1,320 tries. Across all
+three ladders, **0 of 4,080 cells clear the bar.**
+
+Note the daily verdict is stronger than the board's nine rules get: this rule
+loses *detectably* (t_hac to -9.9), where the board's nine are merely
+"can't tell". Those are different findings.
+
+### Things a next session must not re-derive
+
+- **A hypothesis of mine was FALSIFIED and the wrong version reached the user
+  before I caught it.** The W ablation showed dropping the RSI leg RAISED account
+  CAGR (8.4 vs 6.1) while LOWERING per-trade expectancy, and I explained it as
+  cash drag — idle money. It is not. `curves.exposure_pct` on the default cell is
+  **99.2-100% at all three timeframes** (`output/logs/wf_pine_exposure_2026-09-11.log`);
+  the account is always fully invested, so extra signals cannot be filling idle
+  cash. **The cause is still unexplained.** Do not repeat the cash-drag story
+  without measuring it.
+- **Monthly costs five years of history, structurally.** The filter is EMA(20) on
+  QUARTERLY bars, so no entry can exist before 20 closed quarters. 35 symbols
+  dropped as too short (6 on W, 3 on D) and the 12 `recent|2018` cells vanish
+  outright — which is why M has 1,320 cells and D/W have 1,380. Monthly is tilted
+  towards old listings; read its universe counts before its CAGRs.
+- **The short side is negative everywhere** (-0.157 R on W, -0.249 on M) and is
+  TRADE LEVEL ONLY: `portfolio.py` is long-only and NSE cash equity cannot be held
+  short overnight — that needs futures, ~200 of the 1,000 names.
+- **`slippage.apply_spread` is long-only by construction** (its guard at
+  `slippage.py:218` refuses any trade whose `gross_profit != (exit-entry)*shares`),
+  and `slippage.py` is in `signals._SUPPORT` — editing it costs a ~58-min rebuild.
+  `wf_pine.spread_of_shorts()` mirrors each short's two legs and their timestamps
+  instead; the residual STT approximation is in its docstring.
+- **`sizing.position(entry, stop)` assumes long** and returns 0 shares when the
+  stop is above the entry. An early version passed shorts their real stop and
+  **silently dropped every short trade** (0 of 0 across five variants, which looked
+  like a data problem). Both sides are now sized as the equivalent long. The long
+  numbers were never affected.
+- **The `end_ts` stamping convention is the whole difficulty of the W and M
+  ports.** `frames.NAMED_AGG` sets `ts=first session, end_ts=last`, so a Mon-Fri
+  weekly bar carries a MONDAY stamp and DECIDES on Friday. Two consequences, both
+  handled and both silent if got wrong: (a) the higher-timeframe EMA must be looked
+  up by `end_ts` or a week straddling a month boundary reads an EMA one month stale
+  (measured on ABB: 144 of 1,078 weekly bars straddle = 13.4%, median error 1.44%,
+  max 7.89%); (b) THE STAMP MOVES WITH THE FILL — close-convention and intrabar
+  exits stamp `end_ts`, next-open fills stamp the fill bar's own `ts`, or
+  `portfolio.run` commits cash four sessions before the price existed. See
+  `timeframes.py:141` and `timeframes.py:195-218`.
+- **`indicators.rsi` and `indicators.atr` use `ewm(adjust=False)` with no
+  `min_periods`, so both emit a value from bar one.** An unguarded port filters its
+  earliest trades with a "20-week EMA" seeded two weeks earlier. `wf_pine` sets
+  `WARMUP = max(RSI_LEN, ATR_LEN) + 1`, requires `closed >= EMA_LEN - 1` for the
+  HTF EMA, and needs 150 daily bars minimum.
+- **Two Pine settings were deliberately not ported**: `default_qty_value=100
+  percent_of_equity` (the board sizes on risk, not equity fraction) and the flat
+  0.05% commission (the board uses real `backtest.charges`).
+
+### Outputs (all gitignored — `output/` is not in git)
+
+    output/wf_pine_{,W_,M_}2026-09-11.json          summaries + all cells
+    output/measurements/wf_pine_{,W_,M_}2026-09-11.csv   1380 / 1380 / 1320 rows x 17
+    output/logs/wf_pine_2026-09-11.log              the D run
+    output/logs/wf_pine_shorts_2026-09-11.log       D shorts, after the sizing fix
+    output/logs/wf_pine_ablate_2026-09-11.log       D ablation
+    output/logs/wf_pine_W_2026-09-11.log            the W run
+    output/logs/wf_pine_W_ablate_2026-09-11.log     W ablation
+    output/logs/wf_pine_M_2026-09-11.log            the M run
+    output/logs/wf_pine_exposure_2026-09-11.log     the falsification above
+    output/wf_pine_ckpt_{,W_,M_}<board key>/        cell checkpoints (NOT trades)
+
+**The checkpoints hold finished cells, not trade lists** — a `(cells, stats)`
+tuple. Anything needing the trades themselves must rebuild them (~1 min per
+timeframe per variant for 1,000 symbols).
+
+
 ## Open items, in priority order
 
 1. ~~**THE REBUILD**~~ — **DONE 2026-09-11, and the projection held.**
@@ -155,13 +286,27 @@ evidential weight of the leaderboard's top rows, not the verdict.
    running with its self-check disabled and says so only in passing. One-line
    fix; `wf_lookahead.py` is in neither stamp tier, so it costs no rebuild.
 
-4. **`PERMUTATION_WORKERS` is the bigger lever on rebuild time than the board
+4. **Why does dropping the RSI leg RAISE account CAGR on weekly?** 8.4 vs 6.1,
+   while per-trade expectancy FALLS (0.057 vs 0.105). The obvious explanation —
+   cash drag — is measured false (exposure 99.2-100%). Candidate explanations not
+   yet tested: more candidates give `mom_hi` priority a better pool to choose
+   from, or the extra positions simply diversify. Cheap to test: `wf_pine` already
+   has the ablation harness, and it costs no rebuild. This is the only genuinely
+   open question the Pine work left.
+
+5. **`PERMUTATION_WORKERS` is the bigger lever on rebuild time than the board
    size, and it is untested.** The box has 10 cores and 7 GB; the cap is 4
    because each worker needs ~0.5 GB, so **6 cores sit idle through the ~60-min
    validation stage**. Raising it risks OOM mid-rebuild and `validation.py` is
    in `signals._ACCOUNT`, so getting it wrong costs a grid rebuild. Measure
    actual per-worker RSS on a pilot before touching it — do not reason from the
    comment.
+
+6. **Should the Pine rule go on the board?** My reading is no, and the next
+   session should not do it on its own initiative: it is a user-supplied idea that
+   failed at every timeframe, registering it costs a full rebuild (`registry.py` is
+   in `signals._SUPPORT`), and `wf_pine.py` already measures it for free. Raise it
+   with the user rather than deciding.
 
 ## Traps that cost time in these sessions
 
