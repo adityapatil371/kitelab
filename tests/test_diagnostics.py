@@ -187,6 +187,73 @@ class TheMergeRefusesStaleWork(unittest.TestCase):
             self.assertIn("scripts.wf_attach", out)
 
 
+class TheCheckpointKey(unittest.TestCase):
+    """A checkpoint may only be reused by the board that wrote it.
+
+    On 2026-09-11 two boards were built on one day -- 19 strategies at
+    14:45 IST, then 13 at 17:50 after the cut. Checkpoints were keyed on the
+    built DATE, so the second run reused all 26 partitions the first had
+    written and finished a ~50-minute leg in 0.4 minutes with nothing checking
+    that the reuse was sound. It happened to be sound; the code did not know.
+    """
+
+    def setUp(self):
+        from scripts.wf_attach import board_key
+        self.board_key = board_key
+
+    def test_two_boards_built_the_same_day_do_not_collide(self):
+        morning = self.board_key({"built": "2026-09-11 14:45 IST"})
+        evening = self.board_key({"built": "2026-09-11 17:50 IST"})
+        self.assertNotEqual(morning, evening)
+
+    def test_the_same_board_keeps_its_key_so_a_crash_still_resumes(self):
+        b = {"built": "2026-09-11 17:50 IST"}
+        self.assertEqual(self.board_key(b), self.board_key(dict(b)))
+
+    def test_the_date_stays_readable_in_the_name(self):
+        self.assertTrue(
+            self.board_key({"built": "2026-09-11 17:50 IST"}).startswith("2026-09-11_"))
+
+    def test_editing_the_diagnostic_code_moves_the_key(self):
+        """A checkpoint holds arithmetic, so the arithmetic is part of its identity.
+
+        Fixing wf_daily.hold_curve on 2026-09-11 left a stale hold pickle that
+        the board key could not reject: the board had not changed, only the code
+        that filled the pickle had. Same defect as the date collision, one layer
+        down.
+        """
+        import hashlib
+        from scripts import wf_attach
+        here = Path(wf_attach.__file__).resolve().parent
+        payload = {"built": "2026-09-11 17:50 IST"}
+        before = self.board_key(payload)
+
+        digest = hashlib.sha1()
+        for name in ("wf_attach.py", "wf_daily.py"):
+            digest.update((here / name).read_bytes())
+        self.assertIn(digest.hexdigest()[:6], before,
+                      "the key must carry a digest of the diagnostic code")
+
+        # Both files count, not just the one board_key lives in.
+        for name in ("wf_attach.py", "wf_daily.py"):
+            probe = hashlib.sha1()
+            for other in ("wf_attach.py", "wf_daily.py"):
+                probe.update((here / other).read_bytes()
+                             if other != name else b"edited")
+            self.assertNotIn(probe.hexdigest()[:6], before,
+                             f"editing {name} must change the key")
+
+    def test_no_checkpoint_path_is_keyed_on_the_bare_date(self):
+        """The output JSON still is -- attach_diagnostics resolves it by date
+        and guards the handoff on the full `built` string itself. The two
+        CHECKPOINTS must not be."""
+        src = (ROOT / "scripts" / "wf_attach.py").read_text()
+        self.assertIn('f"wf_attach_ckpt_{board}"', src)
+        self.assertIn('f"wf_attach_hold_{board}.pkl"', src)
+        self.assertNotIn('f"wf_attach_ckpt_{stamp}"', src)
+        self.assertNotIn('f"wf_attach_hold_{stamp}.pkl"', src)
+
+
 class TheDocumentedContract(unittest.TestCase):
     """The page and the checker must agree on which keys exist."""
 

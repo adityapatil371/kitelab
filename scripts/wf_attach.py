@@ -45,13 +45,16 @@ Reads:  /data/clean/kitelab/dashboard.json          (axes, stamp, self-check)
         /data/clean/kitelab/signal_cache/*_all.pkl  (arm A trades)
         the cleaned parquet candles, via kitelab.frames
 Writes: output/wf_attach_<built date>.json          (the merged result)
-        output/wf_attach_ckpt_<built date>/*.pkl    (one per strategy per arm)
+        output/wf_attach_ckpt_<board key>/*.pkl     (one per strategy per arm)
+        output/wf_attach_hold_<board key>.pkl       (daily hold curves)
+        <board key> is board_key() -- the built DATE alone is not enough.
 Cost:   run --pilot 1 first; it prints a measured estimate for the full grid.
 """
 from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import json
 import pickle
 import sys
@@ -71,7 +74,14 @@ CACHE = CLEAN / "signal_cache"
 
 # The board cell arm A must reproduce, read off the built grid rather than
 # constructed here: the key format is dashboard_data's business.
-SELF_CHECK_KEY = "ema|0|all|1|10000000|1|2018|liquidity"
+#
+# The priority is taken from dashboard_data rather than written out. It used to
+# read "...|2018|liquidity", and when PRIORITIES was cut to three on 2026-09-11
+# that cell stopped being built, so this leg died on its own self-check after
+# the 116-minute grid had already finished. A self-check must fail when the
+# NUMBERS stop reproducing, never because it names an axis value the board
+# retired.
+SELF_CHECK_KEY = f"ema|0|all|1|10000000|1|2018|{dd.PRIORITY_DEFAULT}"
 
 # Engines with a next-open path. Keyed on Strategy.module so an engine that
 # loses its path raises here rather than being silently measured as zero.
@@ -134,13 +144,61 @@ def single_name_hold(symbol):
     return s / s.iloc[0]
 
 
-def hold_curves(members, unis, assets, stamp):
+def board_key(payload):
+    """Which board a checkpoint was computed against.
+
+    Checkpoints were keyed on the built DATE alone until 2026-09-11, when two
+    different boards were built on one day -- 19 strategies at 14:45 IST, then
+    13 at 17:50 after the cut -- and the second run reused all 26 partitions
+    the first had written, finishing a ~50-minute leg in 0.4 minutes. Nothing
+    checked that the reuse was sound: `if path.exists()` was the whole test.
+    The numbers did survive it (verified by recomputing two strategies from
+    scratch: 1,200 cells, byte-identical pickles), because a strategy's cells
+    depend only on its own trades and the cut changed no surviving rule -- but
+    that was luck, not a guarantee the code offered.
+
+    Key on the FULL built timestamp instead. attach_diagnostics already treats
+    that string as the identity of a board when it refuses a stale handoff
+    (see its `blob["built"] != payload["built"]` check), so both layers now
+    answer "which board is this?" the same way.
+
+    Hold curves do not strictly depend on the strategy set, so keying them
+    this way rebuilds them once per board even when prices have not moved.
+    That is the safe direction to be wrong in, and it is the cheap part of
+    this leg -- the two arms are the hour.
+
+    THE DIAGNOSTIC CODE IS IN THE KEY TOO (2026-09-11, second pass). The board
+    identity alone still cannot see that THIS script's arithmetic moved. Fixing
+    the `recent` hold curve in wf_daily.hold_curve the same afternoon left a
+    stale `wf_attach_hold_*.pkl` on disk that the board key had no way to
+    reject -- the same bug one layer down. Both files are hashed whole rather
+    than per-function: naming the exact functions whose output lands in a
+    checkpoint means keeping that list right forever, and a list that silently
+    goes stale is what this key exists to prevent.
+
+    THE COST: a comment in either file invalidates ~75 minutes of diagnostics.
+    That is the same trade scripts/dashboard_data.py makes by sitting in
+    signals._ACCOUNT, made deliberately and in the safe direction. If a change
+    is genuinely inert, prove it the way the 2026-09-11 reuse was proved --
+    recompute two strategies and diff the pickles -- and carry the rest over by
+    hand. Do not widen the key to make an edit cheap.
+    """
+    built = payload["built"]
+    code = hashlib.sha1()
+    here = Path(__file__).resolve().parent
+    for name in ("wf_attach.py", "wf_daily.py"):
+        code.update((here / name).read_bytes())
+    return (f"{built.split()[0]}_{hashlib.sha1(built.encode()).hexdigest()[:6]}"
+            f"_{code.hexdigest()[:6]}")
+
+
+def hold_curves(members, unis, assets, board):
     """One daily equal-weight hold curve per universe, checkpointed.
 
     The stock curves are scripts.wf_daily's, which are asserted against
     validation.buy_and_hold there. The single-name ones are the instrument.
     """
-    ckpt = OUT / f"wf_attach_hold_{stamp}.pkl"
+    ckpt = OUT / f"wf_attach_hold_{board}.pkl"
     if ckpt.exists():
         print(f"  hold curves: reusing {ckpt.name}")
         return pickle.loads(ckpt.read_bytes())
@@ -298,9 +356,9 @@ def cells_for(strat, trades, unis, assets_trades, holds, arm, hold_cagr):
     return daily, timing
 
 
-def run_arm(arm, strategies, unis, members, assets, holds, hold_cagr, stamp):
+def run_arm(arm, strategies, unis, members, assets, holds, hold_cagr, board):
     """One fill convention over every strategy, checkpointed per strategy."""
-    ck = OUT / f"wf_attach_ckpt_{stamp}"
+    ck = OUT / f"wf_attach_ckpt_{board}"
     ck.mkdir(parents=True, exist_ok=True)
     daily, timing = {}, {}
     t0 = time.time()
@@ -408,7 +466,8 @@ def main():
         raise SystemExit(f"No dashboard.json at {dash}. "
                          f"Build it: python3 -m scripts.refresh")
     payload = json.loads(dash.read_bytes())
-    stamp = payload["built"].split()[0]
+    stamp = payload["built"].split()[0]   # output JSON name: attach_diagnostics resolves it
+    board = board_key(payload)            # checkpoint name: see board_key()
     print(f"dashboard.json: built {payload['built']}, "
           f"{len(payload['grid']):,} grid cells")
 
@@ -420,7 +479,7 @@ def main():
 
     unis = stock_universes(members)
     assert_buckets_match_payload(unis, payload)
-    holds = hold_curves(members, unis, assets, stamp)
+    holds = hold_curves(members, unis, assets, board)
     hold_cagr = payload["validation_summary"]["hold_cagr_by_scenario"]
 
     strategies = registry._build_registry()
@@ -434,7 +493,7 @@ def main():
     for arm in (["a", "b"] if args.arm == "both" else [args.arm]):
         print(f"\n{'='*70}\nARM {arm.upper()} -- "
               f"{'daily excess vs hold' if arm == 'a' else 'next-open fills'}\n{'='*70}")
-        d, t = run_arm(arm, strategies, unis, members, assets, holds, hold_cagr, stamp)
+        d, t = run_arm(arm, strategies, unis, members, assets, holds, hold_cagr, board)
         daily.update(d), timing.update(t)
     took = time.time() - t0
 

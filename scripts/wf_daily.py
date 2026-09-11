@@ -136,6 +136,22 @@ def hold_curve(closes, members):
     first close, held. A member that has not listed yet holds its Rs1 in cash
     and earns nothing -- "late money, not free money", the same convention.
     Wealth is the MEAN over members, so the curve starts at 1.0.
+
+    THE CURVE BEGINS THE DAY THE FIRST MEMBER EXISTS (2026-09-11). It used to
+    begin at the first session in the price matrix whatever the bucket, which
+    is the same thing for four of the five -- but `recent` is every name with
+    no turnover before the 2018 cut, so its curve opened with **2,984 sessions
+    pinned at exactly 1.0** (2006-01-02 to 2018-01-11) before any member had
+    listed. Annualising across that dead span reported `recent` hold at
+    8.54%/yr where validation.buy_and_hold says 21.63%, because _hold compounds
+    from the earliest first-close (see its `first_ts`), not from `start`.
+    Two numbers for one benchmark, 13 points apart.
+
+    This changes no cell: excess_stats intersects the rule curve with this one,
+    and a rule on `recent` has no trades in the dead span either, so those days
+    were already outside every test (verified -- `recent` cells carry 1,992 to
+    2,138 days against the 2,140 live sessions). It is the reported benchmark
+    and the cross-check below that were wrong, not the t-statistics.
     """
     cols = [c for c in closes.columns if c in members]
     if not cols:
@@ -143,7 +159,10 @@ def hold_curve(closes, members):
     sub = closes[cols]
     first = sub.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
     wealth = (sub / first).fillna(1.0)          # pre-listing -> Rs1 in cash
-    return wealth.mean(axis=1)
+    listed = sub.notna().any(axis=1)            # has ANY member listed yet?
+    if not listed.any():
+        return None
+    return wealth.mean(axis=1).loc[listed.idxmax():]
 
 
 # ------------------------------------------------------------------ stats ----
@@ -239,14 +258,27 @@ def main():
         ckpt.write_bytes(pickle.dumps(holds))
         print(f"  checkpointed to {ckpt.name}")
 
-    # cross-check against the function the board actually uses
-    ref = validation.buy_and_hold(members)
-    c = holds["all"]
-    yrs = (c.index[-1] - c.index[0]).days / 365.25
-    mine = 100 * ((c.iloc[-1] / c.iloc[0]) ** (1 / yrs) - 1)
-    print(f"\ncross-check 'all' whole history: validation.buy_and_hold {ref:.2f}%/yr "
-          f"vs this curve {mine:.2f}%/yr  (gap {mine-ref:+.2f})")
-    if abs(mine - ref) > 1.5:
+    # Cross-check against the function the board actually uses -- EVERY bucket.
+    # This ran on `all` alone until 2026-09-11 while the module docstring
+    # claimed "the hold arithmetic is asserted against validation.buy_and_hold"
+    # flatly. `all` was the one bucket that could not expose the dead-span bug
+    # (see hold_curve), so a 13-point disagreement on `recent` sat here
+    # unreported through every run. A guard must cover what it claims to cover.
+    print("\ncross-check vs validation.buy_and_hold (the board's own benchmark):")
+    worst = 0.0
+    for key, mem in universes.items():
+        # `closes` is only in scope when the curves were just built, and
+        # rebuilding the matrix per bucket would cost minutes: `members` is the
+        # `all` bucket by definition, and buy_and_hold skips names it cannot read.
+        c = holds[key]
+        ref = validation.buy_and_hold(members if mem is None else sorted(mem))
+        yrs = (c.index[-1] - c.index[0]).days / 365.25
+        mine = 100 * ((c.iloc[-1] / c.iloc[0]) ** (1 / yrs) - 1)
+        gap = mine - ref
+        worst = max(worst, abs(gap))
+        print(f"  {key:<7} buy_and_hold {ref:>6.2f}%/yr  this curve {mine:>6.2f}%/yr"
+              f"  gap {gap:>+6.2f}  ({len(c):,} days from {c.index[0].date()})")
+    if worst > 1.5:
         raise SystemExit("hold curve disagrees with validation.buy_and_hold by more than "
                          "1.5 pts/yr -- the benchmark is not what this diagnostic assumes")
 
