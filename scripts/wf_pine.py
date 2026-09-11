@@ -88,6 +88,17 @@ WARMUP = max(RSI_LEN, ATR_LEN) + 1     # bars before the daily indicators mean a
 
 REQUIRED = ["ts", "open", "high", "low", "close"]
 
+# Which bars the rule trades, and which bars the trend filter reads. The Pine
+# runs on a daily chart with a WEEKLY EMA filter, so "step it up to weekly"
+# means weekly bars with a MONTHLY filter -- the same one-step-up relationship,
+# not a weekly filter on a weekly chart (which would compare a close to an EMA
+# of itself).
+TIMEFRAMES = {
+    "D": ("daily bars, weekly EMA(20) filter", lambda day: (day, frames.weekly(day))),
+    "W": ("weekly bars, monthly EMA(20) filter",
+          lambda day: (frames.weekly(day), frames.monthly(day))),
+}
+
 # (stop, fill) -> label. Four ways of reading the same Pine, plus the anchor fix.
 VARIANTS = [
     ("atr", "open"),       # the Pine as written: ATR stop off the signal close,
@@ -99,8 +110,8 @@ VARIANTS = [
 ]
 
 
-def vkey(stop, fill):
-    return f"pine|{stop}-{fill}"
+def vkey(stop, fill, tf="D"):
+    return f"pine{'' if tf == 'D' else tf}|{stop}-{fill}"
 
 
 # ------------------------------------------------------------- signals ----
@@ -116,15 +127,24 @@ def heikin_ashi(o, h, l, c):
     return ha_o, ha_h, ha_l, ha_c
 
 
-def signals(symbol: str) -> pd.DataFrame:
-    """Daily bars plus every column the Pine reads, point-in-time.
+def signals(symbol: str, tf: str = "D") -> pd.DataFrame:
+    """Base bars plus every column the Pine reads, point-in-time.
 
-    The HTF EMA is the LAST CLOSED weekly bar's EMA(20), which is what
-    request.security(..., lookahead_off) returns on history -- and the only
-    version that is knowable at the daily close. While the first weekly bar is
-    still forming there is no closed one, so the filter is False and no trade
-    can be taken; that is the conservative direction.
+    The trend filter is the LAST CLOSED higher-timeframe bar's EMA(20), which
+    is what request.security(..., lookahead_off) returns on history -- and the
+    only version knowable at the base bar's close. While the first higher bar
+    is still forming there is no closed one, so the filter is False and no
+    trade can be taken; that is the conservative direction.
+
+    THE HIGHER FRAME IS LOOKED UP BY THE DECISION SESSION, not the stamp.
+    frames.weekly() dates a Mon->Fri bar to its MONDAY but the decision is
+    taken on its Friday close. Looking a month up by the Monday puts a week
+    that straddles a month boundary in the wrong month and reads an EMA one
+    month stale -- measured on ABB at 13.4% of weekly bars, median error 1.44%.
+    kitelab/timeframes.py:141 made this call first; this follows it.
     """
+    if tf not in TIMEFRAMES:
+        raise SystemExit(f"unknown timeframe {tf!r}, expected one of {list(TIMEFRAMES)}")
     day = frames.daily(symbol).reset_index(drop=True)
     missing = [c for c in REQUIRED if c not in day.columns]
     if missing:
@@ -135,26 +155,31 @@ def signals(symbol: str) -> pd.DataFrame:
     if len(day) < 150:
         return day.iloc[0:0]
 
-    o, h, l, c = (day[k].to_numpy(float) for k in ("open", "high", "low", "close"))
+    base, higher = TIMEFRAMES[tf][1](day)
+    base = base.reset_index(drop=True)
+    if len(base) < WARMUP + 30 or len(higher) < EMA_LEN + 2:
+        return base.iloc[0:0]
+
+    o, h, l, c = (base[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     ha_o, ha_h, ha_l, ha_c = heikin_ashi(o, h, l, c)
     rng = ha_h - ha_l
     lower, upper = ha_o - ha_l, ha_h - ha_o
 
-    week = frames.weekly(day)
-    week_ema = indicators.ema(week["close"], EMA_LEN).to_numpy()
-    pos = np.searchsorted(week["ts"].to_numpy(), day["ts"].to_numpy(), side="right") - 1
-    closed = pos - 1                       # lookahead_off: the last CLOSED week
-    # A 20-period EMA seeded two weeks ago is not a 20-week trend. ewm(adjust=False)
+    decided = (base["end_ts"] if "end_ts" in base.columns else base["ts"])
+    higher_ema = indicators.ema(higher["close"], EMA_LEN).to_numpy()
+    pos = np.searchsorted(higher["ts"].to_numpy(), decided.to_numpy(), side="right") - 1
+    closed = pos - 1                       # lookahead_off: the last CLOSED bar
+    # A 20-period EMA seeded two bars ago is not a 20-bar trend. ewm(adjust=False)
     # emits a number from the first bar, so without this the first trades in every
     # symbol are filtered by an EMA that is nearly the close itself. Same reason
-    # entries wait WARMUP daily bars for RSI and ATR below.
-    htf = np.where(closed >= EMA_LEN - 1, week_ema[np.maximum(closed, 0)], np.nan)
+    # entries wait WARMUP base bars for RSI and ATR below.
+    htf = np.where(closed >= EMA_LEN - 1, higher_ema[np.maximum(closed, 0)], np.nan)
 
-    rsi = indicators.rsi(day["close"], RSI_LEN).to_numpy()
+    rsi = indicators.rsi(base["close"], RSI_LEN).to_numpy()
     prev_rsi = np.concatenate([[np.nan], rsi[:-1]])
-    atr = indicators.atr(day["high"], day["low"], day["close"], ATR_LEN).to_numpy()
+    atr = indicators.atr(base["high"], base["low"], base["close"], ATR_LEN).to_numpy()
 
-    out = day.copy()
+    out = base.copy()
     out["ha_open"], out["ha_high"], out["ha_low"], out["ha_close"] = ha_o, ha_h, ha_l, ha_c
     out["htf_ema"] = htf
     out["rsi"], out["atr"] = rsi, atr
@@ -166,7 +191,7 @@ def signals(symbol: str) -> pd.DataFrame:
     out["rsi_short"] = (rsi < RSI_SHORT) & (rsi < prev_rsi)
     out["ha_exit_long"] = (ha_c < ha_o) & (upper > rng * WICK_TOL)
     out["ha_exit_short"] = (ha_c > ha_o) & (lower > rng * WICK_TOL)
-    out["months_done"] = _months_done(day["ts"])
+    out["months_done"] = _months_done(base["ts"])
     return out
 
 
@@ -190,7 +215,7 @@ def entry_mask(sig, side, *, use_htf=True, use_wick=True, use_rsi=True):
 
 
 # -------------------------------------------------------------- trades ----
-def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
+def trades_for(symbol, sig=None, *, tf="D", side="long", stop_mode="atr", fill="open",
                use_htf=True, use_wick=True, use_rsi=True) -> list[dict]:
     """Walk the signals and return closed trades, oldest first.
 
@@ -203,7 +228,7 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
     goes to the stop, the house convention.
     """
     if sig is None:
-        sig = signals(symbol)
+        sig = signals(symbol, tf)
     total = len(sig)
     if total == 0:
         return []
@@ -213,7 +238,18 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
     rev = sig["ha_exit_long" if long else "ha_exit_short"].to_numpy()
     o, h, l, c = (sig[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     atr = sig["atr"].to_numpy(float)
-    stamps = sig["ts"].tolist()
+    # THE STAMP IS THE SESSION THE DECISION WAS TAKEN ON, and it moves with the
+    # fill. An aggregated bar is dated to its FIRST session but closes on its
+    # LAST, so a Mon->Fri weekly bar carries a Monday stamp. Stamping a
+    # close-filled weekly entry on that Monday makes portfolio.run commit cash
+    # four sessions before the price it paid existed, and makes the daily curve
+    # mark the position from Monday at Friday's price. A next-open fill really
+    # does happen on the fill bar's opening session, so that one is stamped on
+    # `ts`. Both rules are kitelab/timeframes.py:195-218's, followed here so the
+    # weekly numbers sit on the same footing as the board's weekly rules.
+    # Daily frames carry no end_ts and are unaffected: stamp == session.
+    closed_on = (sig["end_ts"] if "end_ts" in sig.columns else sig["ts"]).tolist()
+    opened_on = sig["ts"].tolist()
     months = sig["months_done"].to_numpy()
     next_open = fill == "open"
 
@@ -229,9 +265,11 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
                 break
             entry_index = position + 1
             entry_price = float(o[entry_index])
+            entry_stamp = opened_on[entry_index]
         else:
             entry_index = position
             entry_price = float(c[position])
+            entry_stamp = closed_on[entry_index]
 
         if stop_mode == "atr":
             stop = ref - sign * ATR_STOP * atr[position]
@@ -279,6 +317,15 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
                 break
             exit_index += 1
             exit_price = float(o[exit_index])
+            exit_stamp = opened_on[exit_index]
+        elif next_open and not market:
+            # A stop or target fills INTRABAR, on some session inside the bar we
+            # cannot name. The bar's closing session is the honest upper bound:
+            # dating it any earlier would free the account's cash before the
+            # trade could have ended.
+            exit_stamp = closed_on[exit_index]
+        else:
+            exit_stamp = closed_on[exit_index]
 
         risk = abs(entry_price - stop)
         # sizing.position() reads (price, stop) and refuses a stop above the entry,
@@ -292,29 +339,29 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
             position = exit_index + 1
             continue
         quoted_entry, quoted_exit = entry_price, exit_price
-        entry_price = slippage.fill(symbol, stamps[entry_index], quoted_entry, int(sign))
-        exit_price = slippage.fill(symbol, stamps[exit_index], quoted_exit, -int(sign))
+        entry_price = slippage.fill(symbol, entry_stamp, quoted_entry, int(sign))
+        exit_price = slippage.fill(symbol, exit_stamp, quoted_exit, -int(sign))
         buy_value, sell_value = entry_price * shares, exit_price * shares
         gross = sign * (exit_price - entry_price) * shares
         spread_cost = sign * ((quoted_exit - exit_price) + (entry_price - quoted_entry)) * shares
-        same_session = stamps[entry_index].date() == stamps[exit_index].date()
+        same_session = entry_stamp.date() == exit_stamp.date()
         cost = charges(buy_value, sell_value, intraday=same_session)
 
         trades.append({
-            "symbol": symbol, "side": side,
-            "entry_ts": stamps[entry_index], "exit_ts": stamps[exit_index],
+            "symbol": symbol, "side": side, "tf": tf,
+            "entry_ts": entry_stamp, "exit_ts": exit_stamp,
             "same_session": same_session, "entry_time": "EOD",
             "level": None, "level_kind": f"pine {stop_mode}",
             "max_risk_capital": sizing.risk_budget(), "risk_taken": risk_taken,
             "capital_capped": capped, "range": risk, "target": target,
             "final_stop": stop, "bars_held": exit_index - entry_index,
             "charges_best": cost, "net_profit_best": gross - cost,
-            "entry_date": stamps[entry_index], "entry_price": entry_price,
+            "entry_date": entry_stamp, "entry_price": entry_price,
             "quoted_entry": quoted_entry, "quoted_exit": quoted_exit,
             "spread_cost": spread_cost, "stop": stop, "risk_per_share": risk,
-            "exit_date": stamps[exit_index], "exit_price": exit_price,
+            "exit_date": exit_stamp, "exit_price": exit_price,
             "exit_reason": reason,
-            "days_held": (stamps[exit_index] - stamps[entry_index]).days,
+            "days_held": (exit_stamp - entry_stamp).days,
             "sessions_held": exit_index - entry_index, "shares": shares,
             "cost_of_entry": buy_value, "gross_profit": gross,
             "r_multiple": (gross / risk_taken) if risk_taken else 0.0,
@@ -325,12 +372,12 @@ def trades_for(symbol, sig=None, *, side="long", stop_mode="atr", fill="open",
     return trades
 
 
-def build_all(symbols, *, side, stop_mode, fill, quiet=False):
+def build_all(symbols, *, side, stop_mode, fill, tf="D", quiet=False):
     """Every symbol's trades under one convention, with the signal frame reused."""
     out, skipped = [], 0
     for i, sym in enumerate(symbols, 1):
         try:
-            sig = signals(sym)
+            sig = signals(sym, tf)
         except SystemExit as exc:
             print(f"    {sym}: {exc}")
             skipped += 1
@@ -338,7 +385,8 @@ def build_all(symbols, *, side, stop_mode, fill, quiet=False):
         if len(sig) == 0:
             skipped += 1
             continue
-        out.extend(trades_for(sym, sig, side=side, stop_mode=stop_mode, fill=fill))
+        out.extend(trades_for(sym, sig, tf=tf, side=side, stop_mode=stop_mode,
+                              fill=fill))
         if not quiet and i % 200 == 0:
             print(f"    {i}/{len(symbols)} symbols, {len(out):,} trades", flush=True)
     if not quiet:
@@ -470,10 +518,11 @@ def universes(members, payload):
     return unis
 
 
-def verify(symbol):
+def verify(symbol, tf="D"):
     """One symbol, every intermediate column printed, as the house rules require."""
-    sig = signals(symbol)
-    print(f"\n{symbol}: signal frame {sig.shape[0]} rows x {sig.shape[1]} columns")
+    sig = signals(symbol, tf)
+    print(f"\n{symbol} on {tf} -- {TIMEFRAMES[tf][0]}")
+    print(f"signal frame {sig.shape[0]} rows x {sig.shape[1]} columns")
     cols = ["ts", "open", "high", "low", "close", "ha_open", "ha_high", "ha_low",
             "ha_close", "htf_ema", "rsi", "atr"]
     print(sig[cols].head(3).to_string(index=False))
@@ -486,53 +535,55 @@ def verify(symbol):
     print(f"    haO[1] = (haO0+haC0)/2 = "
           f"{(sig['ha_open'].iloc[0]+sig['ha_close'].iloc[0])/2:.4f}  "
           f"frame says {sig['ha_open'].iloc[1]:.4f}")
-    week = frames.weekly(frames.daily(symbol).reset_index(drop=True))
-    we = indicators.ema(week["close"], EMA_LEN)
+    _, higher = TIMEFRAMES[tf][1](frames.daily(symbol).reset_index(drop=True))
+    he = indicators.ema(higher["close"], EMA_LEN)
     row = sig.index[sig["htf_ema"].notna()][0]
-    print(f"\n  HTF EMA is the last CLOSED week: on {sig['ts'].iloc[row].date()} "
-          f"the frame says {sig['htf_ema'].iloc[row]:.4f}")
-    wk = np.searchsorted(week["ts"].to_numpy(), sig["ts"].to_numpy()[row], side="right") - 1
-    print(f"    week {wk} starts {week['ts'].iloc[wk].date()} (still forming, "
-          f"EMA {we.iloc[wk]:.4f}); week {wk-1} starts "
-          f"{week['ts'].iloc[wk-1].date()}, EMA {we.iloc[wk-1]:.4f}  <- used")
+    dec = (sig["end_ts"] if "end_ts" in sig.columns else sig["ts"]).iloc[row]
+    print(f"\n  the filter reads the last CLOSED higher bar. Base bar {row} is stamped "
+          f"{sig['ts'].iloc[row].date()} but DECIDES on {dec.date()};")
+    print(f"    the frame says htf_ema {sig['htf_ema'].iloc[row]:.4f}")
+    hk = np.searchsorted(higher["ts"].to_numpy(), np.datetime64(dec), side="right") - 1
+    print(f"    higher bar {hk} starts {higher['ts'].iloc[hk].date()} (still forming, "
+          f"EMA {he.iloc[hk]:.4f}); bar {hk-1} starts "
+          f"{higher['ts'].iloc[hk-1].date()}, EMA {he.iloc[hk-1]:.4f}  <- used")
     for name in ("trend_up", "bull_nowick", "rsi_long", "ha_exit_long"):
         print(f"  {name:<14} true on {int(sig[name].sum()):>6,} of {len(sig):,} bars")
     both = entry_mask(sig, "long")
     print(f"  {'long entry':<14} true on {int(both.sum()):>6,} bars "
           f"({100*both.mean():.2f}%)")
     for stop_mode, fill in VARIANTS:
-        t = trades_for(symbol, sig, side="long", stop_mode=stop_mode, fill=fill)
+        t = trades_for(symbol, sig, tf=tf, side="long", stop_mode=stop_mode, fill=fill)
         s = trade_stats(t)
-        print(f"  {vkey(stop_mode, fill):<20} {s['n']:>4} trades  "
+        print(f"  {vkey(stop_mode, fill, tf):<20} {s['n']:>4} trades  "
               f"win {s.get('win_rate')}%  expectancy {s.get('expectancy_r')}R  "
               f"exits {s.get('exits')}")
 
 
-def pilot(symbols, n):
+def pilot(symbols, n, tf="D"):
     sub = symbols[:n]
-    print(f"\nPILOT: {len(sub)} symbols x {len(VARIANTS)} variants")
+    print(f"\nPILOT: {len(sub)} symbols x {len(VARIANTS)} variants on {tf}")
     t0 = time.time()
     counts = {}
     for stop_mode, fill in VARIANTS:
         s0 = time.time()
-        tr = build_all(sub, side="long", stop_mode=stop_mode, fill=fill, quiet=True)
-        counts[vkey(stop_mode, fill)] = (len(tr), time.time() - s0)
-        print(f"  {vkey(stop_mode, fill):<20} {len(tr):>6,} trades  "
+        tr = build_all(sub, side="long", stop_mode=stop_mode, fill=fill, tf=tf, quiet=True)
+        counts[vkey(stop_mode, fill, tf)] = (len(tr), time.time() - s0)
+        print(f"  {vkey(stop_mode, fill, tf):<20} {len(tr):>6,} trades  "
               f"{time.time()-s0:>6.1f}s")
     per = (time.time() - t0) / len(sub)
     print(f"\n  {per*1000:.0f} ms per symbol for all {len(VARIANTS)} variants")
     print(f"  {len(symbols)} symbols -> trade stage ~{per*len(symbols)/60:.1f} min")
-    tr = build_all(sub, side="long", stop_mode="atr", fill="open", quiet=True)
-    print(f"  scaling the pilot's {counts[vkey('atr','open')][0]:,} trades to the "
-          f"full universe: ~{counts[vkey('atr','open')][0]*len(symbols)//len(sub):,} "
-          f"per variant")
+    k = vkey("atr", "open", tf)
+    print(f"  scaling the pilot's {counts[k][0]:,} trades to the full universe: "
+          f"~{counts[k][0]*len(symbols)//len(sub):,} per variant")
     return per
 
 
-def ablate(symbols, unis, holds, hold_cagr):
+def ablate(symbols, unis, holds, hold_cagr, tf="D"):
     """Which of the three entry legs is doing the work, on one cell."""
-    print("\nABLATION (stop=atr, fill=open, universe all, start 2018, "
-          f"risk 1%, capital 10,000,000, priority {dd.PRIORITY_DEFAULT})")
+    print(f"\nABLATION on {tf} ({TIMEFRAMES[tf][0]}) -- stop=atr, fill=open, "
+          f"universe all, start 2018, risk 1%, capital 10,000,000, "
+          f"priority {dd.PRIORITY_DEFAULT}")
     legs = [("full rule", dict()),
             ("no HTF EMA filter", dict(use_htf=False)),
             ("no wick condition", dict(use_wick=False)),
@@ -549,12 +600,12 @@ def ablate(symbols, unis, holds, hold_cagr):
         tr = []
         for sym in symbols:
             try:
-                sig = signals(sym)
+                sig = signals(sym, tf)
             except SystemExit:
                 continue
             if len(sig) == 0:
                 continue
-            tr.extend(trades_for(sym, sig, side="long", stop_mode="atr",
+            tr.extend(trades_for(sym, sig, tf=tf, side="long", stop_mode="atr",
                                  fill="open", **kw))
         tr = wa.spread_of(tr)
         st = trade_stats(tr)
@@ -578,6 +629,9 @@ def main():
     ap.add_argument("--pilot", type=int, metavar="N")
     ap.add_argument("--ablate", action="store_true")
     ap.add_argument("--symbols", type=int, help="cap the universe (testing only)")
+    ap.add_argument("--tf", default="D", choices=sorted(TIMEFRAMES),
+                    help="D = the Pine as written (daily bars, weekly filter); "
+                         "W = the same rule stepped up (weekly bars, monthly filter)")
     args = ap.parse_args()
 
     slippage.ENABLED = False
@@ -585,7 +639,7 @@ def main():
     slippage.reset()
 
     if args.verify:
-        verify(args.verify)
+        verify(args.verify, args.tf)
         return
 
     cfg = config.load()
@@ -594,8 +648,9 @@ def main():
         members = members[:args.symbols]
     print(f"universe: {len(members)} symbols")
 
+    print(f"timeframe {args.tf}: {TIMEFRAMES[args.tf][0]}")
     if args.pilot:
-        pilot(members, args.pilot)
+        pilot(members, args.pilot, args.tf)
         return
 
     payload = load_board()
@@ -607,15 +662,15 @@ def main():
           f"all|2018 = {hold_cagr.get('all|2018')}")
 
     if args.ablate:
-        ablate(members, unis, holds, hold_cagr)
+        ablate(members, unis, holds, hold_cagr, args.tf)
         return
 
-    ck = OUT / f"wf_pine_ckpt_{board}"
+    ck = OUT / f"wf_pine_ckpt_{args.tf}_{board}"
     ck.mkdir(parents=True, exist_ok=True)
     all_cells, summary = {}, {}
     t0 = time.time()
     for stop_mode, fill in VARIANTS:
-        label = vkey(stop_mode, fill)
+        label = vkey(stop_mode, fill, args.tf)
         path = ck / f"{label.replace('|', '__')}.pkl"
         if path.exists():
             cells, stats, shorts = pickle.loads(path.read_bytes())
@@ -623,12 +678,14 @@ def main():
         else:
             s0 = time.time()
             print(f"  {label}: building long trades", flush=True)
-            raw = build_all(members, side="long", stop_mode=stop_mode, fill=fill)
+            raw = build_all(members, side="long", stop_mode=stop_mode, fill=fill,
+                            tf=args.tf)
             stats = trade_stats(wa.spread_of(raw))
             cells = cells_for(wa.spread_of(raw), unis, holds, hold_cagr, label)
             print(f"  {label}: building short trades (trade level only)", flush=True)
-            sraw = build_all(members, side="short", stop_mode=stop_mode, fill=fill)
-            shorts = trade_stats(wa.spread_of(sraw))
+            sraw = build_all(members, side="short", stop_mode=stop_mode, fill=fill,
+                             tf=args.tf)
+            shorts = trade_stats(spread_of_shorts(sraw)) if sraw else {"n": 0}
             path.write_bytes(pickle.dumps((cells, stats, shorts)))
             print(f"  {label:<20} {stats['n']:>7,} long trades -> "
                   f"{len(cells):>4} cells  {time.time()-s0:>6.0f}s", flush=True)
@@ -638,15 +695,16 @@ def main():
 
     stamp = date.today().isoformat()
     blob = {"built": payload["built"], "board": board, "generated": stamp,
-            "variants": [vkey(s, f) for s, f in VARIANTS],
+            "timeframe": args.tf, "timeframe_label": TIMEFRAMES[args.tf][0],
+            "variants": [vkey(s, f, args.tf) for s, f in VARIANTS],
             "summary": summary, "cells": all_cells}
-    jpath = OUT / f"wf_pine_{stamp}.json"
+    jpath = OUT / f"wf_pine_{args.tf}_{stamp}.json"
     jpath.write_text(json.dumps(blob, indent=1, default=str))
     flat = pd.DataFrame([
         {k: v for k, v in c.items() if k != "daily"} |
         {f"daily_{k}": v for k, v in (c["daily"] or {}).items()}
         for c in all_cells.values()])
-    cpath = OUT / "measurements" / f"wf_pine_{stamp}.csv"
+    cpath = OUT / "measurements" / f"wf_pine_{args.tf}_{stamp}.csv"
     cpath.parent.mkdir(parents=True, exist_ok=True)
     flat.to_csv(cpath, index=False)
     print(f"  wrote {jpath.name} and measurements/{cpath.name} "
