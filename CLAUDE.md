@@ -68,8 +68,25 @@ the analysis side writes or reads prices from.
 
 ## The grid
 
-**10,260 cells** (19 variants × 540: 5 equity universes × 5 start years × 5
-priorities × 2 risks × 2 capitals, plus BITCOIN/GOLD at one priority), keyed
+**Cut 19 → 13 on 2026-09-11**, on a re-rank of all 19 over the rebuilt
+momentum board (six views averaged, plus a redundancy pass). Removed:
+`hg|swing` (last of 19 — 0.0% of its 300 cells beat buy-and-hold and its
+luckiest cell still lost 3.1 points); `eath|QM` (rank 18) and `eath|QD`
+(correlating 0.93/0.92 with the ATH rows kept) with their unfiltered controls
+`pair|QM` and `pair|QD`, which existed only to control them; and `eath|MWD`
+(correlating **0.968 at a median gap of 0.00** with the better-ranked
+`eath|WD` — indistinguishable, not merely similar). Every surviving ATH row
+still has its control: `eath|MW`→`pair|MW`, `eath|WD`→`pair|WD`.
+
+Two things the re-rank did **not** change, both worth knowing before reading
+the board: **not one** of the rules beats buy-and-hold on its median cell (best
+is −2.51 CAGR points/yr), and the top of the leaderboard is largely one rule
+wearing three labels — `pair|MW`, `pair|QW` and `qmw|0` correlate 0.936–0.963
+and rank 1st, 4th and 3rd. Do not read those three as independent confirmation.
+
+
+**3,900 cells** (13 variants × 300: 5 equity universes × 5 start years × 3
+priorities × 2 risks × 2 capitals), keyed
 `strategy|variant|universe|risk|capital|fill|start|priority`. Take live counts
 from `refresh --check`; the arithmetic is what to trust. Axis values live in
 `registry.py`, `RISKS`, `CAPITALS`, `START_YEARS` (default 2018),
@@ -81,9 +98,25 @@ the others.
   (since 2026-09-07): membership is median daily traded value on bars before
   `START_DEFAULT` only; no positive-turnover bar before the cut → `recent`.
   One classification, not one per start year.
-- **Signal priority swings CAGR by up to 20 points** — more than the gap
-  between strategies — and no ordering wins consistently: that is what noise
-  looks like. Never pick a winner off that table without `scripts.bootstrap`.
+- **Signal priority is the smallest of the three axes, and three of its five
+  settings were measured to be worse than chance** (2026-09-11,
+  `scripts/priority_control.py`: 20 seeded shuffles per cell, costs on, all 19
+  strategies × 2 account sizes). Best-minus-worst CAGR across priority is
+  median 6.7 points, against 24.35 across strategies and 14.75 across start
+  year (all three measured on the 19-strategy board, before the 2026-09-11 cut). `liquidity` — the default from 2026-09-03 —
+  beat the shuffle mean in 13 of 38 cells; `wide` 16, `illiquid` 19. The axis
+  was cut to `mom_hi` (+3.84 pts, 35 of 38), `nearhigh_hi` (+2.37, 29) and
+  `tight` (+1.06, 29), and `mom_hi` is the new default. **An earlier version of
+  this line said priority was "noise worth up to 20 points" and both halves
+  were wrong** — see the docstring of `scripts/deployment.py` for where each
+  number came from. Never pick a winner off that table without
+  `scripts.bootstrap`; the coin-flip evidence is not in `dashboard.json` at
+  all, only in `output/measurements/priority_control_2026-09-11.csv`.
+- **BITCOIN and GOLD came off the board 2026-09-11** (user's call: "they arent
+  necessary"). `dashboard_data.ASSETS` is empty, so `assets` and `single_name`
+  serialise empty — a valid payload, the same one `--stocks-only` builds, and
+  `check_dashboard.js` passes on it. The fetch side and `ASSET_EXCLUDED` are
+  untouched.
 - All EMA families trade the bare 20-EMA cross (band removed 2026-09-05;
   ~30% next-bar re-entry churn is back — see kitelab-history).
 - ATH rows: the band only *declines* a cross (since 2026-09-07), and **every
@@ -120,8 +153,8 @@ volatility clustering are not counted as independent evidence. Detectable edge
 falls to **~11.8 pts/yr**. Walk-forward keeps its column and its Detail table:
 it answers *when* the edge was there, which a whole-sample test cannot.
 
-The bar is **not** a nominal 0.05. 9,500 cells tested at once is 9,500 chances
-to be lucky (~475 would clear 0.05 with no edge at all), so the gate is a
+The bar is **not** a nominal 0.05. 3,900 cells tested at once is 3,900 chances
+to be lucky (~195 would clear 0.05 with no edge at all), so the gate is a
 **Benjamini-Hochberg** false-discovery-rate threshold across every tested cell;
 the uncorrected and Bonferroni counts are shown beside it, never gated on. BH
 rather than Bonferroni because these cells are heavily correlated — 19 rules
@@ -130,8 +163,9 @@ correlated tests is far stricter than its own nominal level.
 
 Quote the `validation_summary` spread (`tried`, `n_eff`, `hurdle`, `cleared`…),
 never a single headline number: the hurdle guards the t only, while the MAR the
-top row sorts by is an uncorrected max over 540 cells on an axis (priority) the
-project itself calls noise. Full detail — the five checks' history, the
+top row sorts by is an uncorrected max over 300 cells, three of whose axes
+(priority, start year, universe) are choices no trader made in advance.
+Full detail — the five checks' history, the
 credibility statistic, drift_r, the holdout stand-ins table, how to add a
 strategy — is in the **kitelab-validation** skill. The 2026-09-07 audit made
 every gate stricter; the board looking worse than 2026-09-05 is the repair
@@ -227,7 +261,7 @@ and must never be blocked by it; viewing must work with neither.
   `config.DEMERGERS`, `config.HISTORY_STARTS`): Kite serves phantom pre-listing
   bars and does NOT adjust demergers, so bars before the last break are
   dropped — severe by design. `data_audit` checks for all of it.
-- **The live exposure is multiple testing, not contamination**: 19 variants
+- **The live exposure is multiple testing, not contamination**: 13 variants
   ranked and a winner reported. The luck hurdle is a family-wise 95% bar; quote
   the `validation_summary` spread the page shows above the table.
 - **Survivorship is untouched and remains the largest known bias here.** The
@@ -270,9 +304,11 @@ longer "invalidates all of them".** Two independent tiers:
   import closure** (`signals.reachable_from`, read out of the import
   statements with `ast`) unioned with `_SUPPORT`, and `signals.producer_of`
   resolves a cache name to its producer by longest prefix so no call site
-  passes it. Measured on the 19-variant board: editing `holygrail.py` rebuilds
-  1 strategy, `darvas.py` 4, `timeframes.py` 11, `backtest.py` all 19 (every
-  engine imports it), any `_SUPPORT` module all 19. `_SUPPORT` stays global on
+  passes it. Measured on the 13-variant board: editing `darvas.py` rebuilds 4
+  strategies, `timeframes.py` 7, `backtest.py` all 13 (every engine imports
+  it), any `_SUPPORT` module all 13. `holygrail.py` now rebuilds **0** — it is
+  on disk but off the board since 2026-09-11, so editing it cannot invalidate
+  a cached trade; `tests/test_stamps.py` pins that in both directions. `_SUPPORT` stays global on
   purpose — `registry.py`, `strategies.py` and `trailing.py` are in nobody's
   closure, and a closure-only rule would let a `registry.py` edit invalidate
   nothing. An unrecognised cache name gets the whole-board digest, not the
@@ -288,7 +324,8 @@ longer "invalidates all of them".** Two independent tiers:
 
 Verified 2026-09-09 on the 3-symbol preflight board: building twice into one
 temp dir gave 0/19 partitions reused then 19/19, 78.1s then 0.8s, and all
-5,700 cells identical.
+cells identical. Left as measured; that board had 19 partitions and five
+priorities, where today's has 13 and three.
 
 **The code digest reads bytes, not timestamps (2026-09-09).** It used to hash
 each module's `st_mtime_ns`, which is a fact about the filesystem and not about
@@ -369,6 +406,33 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 - `pkill -f "scripts.dashboard"` matches its own shell and kills the session.
   Use PIDs; `pgrep -a -f` has the same problem.
 - `/tmp` is cleared between sessions. Long-running logs go in `output/`.
+- **`output/` is gitignored, so a delete there is permanent, and every script
+  hardcodes it FLAT** — `wf_attach.py:69`, `attach_diagnostics.py:44`,
+  `wf_power.py:45`, `wf_survivor.py:72`, `wf_risk.py:123`, `wf_excess.py:35` all
+  resolve `OUT = <repo>/output` and join a bare filename, never searching
+  subdirectories. Tidied into folders 2026-09-10 (`showcase/`, `classwork/`,
+  `measurements/`, `logs/`); the files left at the top level are the live
+  checkpoints scripts read back, and filing one away silently costs its re-run
+  (`wf_attach_<built date>.json` = the 106.9-min diagnostics run;
+  `wf_attach_ckpt_<board key>/` and `wf_attach_hold_<board key>.pkl` = resume
+  instead of restart). **The two checkpoints are keyed on `wf_attach.board_key`,
+  not the date** — they were date-keyed until 2026-09-11, when the 19-strategy
+  board (14:45 IST) and the 13-strategy board that replaced it (17:50) collided
+  and the second run reused all 26 of the first's partitions in 0.4 min.
+  `if path.exists()` was the whole test. The numbers survived it — two
+  strategies recomputed from scratch gave byte-identical pickles over 1,200
+  cells — but by luck, not by construction. The output JSON keeps its date name
+  because `attach_diagnostics` resolves it by date and then guards the handoff
+  on the full `built` string. **`board_key` also hashes `wf_attach.py` and
+  `wf_daily.py` whole**, added the same day after fixing the `recent` hold curve
+  left a stale `wf_attach_hold_*.pkl` that the board key had no way to reject —
+  the board had not changed, only the code that filled the pickle had. The cost
+  is that a comment in either file invalidates ~75 min of diagnostics; that is
+  the same trade `dashboard_data.py` makes by sitting in `signals._ACCOUNT`, and
+  it is deliberate. If an edit is genuinely inert, **prove it** (recompute two
+  strategies, diff the pickles) and carry the rest over by hand — do not widen
+  the key to make an edit cheap. `output/README.md`
+  carries the full map — and is itself gitignored, so this entry is the durable copy.
 - Small samples mislead — the ATH band looked neutral on 30 stocks and clearly
   harmful on 101.
 - Deleting a block can take a shared import with it, 20 minutes into a rebuild.
@@ -377,5 +441,5 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 - The producer's paper book is ₹1cr (`sizing.CAPITAL`) so no signal the
   largest account could take is dropped from the cache; rupee figures in
   `trade_stats` describe no account on the page — read the R-multiple fields.
-- `pyflakes` is clean except one known warning (`scripts/refresh.py:52`,
+- `pyflakes` is clean except one known warning (`scripts/refresh.py:69`,
   pandas imported but unused). Anything else is yours.
