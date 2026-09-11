@@ -97,6 +97,13 @@ TIMEFRAMES = {
     "D": ("daily bars, weekly EMA(20) filter", lambda day: (day, frames.weekly(day))),
     "W": ("weekly bars, monthly EMA(20) filter",
           lambda day: (frames.weekly(day), frames.monthly(day))),
+    # One more rung. NOTE the history this costs: the filter is a 20-period EMA
+    # on the higher frame, and on M that frame is QUARTERLY -- 20 closed
+    # quarters is five years before the first entry can exist, against one
+    # year on W and three months on D. Expect the usable universe to shrink
+    # and to tilt towards old listings; main() prints the count it kept.
+    "M": ("monthly bars, quarterly EMA(20) filter",
+          lambda day: (frames.monthly(day), frames.quarterly(day))),
 }
 
 # (stop, fill) -> label. Four ways of reading the same Pine, plus the anchor fix.
