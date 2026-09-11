@@ -28,6 +28,36 @@ class PageKeys(unittest.TestCase):
         self.assertNotIn("holdout_universes", preflight._page_keys())
 
 
+class AttachedKeys(unittest.TestCase):
+    """The payload is built in three stages; preflight runs the first.
+
+    dashboard_data writes the payload, wf_attach computes the day-by-day tests
+    beside it, attach_diagnostics merges them in. Preflight builds stage one
+    only, so stage three's keys are absent BY DESIGN -- and from 2026-09-10,
+    when the daily-excess gate put three of them on the page, preflight failed
+    on every run and scripts.refresh aborted at the gate before starting the
+    rebuild it exists to guard. Found 2026-09-11.
+    """
+
+    def test_the_scanner_finds_what_the_merge_writes(self):
+        self.assertEqual(preflight._attached_keys(),
+                         {"daily_excess", "fill_timing", "diagnostics"})
+
+    def test_an_exception_must_earn_itself_from_the_source(self):
+        """Empty means the pattern stopped matching. The keys then go back to
+        counting as missing and the FAIL returns -- which is the safe
+        direction, but it should be a test failure here first."""
+        self.assertTrue(preflight._attached_keys(),
+                        "nothing matched in attach_diagnostics.py -- the "
+                        "scanner has drifted from how the merge is written")
+
+    def test_nothing_is_excused_that_the_page_does_not_read(self):
+        """The exception is narrowed to keys the page asks for. A key written
+        by the merge and read by nobody should still show up as dead weight."""
+        self.assertFalse(preflight._attached_keys() - preflight._page_keys(),
+                         "attach_diagnostics writes a key the page never reads")
+
+
 class Redirection(unittest.TestCase):
     def test_the_guard_rejects_a_path_outside_the_temp_dir(self):
         """The assertion that refuses to run unless every write is redirected.

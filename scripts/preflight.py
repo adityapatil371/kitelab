@@ -76,6 +76,33 @@ def _page_keys() -> set[str]:
     return keys
 
 
+def _attached_keys() -> set[str]:
+    """Payload keys a LATER stage adds, which this build is not asked to emit.
+
+    The payload the page reads is built in three stages: dashboard_data writes
+    it, scripts.wf_attach computes the day-by-day tests beside it, and
+    scripts.attach_diagnostics merges those in. Preflight runs the FIRST stage
+    only -- deliberately, because the other two are cheap and the expensive
+    thing to smoke-test is the build. So the keys the third stage adds are
+    absent here by design, and blaming the build for them is a false alarm.
+
+    It was a LOUD false alarm: `daily_excess`, `fill_timing` and `diagnostics`
+    entered the page with the daily-excess gate on 2026-09-10, and from that day
+    `python3 -m scripts.preflight` failed and `scripts.refresh` aborted at the
+    gate before starting the rebuild it guards. Found 2026-09-11.
+
+    Read out of the merging script the same way page keys are read out of the
+    page, and for the same reason: a hand-kept list of exceptions is the very
+    thing _page_keys exists not to be, and it fails the same way -- silently,
+    later, when someone adds a fourth key. If the pattern ever stops matching
+    this returns empty, the keys go back to counting as missing, and the FAIL
+    comes back rather than the check quietly excusing everything.
+    """
+    src = (pathlib.Path(__file__).resolve().parent
+           / "attach_diagnostics.py").read_text()
+    return set(re.findall(r'payload\["([A-Za-z_][A-Za-z0-9_]*)"\]\s*=', src))
+
+
 def _one_per_bucket(symbols, n: int, asof: int) -> list[str]:
     """The most liquid stock from each liquidity bucket, then the rest by
     turnover. Two of the three symbols the old `merged[:3]` picked (HAL, IRFC)
@@ -193,7 +220,8 @@ def main() -> None:
 
     payload = json.loads((tmp / "dashboard.json").read_text())
     wanted, got = _page_keys(), set(payload)
-    missing = sorted(wanted - got)
+    attached = _attached_keys() & wanted
+    missing = sorted(wanted - got - attached)
     dead = sorted(got - wanted)
     # THE BRANCHES THAT USED TO BE SKIPPED (audit E4): with MIN_TRADES lowered
     # and one symbol per bucket, every per-universe validation record and
@@ -224,6 +252,11 @@ def main() -> None:
         missing = missing + ["(validation shape)"]
 
     print(f"  payload:   {len(payload)} keys, {len(payload.get('grid', {})):,} grid cells")
+    if attached:
+        # Named, not silently excused -- the reader should see which keys this
+        # build is not responsible for, and how they get there.
+        print(f"  NOTE       added later by scripts.attach_diagnostics, not by "
+              f"this build: {', '.join(sorted(attached))}")
     if dead:
         print(f"  NOTE       computed but never read by the page: {', '.join(dead)}")
     if missing:
