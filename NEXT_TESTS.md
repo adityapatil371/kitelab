@@ -984,3 +984,77 @@ Fair comparison check: the board cells and these come through the same path —
 `wa.spread_of` then `portfolio.run`, which is what `wf_attach`'s SELF_CHECK
 pins to a board cell. The Pine is a weekly rule against mostly daily ones;
 that is a difference in the rules, not in the charging.
+
+## 14. The nine are not unproven — they are reliably WORSE than hold — RAN 2026-09-16
+
+`scripts/hold_dominance.py`, seconds, no rebuild. Reads the built payload's
+`daily_excess` block and turns the existing test around: `excess_stats` stores
+`t_hac`, so the left tail is `norm_sf(-t)` and nothing is recomputed.
+
+### The finding
+
+    direction                  p<=0.05   expected by chance     BH   Bonferroni
+    rule BEATS hold                  0                  124      0            0
+    rule is WORSE than hold        872                  124    474           63
+
+**The board's "0 of 2,484 clear the gate" has been under-read.** A board of
+rules with no edge either way would put ~124 cells past 0.05 in BOTH
+directions by luck. It puts 0 one way and 872 the other. That is not an
+absence of evidence; it is evidence of absence of edge, with a sign.
+
+**63 cells clear BONFERRONI, and that is the number correlation cannot touch.**
+Bonferroni is valid under arbitrary dependence, so however tangled these cells
+are — 9 rules over overlapping universes and start years, the rules themselves
+at n_eff 4.0 — a cell clearing it is worse than hold at a 5% bar taken across
+all 2,484 at once. The BH count (474) assumes positive dependence, which this
+project already relies on in the other direction.
+
+### Per rule, which is the largest honest sample size here
+
+    rule            med t   med excess   t<0    worse p<=.05   beats p<=.05
+    dv|55-20        -0.42        -4.02   65%              38              0
+    pair|MW         -0.65        -2.95   71%              54              0
+    dv|55-20 1TF    -0.74        -5.73   70%              75              0
+    dv|20-10        -0.97        -8.39   92%              86              0
+    eath|MW         -1.00        -5.54   79%              80              0
+    dv|20-10 1TF    -1.15        -7.02   86%              62              0
+    ema|0           -1.88       -13.84   97%             156              0
+    e1|daily        -1.92       -15.01   93%             159              0
+    pair|MD         -2.04       -14.36   93%             162              0
+
+**9 of 9 negative.** As a sign test that is p = 0.002 if the rules were
+independent and **p = 0.0625 at the measured n_eff of 4.0** — quote the second.
+Nine labels leaning one way is nearer four coin flips than nine, and on its own
+that line does NOT clear 5%. The cell-level Bonferroni count is the load-bearing
+evidence; the sign test is corroboration, not proof.
+
+`dv|55-20` is least bad on this reading too (median t -0.42), which is the
+third independent time it has come out best. The three worst are the EMA-family
+rules, at -13.8 to -15.0 CAGR points a year.
+
+### It is everywhere, not one bad corner
+
+Median t is negative in every universe (-0.62 to -1.61), every start year
+(-0.69 to -1.93) and every priority (-1.01 to -1.26). Worst: `large` and `mid`
+caps (median excess -9.66 and -10.27), and start year 2012. Best (least bad):
+`recent` and start 2018. **No slice of the grid is positive.**
+
+### The limit on the claim
+
+Median MDE is 16.28 pts/yr against a median measured shortfall of -8.34, so
+most individual cells cannot separate "worse" from "no different" — only **453
+of 2,484** have a shortfall exceeding their own detectable edge. The claim that
+survives is about the BOARD, not about every cell: the distribution is shifted
+left, decisively, and in 63 cells the shortfall is large enough to clear a
+dependence-free bar on its own.
+
+### What this changes
+
+Nothing on the dashboard, and no rebuild — but it changes the sentence the
+project should be saying. "No rule has been shown to beat buy-and-hold" is
+true and too kind. **These nine rules, as configured, lose to buy-and-hold, and
+the data can prove it in a way it could never prove the reverse.** That is a
+finding, not a failure: it is the strongest result this board has produced.
+
+Outputs: `output/measurements/hold_dominance_2026-09-16.csv` (2,484 rows x 12
+cols), `output/logs/hold_dominance_run.log`.
