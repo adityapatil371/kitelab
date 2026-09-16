@@ -325,11 +325,61 @@ timeframe per variant for 1,000 symbols).
 
 4. **Why does dropping the RSI leg RAISE account CAGR on weekly?** 8.4 vs 6.1,
    while per-trade expectancy FALLS (0.057 vs 0.105). The obvious explanation —
-   cash drag — is measured false (exposure 99.2-100%). Candidate explanations not
-   yet tested: more candidates give `mom_hi` priority a better pool to choose
-   from, or the extra positions simply diversify. Cheap to test: `wf_pine` already
-   has the ablation harness, and it costs no rebuild. This is the only genuinely
-   open question the Pine work left.
+   cash drag — is measured false, though **not by the number this item used to
+   cite**: "exposure 99.2-100%" is `curves.exposure_pct`, the share of days
+   holding *anything at all*, which says nothing about capital. The right
+   columns are `median_cash` (0.0% on six of nine rules) and `full_pct`
+   (40-91% of days under 5% cash), and they agree — there is no idle cash.
+   Candidate explanations not yet tested: more candidates give `mom_hi`
+   priority a better pool to choose from, or the extra positions simply
+   diversify. Cheap to test: `wf_pine` already has the ablation harness, and it
+   costs no rebuild. This is the only genuinely open question the Pine work left.
+
+   **The breadth version of that second explanation is already dead** — see
+   item 7. Do not re-derive it.
+
+7. ~~**Does owning more of the market close the gap?**~~ — **ANSWERED NO,
+   2026-09-16, `scripts/exposure_reconcile.py`, commit `f7f669e`. Costs
+   nothing to re-run (under 1s, no rebuild).**
+
+   The 2026-09-16 regenerated `exposure_*.csv` showed all 9 rules beating hold
+   on the rate earned *while invested* (15.5-21.2%/yr vs 14.09) while owning
+   5.9-49.5% of the market's stock-sessions, and breadth correlating **+0.986**
+   with that table's "vs hold" column. It read as the project's first real lead:
+   the rules are fine, they just own too little.
+
+   It was circular. That table's `effective_pct_yr` is
+   `expm1(net_in_market × breadth)` with the comment "idle cash earns 0", so its
+   `vs_hold_pts` is a monotone function of breadth **by construction** — the
+   +0.986 is arithmetic, not evidence. Two further faults, either one fatal:
+
+   - **There is no idle cash to charge.** `entry_edge` has no account behind it;
+     it counts every signal the rule ever made, unconstrained. The board's
+     account is cash-constrained and ~fully deployed into few names (take rate
+     5.2-36.4% of signals). `effective_pct_yr` prices a fund nobody simulated.
+   - **The in-market rate is gross, the board is net.** That column carries the
+     0.222% round trip only — no slippage, no 1% fill cap, which
+     [the friction memo] measured as the thing that kills the edge. Median gap
+     to the board: **+13.44 points**, the size of the whole puzzle.
+
+   Re-run against the board's own numbers, which carry no circularity:
+
+   | comparison | pearson | spearman |
+   |---|---:|---:|
+   | breadth vs MODELLED vs-hold (circular) | **+0.986** | +0.933 |
+   | breadth vs BOARD median excess | **−0.444** | −0.367 |
+   | breadth vs BOARD median cagr | −0.410 | −0.350 |
+   | in-market rate vs BOARD median excess | +0.361 | +0.183 |
+
+   The sign flips. With n = 9 and `n_eff` 4.0 nothing here is significant either
+   way, so the honest read is **breadth does not predict the board** — not that
+   owning more names hurts. "Hold more stocks" is not a lead.
+
+   Two things this leaves standing, both worth a next session's time: the
+   concentration finding from 2026-09-10 is *reinforced*, not overturned; and
+   nobody has yet measured what the rules earn per session in the market **net
+   of slippage and the fill cap**, which is the only version of that column that
+   could ever have been compared to hold.
 
 5. **`PERMUTATION_WORKERS` is the bigger lever on rebuild time than the board
    size, and it is untested.** The box has 10 cores and 7 GB; the cap is 4
