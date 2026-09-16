@@ -276,18 +276,52 @@ timeframe per variant for 1,000 symbols).
    hand-written excuse list — a fourth instance of the same shape as the traps
    below, where "the build" named one stage of three.
 
-2. **`exit_sweep` and `exposure` CSVs still describe 19 rules.** The ranking
-   harness reads them and says so on its second line. Harmless (superset) but
-   they should be regenerated against the 9-board before the ranks are quoted
-   anywhere that matters. Unchanged from the last session.
+2. ~~**`exit_sweep` and `exposure` CSVs still describe 19 rules.**~~ —
+   **DONE 2026-09-16, commit `17e0e9e`.** The registry was already down to 9,
+   so both scripts were producing 9-rule numbers into files named for a 19-rule
+   board. Regenerated: `entry_edge` **13s**, `exit_sweep` **12s** (measured; my
+   pre-run guess of "a few minutes each" was wrong by an order of magnitude).
+   `rank19` now reports `exit_sweep: 9 rules; exposure: 9 rules`.
 
-3. **`scripts/wf_lookahead.py:105` is already broken and fails SILENTLY.** Its
-   `SELF_CHECK_KEY` still names `liquidity`, the priority retired 2026-09-11 —
-   the same bug as `wf_attach`'s, found and fixed there the same day but never
-   swept for elsewhere. Unlike `wf_attach`, which aborts, this one returns
-   `"SKIPPED -- ... is not on the built board"` (line 230), so the script keeps
-   running with its self-check disabled and says so only in passing. One-line
-   fix; `wf_lookahead.py` is in neither stamp tier, so it costs no rebuild.
+   The naming was the real defect, not the staleness. Both wrote to hardcoded
+   `*_2026-09-10.csv`, so re-running would have **overwritten the 19-rule record
+   while keeping the 09-10 name** — the checkpoint-key collision again, an
+   identifier naming a DATE rather than its contents. Output names now derive
+   `N_RULES` from `registry.REGISTRY`: `entry_edge_9strat_2026-09-16.csv` and
+   siblings. Every hardcoded 19 (table footer, pooled row label, plot legend and
+   title) now reads `N_RULES`. The 09-10 CSVs survive untouched, and
+   `output/measurements/rank19_2026-09-11.py` globs for the newest rather than
+   naming a date.
+
+   **`rank19_2026-09-11.py` lives in gitignored `output/` and is therefore NOT
+   under version control** — the same exposure that lost the original
+   `NEXT_TESTS.md`. Moving it to `scripts/` was not done on my own initiative;
+   raise it with the user.
+
+3. ~~**`scripts/wf_lookahead.py:105` fails SILENTLY.**~~ — **DONE 2026-09-16,
+   commit `b2b1a73`, and it was NOT a one-line fix.** The name was only half of
+   it: `self_check`'s verdict is only *printed* (line 313), never acted on, so
+   even a `FAIL` would not have stopped the run. Both changed — `liquidity` →
+   `mom_hi` (verified on the live board, `cagr 0.4`), and the absent-key branch
+   now returns **FAIL** rather than SKIPPED, since over the full universe it can
+   only mean the key names something the board does not build. Genuine SKIPs (a
+   pilot run, no `dashboard.json`) are unchanged.
+
+   **THE SWEEP IS DONE AND ITS RESULT IS NEGATIVE — do not redo it.** Four other
+   scripts still set `PRIORITY = "liquidity"`: `wf_risk.py:128`,
+   `ath_band.py:71`, `wf_tail.py:57`, `wf_survivor.py:78`. **They are correct as
+   they stand.** `portfolio.py:231` keeps that ordering functional on purpose
+   ("retired 2026-09-11, kept so earlier results and the control scripts still
+   reproduce"), and `wf_risk.py`'s docstring embeds a dated result (RAN
+   2026-09-08) produced with it. I changed `wf_risk.py` and reverted it:
+   repointing those at `mom_hi` would silently invalidate recorded measurements,
+   not fix a bug. Only `wf_lookahead` checks itself against the **live** board,
+   so only `wf_lookahead` was broken.
+
+   Note also that `liquidity` does **not** raise from `portfolio._order` — the
+   guard at line 237 tests membership of the `keys` dict, which still contains
+   it, not of `PRIORITIES`, which does not. Passing a retired priority runs
+   silently.
 
 4. **Why does dropping the RSI leg RAISE account CAGR on weekly?** 8.4 vs 6.1,
    while per-trade expectancy FALLS (0.057 vs 0.105). The obvious explanation —
