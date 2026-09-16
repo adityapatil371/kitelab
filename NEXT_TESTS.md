@@ -432,6 +432,97 @@ timeframe per variant for 1,000 symbols).
    7.9 to 47.3 sessions is monotone in survival, and nobody has yet tested an
    exit that deliberately lengthens it.
 
+   **ANSWERED — see item 9. The lead was half right, which is the useful half.**
+
+9. ~~**Does holding the same entries longer survive real fills?**~~ —
+   **RAN 2026-09-16, `scripts/hold_longer.py`, ~4 min, no rebuild. SPLIT
+   VERDICT, and the split is the finding.** Commit: see `git log` for
+   `hold_longer`. Self-check PASS: the own-exit column reproduces
+   `net_in_market`'s `spread_pct_yr` for all nine rules (worst gap 0.068 pts),
+   and at the Rs 1cr book its median lands at 7.7 against that script's
+   separately-computed 7.8 with the same **0 of 9** beating hold.
+
+   **The design.** Take each rule's own entry stamps, DISCARD its exit, sell at
+   a fixed horizon instead. Same entries, same stocks, same dates — only the
+   holding period moves, so the comparison is causal in a way
+   `net_in_market`'s cross-rule ordering could not be (there the slow rules and
+   the fast rules were *different rules*).
+
+   **What it deletes, and it is not small: THE STOP.** A fixed-horizon exit
+   ignores the entry candle's low. These columns are a probe of one variable,
+   not a strategy anyone could run. Keeping the stop and lengthening everything
+   else is the NEXT question, not this one.
+
+   **Per session in the market, %/yr, toll + half-spread charged, hold = 14.09:**
+
+       rule                          sess    own     20     40     60     90    120    180    250
+       EMA . daily only               8.0   -5.3    0.8    5.0    5.7    8.4    8.5    9.6    9.9
+       EMA . M/D                      8.2   -3.2    3.9    8.2    9.3   11.0   10.9   10.6    9.6
+       EMA . M/W/D . no band          8.4   -2.2    4.7    9.2   10.8   12.3   12.2   11.8   10.5
+       Turtle 20-10 + weekly         19.1    7.3    5.3   15.4   18.3   19.8   21.3   20.1   16.9
+       Turtle 20-10 (1 TF)           21.4   10.8    4.6    5.6    7.1    9.7   10.2   11.2   11.5
+       Turtle 55-20 + weekly         30.6   15.2    3.8   14.0   17.1   18.8   20.3   19.4   16.8
+       Turtle 55-20 (1 TF)           35.0   15.5    3.7    8.4   11.1   11.9   13.5   14.2   14.0
+       EMA . M/W                     43.2   15.3   -3.5    1.5    4.2    6.9    7.5    8.1    8.8
+       EMA . M/W . within 10%        47.6   12.2    4.8    4.9    4.4    5.4    6.7    7.3    5.8
+       MEDIAN OF THE 9              ....   10.8    3.9    8.2    9.3   11.0   10.9   11.2   10.5
+       beats the 14.1 hold, of 9        3      0      1      2      2      2      3      2
+
+   **1. For the FAST rules, turnover was the whole tax.** The three EMA
+   families holding ~8 sessions were LOSING money after the spread (-5.3, -3.2,
+   -2.2). Held 90-250 sessions on the same entries they turn positive: +9.9,
+   +11.0, +12.3 — swings of **+14 to +15 points** from nothing but the calendar.
+   `Turtle 20-10 + weekly` gains +14.1 the same way. This is the causal
+   confirmation item 8 could not supply.
+
+   **2. For the SLOW rules, their own exits beat EVERY fixed horizon.**
+   `Turtle 55-20 (1 TF)` own 15.5 vs best fixed 14.2; `EMA . M/W . within 10%`
+   12.2 vs 7.3; `EMA . M/W` **15.3 vs 8.8, a 6.5-point gap**. Those exits are
+   not merely "holding a long time" — they carry information about *when* to
+   leave, and a calendar throws it away. **Do not read this table as "longer is
+   better".** A fixed horizon beats the rule's own exit for 6 of 9; the 3 it
+   loses to are 3 of the 4 slowest.
+
+   **3. And it still does not cross buy-and-hold.** The median rule's best
+   horizon is **11.2%/yr against the 14.09% hold**. The curve climbs steeply to
+   ~90 sessions, flattens, and rolls over by 250. It converges on hold FROM
+   BELOW and never crosses — the identical shape the user's own Pine rule traced
+   up the daily -> weekly -> monthly ladder (item: the Pine section above). Two
+   unrelated routes, one shape.
+
+   **4. At the board's own Rs 1cr book, a long hold does beat 0.** Own exits:
+   **0 of 9** over hold (median 7.7). Fixed 60-250 sessions: **2 of 9** —
+   `Turtle 20-10 + weekly` (20.8 at 120) and `Turtle 55-20 + weekly` (19.8 at
+   120), both well clear of 14.09. Small, but the first time anything in this
+   project has moved a count off zero at a realistic book size.
+
+   **Why 4 is not yet a finding.** Three reasons, all unmeasured here:
+   (a) every rate is PER SESSION IN THE MARKET and assumes the next trade starts
+   the day this one ends — a 120-session hold cannot be redeployed at the rate
+   these rules signal, so the true account rate is lower and the cost lands on
+   BREADTH, which this script does not measure; (b) 9 rules x 10 horizons = 90
+   numbers and the best of 90 is a lucky number, the same multiple-testing
+   problem the board's BH bar exists for; (c) the stop is gone, so per-trade
+   drawdown is uncapped.
+
+   **Where this points.** The one testable thing left standing is narrow and
+   concrete: **the two `+ weekly` Turtles, held long, with the stop kept.**
+   That is a strategy, not a probe — it can go through `portfolio.run` and get a
+   real account curve with breadth and cash priced in, which is exactly what
+   (a) and (c) above are missing. It needs no rebuild if run through a
+   standalone harness in `scripts/` the way `wf_attach` does it.
+
+   Outputs (gitignored): `output/measurements/hold_longer_9strat_2026-09-16.csv`
+   (every rule x horizon x cost level), `output/hold_longer_curve.png`,
+   `output/logs/hold_longer_run.log`.
+
+   **A fault caught and fixed mid-run, worth knowing:** the first draft printed
+   the `own` column spread-only beside the impact-charged horizon columns in all
+   three tables, so a cheap exit was being compared against dear ones and the
+   "beats hold" count sat at 3 in every table. The impacted own column is 0 of 9.
+   Same bug shape as the glob fault in item 8 — **a label that names less than it
+   needs to.** Third instance in this project.
+
 5. **`PERMUTATION_WORKERS` is the bigger lever on rebuild time than the board
    size, and it is untested.** The box has 10 cores and 7 GB; the cap is 4
    because each worker needs ~0.5 GB, so **6 cores sit idle through the ~60-min
