@@ -118,6 +118,13 @@ def _desc(x: float) -> float:
     return math.inf if not np.isfinite(x) else -x
 
 
+def _asc(x: float) -> float:
+    """SMALLEST first -- the mirror of _desc. A missing value still sorts LAST,
+    which is the point: flipping the direction must not also flip where the
+    no-history trades go, or the mirror measures two changes at once."""
+    return math.inf if not np.isfinite(x) else x
+
+
 def coords(trades: list[dict], index, columns) -> tuple[np.ndarray, np.ndarray]:
     """Row/column positions of each trade's (entry session, symbol) in the panel.
     -1 where the session or the symbol is not in the panel."""
@@ -294,6 +301,8 @@ def bh(pvals: list[float], q: float = 0.05) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pilot", action="store_true", help="1 alpha x 1 cell, for timing")
+    ap.add_argument("--mirror", action="store_true",
+                    help="rank LOWEST-first instead of highest-first")
     ap.add_argument("--vwap", action="store_true",
                     help="also run the 29 alphas needing a vwap stand-in")
     args = ap.parse_args()
@@ -304,7 +313,16 @@ def main() -> None:
     alphas = clean + (vwap if args.vwap else [])
     if args.pilot:
         alphas = alphas[:1]
-    print(f"  running {len(alphas)} alphas, highest-first, one direction only")
+    print(f"  running {len(alphas)} alphas, "
+          + ("lowest-first (MIRROR)" if args.mirror else "highest-first"))
+
+    global CSV, PNG
+    if args.mirror:
+        CSV = CSV.replace(".csv", "_mirror.csv")
+        PNG = PNG.replace(".png", "_mirror.png")
+        print("  MIRROR: ranking lowest-first (the checkpointed alpha values "
+              "are reused unchanged; only the sort flips)")
+    order_key = _asc if args.mirror else _desc
 
     cfg = config.load()
     universe = cfg.merged
@@ -378,7 +396,7 @@ def main() -> None:
                 # Symbol last so the ordering is fully deterministic, as
                 # portfolio._order does.
                 lst = sorted(range(len(trades)),
-                             key=lambda i: (_desc(float(v[i])), trades[i]["symbol"]))
+                             key=lambda i: (order_key(float(v[i])), trades[i]["symbol"]))
                 lst = [trades[i] for i in lst]
                 t1 = time.time()
                 r = portfolio.run(lst, cap, RISK, priority="time")
