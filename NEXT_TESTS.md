@@ -587,3 +587,119 @@ timeframe per variant for 1,000 symbols).
     stop_rescue_2026-09-11.py             differs from scripts/stop_rescue.py
     recheck_mom_2026-09-11.py             momentum-priority recheck
     analyse19_2026-09-11.py               per-strategy board analysis
+
+---
+
+## 10. The two "+ weekly" Turtles held long WITH THE STOP KEPT — RAN 2026-09-16
+
+`scripts/turtle_hold.py`, 3.8 min, no rebuild. This is item 9's own next step:
+hold_longer showed both `+ weekly` Turtles reaching ~20%/yr at a 120-session
+horizon against a 14.09% buy-and-hold, but it had **deleted the stop** and
+priced no breadth. This puts the stop back and runs every variant through
+`portfolio.run` on the board's own 300 scenarios.
+
+**Verdict: the ~20%/yr does not survive. Not one variant beats buy-and-hold on
+its median cell, at either account size.** Best is −2.97 points/yr.
+
+**Design.** `simulate_variant()` mirrors `darvas.simulate` rather than editing
+it (editing `darvas.py` rebuilds 4 strategies). Entry and stop untouched; only
+the trailing channel is replaced, four ways: `base` (the board's own rule),
+`t120`/`t250` (channel dropped, sell at the stop or after N sessions),
+`slow` (channel kept but widened 3×: 10→30, 20→60). Horizons taken from item
+9's table, not re-searched.
+
+**Two self-checks, both passing.** The mirror reproduces `darvas.simulate`
+field for field — 876 trades over 40 symbols × 2 rules, 0 mismatches. `base`
+then reproduces `dashboard.json`'s own cells — 276 of 276 for each rule, to
+1e-9.
+
+### Finding 1 — the stop, not the exit, sets the holding period
+
+|            | stop fires | channel | time limit | median sessions |
+|---|---:|---:|---:|---:|
+| `dv\|20-10` base | 57.8% | 42.2% | — | 11 |
+| `dv\|55-20` base | 66.0% | 34.0% | — | 12 |
+| `t120` | 77.4% | — | 22.6% | **12** |
+| `t250` | 81.8% | — | 18.2% | **12** |
+
+Raising the limit from 120 to 250 sessions moves the median holding period by
+**zero sessions**. Four trades in five are already dead at the entry candle's
+low. **"Hold longer with the stop kept" is close to a contradiction**: item 9's
+long holds existed *because* it had thrown the stop away. The 22.6% that do
+survive to the time limit carry the whole effect.
+
+### Finding 2 — without the channel, the two rules are ONE rule
+
+Shared (symbol, entry date) pairs between the 20-10 and 55-20 variants:
+`base` 91.9%, `t120` **100.0%**, `t250` **100.0%**. Every 55-candle high is
+also a 20-candle high, and once a position skips forward past a long hold both
+rules land on the same bar. The `t120` and `t250` rows below are duplicates,
+not two pieces of evidence — count them once.
+
+### Finding 3 — the account layer takes back most of the gain
+
+Median excess over the on-screen equal-weight buy-and-hold, CAGR points/yr,
+and cells above it out of 138:
+
+| variant | ₹2 lakh | >hold | ₹1 crore | >hold |
+|---|---:|---:|---:|---:|
+| `dv\|20-10` base | −7.30 | 16 | −9.73 | 3 |
+| `dv\|20-10 t120` | −5.92 | 33 | −7.73 | 20 |
+| `dv\|20-10 t250` | −2.97 | 58 | −3.65 | 35 |
+| `dv\|20-10 slow` | −1.26 | 56 | −4.87 | 20 |
+| `dv\|55-20` base | −3.06 | 44 | −4.67 | 42 |
+| `dv\|55-20 slow` | −5.04 | 16 | −8.42 | 4 |
+
+Holding longer **is** the right direction — `t250` improves on `dv|20-10`'s own
+exit by **+4.3 points** at ₹2 lakh and **+6.1** at ₹1 crore, and lifts cells
+beating hold from 3 to 35. That is item 9's effect, real and surviving the
+stop. It is simply not worth 14 points, which is what it would need.
+
+### Finding 4 — widening the channel helps the fast rule and hurts the slow one
+
+`slow` is the only variant here a person could actually trade (a trailing rule,
+not a calendar). Tripling it takes `dv|20-10` from −7.30 to **−1.26** at ₹2
+lakh — the best number in the table — and takes `dv|55-20` from −3.06 to
+**−5.04**. A 60-candle channel on a 55-candle breakout is past the point where
+trailing wider still helps. The `slow` result also decays badly with account
+size (−1.26 → −4.87), which the `base` rules do not, so it is buying its gain
+in names the ₹1 crore book cannot fill.
+
+### The bug this run found: `wf_attach.spread_of` leaves slippage ON
+
+`spread_of` sets `slippage.ENABLED = True` and does not restore it. The board's
+producers all build with it off and charge the spread once, afterwards — so any
+harness that **builds a second trade list after calling it** re-charges the
+spread inside `slippage.fill`, which moves `entry_price`, which moves `risk`,
+which makes `sizing.position` return a different share count. A different
+trade, not a rounding difference.
+
+In the first full run `dv|20-10 base` was built before any `spread_of` and
+matched the board 276/276; every variant after it was silently double-charged,
+and `dv|55-20 base` missed 275 of its 276 cells by up to 2.6 CAGR points. The
+board self-check is the only reason this was caught — the trade lists were
+individually plausible and the totals looked fine.
+
+Fixed in `turtle_hold.build_all`, which now forces the spread off for the
+duration and restores the caller's setting in a `finally`. **`wf_attach.py` and
+`wf_pine.py` were NOT touched** — `board_key` hashes `wf_attach.py` whole, so a
+one-line fix there invalidates ~75 min of diagnostics. Any future harness that
+builds trades must own this invariant itself.
+
+Also noted, not fixed: **`darvas.py:210` hardcodes `"10-candle low"` whatever
+`exit_len` is**, so every `dv|55-20` channel exit on the board is labelled for a
+channel it did not use. Cosmetic — nothing reads the string back — and fixing
+it costs a 4-strategy rebuild. Fourth instance of this project's recurring bug
+shape: *an identifier that names less than it needs to.*
+
+### Where this points
+
+Item 9's lead is now closed. The honest summary of items 8–10 together:
+**turnover was a real and large tax on the fast rules, removing it is worth
++4 to +6 CAGR points, and that is not enough to reach buy-and-hold.** The
+remaining gap is not an exit problem.
+
+Outputs: `output/turtle_hold_2026-09-16.json`,
+`output/measurements/turtle_hold_2026-09-16.csv` (2,208 rows),
+`output/logs/turtle_hold_run.log`,
+`output/turtle_hold_ckpt_2026-09-11_8cbfd3_dd707a/` (8 pickles, resumable).
