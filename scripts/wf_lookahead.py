@@ -60,7 +60,7 @@ TWO TRAPS THIS IS BUILT AROUND.
      to the board rather than only to each other.
 
 THE SELF-CHECK. Arm A over the full universe must reproduce the board's own
-ema|0|all|1|10000000|1|2018|liquidity cell. If it does not, this harness is
+ema|0|all|1|10000000|1|2018|mom_hi cell. If it does not, this harness is
 wrong and the difference it reports means nothing -- so the run says so loudly
 instead of printing a number. A pilot run (--symbols N) cannot reproduce a
 board cell and reports the check as SKIPPED rather than passing it vacuously.
@@ -102,9 +102,9 @@ OUT = Path(__file__).resolve().parent.parent / "output"
 
 # The board cell arm A must reproduce. Read off the built grid, not constructed:
 # the key format is dashboard_data's business, not this script's.
-SELF_CHECK_KEY = "ema|0|all|1|10000000|1|2018|liquidity"
+SELF_CHECK_KEY = "ema|0|all|1|10000000|1|2018|mom_hi"
 SELF_CHECK_STRAT, SELF_CHECK_YEAR, SELF_CHECK_RISK = "ema|0", 2018, 1.0
-SELF_CHECK_CAPITAL, SELF_CHECK_PRIORITY = 10_000_000, "liquidity"
+SELF_CHECK_CAPITAL, SELF_CHECK_PRIORITY = 10_000_000, "mom_hi"
 SELF_CHECK_TOL = 0.05          # the board rounds cagr to 1 decimal place
 
 # Every trade this script prices must carry these, or portfolio.run is being
@@ -227,7 +227,10 @@ def self_check(arm_a: dict, full_universe: bool) -> str:
         return f"SKIPPED -- no dashboard.json at {path}"
     cell = json.loads(path.read_bytes()).get("grid", {}).get(SELF_CHECK_KEY)
     if not cell or cell.get("cagr") is None:
-        return f"SKIPPED -- {SELF_CHECK_KEY} is not on the built board"
+        # Not a skip. Over the full universe this can only mean the key
+        # names something the board does not build -- a retired priority,
+        # a cut strategy -- which is exactly what the check is for.
+        return f"FAIL -- {SELF_CHECK_KEY} is not on the built board"
     mine = arm_a.get((SELF_CHECK_STRAT, SELF_CHECK_YEAR, SELF_CHECK_RISK))
     if mine is None:
         return "SKIPPED -- this run did not produce the matching cell"
