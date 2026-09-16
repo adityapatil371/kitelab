@@ -323,7 +323,13 @@ timeframe per variant for 1,000 symbols).
    it, not of `PRIORITIES`, which does not. Passing a retired priority runs
    silently.
 
-4. **Why does dropping the RSI leg RAISE account CAGR on weekly?** 8.4 vs 6.1,
+4. ~~**Why does dropping the RSI leg RAISE account CAGR on weekly?**~~ —
+   **ANSWERED 2026-09-16: the premise was a measurement artifact, and the
+   corrected answer is much more interesting. See section 12 below.** The
+   paragraph that follows is kept only to show what the wrong numbers were;
+   do not re-derive from it.
+
+   Original wording: 8.4 vs 6.1,
    while per-trade expectancy FALLS (0.057 vs 0.105). The obvious explanation —
    cash drag — is measured false, though **not by the number this item used to
    cite**: "exposure 99.2-100%" is `curves.exposure_pct`, the share of days
@@ -703,3 +709,141 @@ Outputs: `output/turtle_hold_2026-09-16.json`,
 `output/measurements/turtle_hold_2026-09-16.csv` (2,208 rows),
 `output/logs/turtle_hold_run.log`,
 `output/turtle_hold_ckpt_2026-09-11_8cbfd3_dd707a/` (8 pickles, resumable).
+
+## 11. Eight stop-losses across all nine board rules — RAN 2026-09-16
+
+`scripts/stop_sweep.py`, 6,624 cells in 30.0 min, no rebuild incurred.
+Same rules, same entries, only the stop moved. Six valid settings: the
+incumbent (`own`, the entry candle's low), 1/2/3×ATR(14), and flat 5%/10%.
+
+**Finding: the incumbent stop is on the wrong side of the optimum for
+essentially every rule, and widening it is worth about +1 to +1.6 CAGR
+points a year.** Median effect across the nine rules, vs that rule's own
+`own` row, and the count of rules it helped:
+
+    ~3.8% (1xATR, tighter)  -0.39   4 of 9
+    5% flat                 -0.07   4 of 9
+    ~7.5% (2xATR)           +1.14   7 of 9
+    10% flat                +1.12   8 of 9
+    ~11.3% (3xATR, widest)  +1.55   7 of 9
+
+Tighter is never better and the direction is monotone. It is a Turtle
+finding, not an EMA finding: on the Turtles the incumbent stop ends 50-66%
+of all trades and widening to 3xATR cuts that to 16% while tripling the
+hold (12 -> 36 sessions); the fast EMA rules exit on their own signal in a
+median 3 sessions whichever stop is set, so the stop was never binding
+there. **Nothing crosses zero** — best combination anywhere is
+`dv|55-20` + weekly at 3xATR, -2.02 pts/yr vs hold, up from -3.77.
+
+Verification: every rule's `own` variant reproduced the board's cached
+trade count exactly and matched **92 of 92** account cells in
+`dashboard.json`, 0 disagreements, nine times over; plus 27,726 trades
+compared field-by-field over 40 symbols x 9 rules, 0 mismatches.
+
+### The bug this run found: `portfolio.py:564` re-sizes off `trade["stop"]`
+
+Two of the eight columns are **dead at the account level and must not be
+quoted**. `portfolio.run` computes `per_share_risk = entry_price -
+trade["stop"]`, so the `stop` field is a SIZING INPUT to the account, not
+merely a record of the exit line.
+
+- `none` (no stop) writes `-inf`, so per-share risk is infinite, so the
+  account buys **0 shares — 0 trades taken in all 828 cells**. That is why
+  all nine rules printed an identical `0.00 / -12.32`; identical account
+  results from nine different rules is the tell.
+- `atr2_sizefix` was built to separate the exit effect from the sizing
+  effect. It cannot: the account re-sizes it off the ATR stop exactly as it
+  does `atr2`, so the separation never happens above the trade level.
+
+The six real columns are unaffected — for those, exit stop and sizing stop
+are the same number, so producer and account agree. The fix is to carry the
+exit line and the sizing line as separate fields; it needs the full 30-min
+re-run because the checkpoints are per-rule and hold all eight variants.
+**User declined the re-run 2026-09-16** ("no need for that"). Still open:
+does removing the stop entirely survive the cash constraint? At trade level
+it looks excellent (`dv|55-20` expectancy 1.61 -> 3.17 R, win rate 26% ->
+44%) and that is currently unmeasured at account level.
+
+Outputs: `output/stop_sweep_2026-09-16.json`,
+`output/measurements/stop_sweep_2026-09-16.csv` (6,624 rows x 14 cols),
+`output/logs/stop_sweep_run.log`,
+`output/stop_sweep_ckpt_2026-09-11_8cbfd3_dd707a/` (9 pickles, resumable).
+
+## 12. The Pine ablation was mischarged, and RSI is the leg that hurts — RAN 2026-09-16
+
+`scripts/pine_ablate_fix.py`, 3.0 min, no rebuild. **This supersedes item 4,
+whose premise was false.**
+
+### The bug (third instance of the same shape)
+
+`wf_attach.spread_of` sets `slippage.ENABLED = True` and never restores it,
+and `wf_pine.trades_for:349` calls `slippage.fill` while BUILDING a trade.
+`wf_pine.ablate` calls `spread_of` after each of seven legs. So **leg 1 is
+built clean and charged the half-spread once; legs 2-7 are built through
+`slippage.fill` and charged again afterwards.** Proved three ways: the flag
+printed at each leg's top on the full universe (leg 1 `False`, legs 2-7
+`True`), the same leg rebuilt both ways giving different entry prices, and
+the replay arm reproducing all seven of the 2026-09-11 CAGRs exactly.
+
+Item 4's "expectancy FALLS 0.105 -> 0.057 while CAGR RISES" compared leg 1
+against leg 4 — one backpack against two. **Charged alike the expectancies
+are 0.105 and 0.101. There was never a paradox.** The three legs that all
+reported exactly 3.2 become 6.3 / 5.8 / 6.1 — the same bug compressing
+three genuinely close numbers into one decimal place, not a second fault.
+
+**The same leak is in `wf_pine`'s MAIN path** (`build_all` + `spread_of`
+per variant), so every variant after the first in the three-timeframe study
+was double-charged. That study's verdict ("loses at every timeframe") is
+safe in direction — overcharging only makes things look worse — but its
+numbers are wrong and must not be quoted.
+
+### The finding, charged alike (weekly, all|2018, 1% risk, Rs1cr, mom_hi)
+
+    leg                  trades   expct R   taken     sigs   CAGR   vs hold
+    full rule            42,787     0.105   2,435   24,347    6.1     -5.87
+    no RSI condition     51,088     0.101   2,624   29,177   11.1     -0.87
+    no wick condition    64,420     0.091   2,876   36,265    6.3     -5.67
+    no HTF EMA filter    52,834     0.102   2,481   28,719    6.0     -5.97
+    HTF filter alone     86,925     0.073   3,223   49,435    5.8     -6.17
+    wick alone           73,507     0.089   2,662   40,340    8.7     -3.27
+    RSI alone            79,663     0.086   2,947   42,652    6.1     -5.87
+
+**Every combination containing RSI lands near 6.0 (6.1, 6.0, 6.3, 6.1);
+both RSI-free combinations are higher (11.1, 8.7).** Four independent
+askings, one answer — stronger than the single comparison item 4 rested on.
+Max drawdown improves too, -50.9% -> -47.5%.
+
+**The mechanism is selection, not volume.** Trades funded rose only 8%
+(2,435 -> 2,624) while CAGR rose 82%. What grew is the CANDIDATE POOL,
+24,347 -> 29,177 signals offered; `mom_hi` ranks that pool and buys the best
+it can afford, so a bigger pool yields a better top slice. This is the
+"more candidates give mom_hi a better pool" hypothesis item 4 listed and
+never tested — now SUPPORTED, but not separated from plain diversification.
+Do that separation before believing the mechanism.
+
+### NEXT SESSION STARTS HERE (user's instruction, 2026-09-16)
+
+> "we will test the rule thoroughly first thing in the next session to see
+> if we can add it to our set of rules"
+
+The candidate is **the Pine rule with the RSI leg removed** (HTF EMA filter
++ wick condition, weekly bars / monthly filter). What "thoroughly" has to
+mean here, because -0.87 is ONE cell:
+
+1. **Run it over the board's 300 scenarios**, not one. `wf_pine.cells_for`
+   already does this; the single cell is `all|2018|1%|1cr|mom_hi`, and this
+   project's history is that single cells flatter badly (0 of 2,484 board
+   cells have ever cleared the gate).
+2. **Charge it correctly** — use the `build()` guard in
+   `scripts/pine_ablate_fix.py`, never `wf_pine.ablate`'s ordering.
+3. **Put it through the daily-excess test and the BH FDR bar**, which is
+   what "beats hold" has to mean here. -0.87 is still NEGATIVE.
+4. **Check redundancy against the nine** before adding anything: the
+   2026-09-11 pass found the board already holds only 3-9 independent ideas
+   in 9 labels. A tenth label that correlates 0.9 with `pair|MW` costs a
+   full rebuild and teaches nothing.
+5. Only then is registering it worth discussing — `registry.py` is in
+   `signals._SUPPORT`, so adding a rule costs a full ~103-150 min rebuild.
+
+Outputs: `output/measurements/pine_ablate_fix_2026-09-16.csv` (14 rows),
+`output/logs/pine_ablate_fix_run.log`.
