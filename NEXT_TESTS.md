@@ -938,3 +938,49 @@ Outputs: `output/pine_candidate_2026-09-16.json`,
 `output/measurements/pine_candidate_2026-09-16.csv` (1,104 rows x 18 cols),
 `output/logs/pine_candidate_run.log`,
 `output/pine_candidate_ckpt_2026-09-11_8cbfd3_dd707a/` (4 pickles, resumable).
+
+### Finding 5 — where it ranks among the nine (asked 2026-09-16, same session)
+
+All 13 rules on the 276 scenarios every one of them carries, ranked on median
+daily-excess vs hold. `p<=0.05` is the uncorrected count out of 276.
+
+    rule                    med excess  beats hold  avg rank  best-in-scen  p<=0.05
+    pair|MW                      -2.94      27.5%      4.61        75            0
+    dv|55-20                     -4.02      31.2%      4.74        39            0
+    pineW-full|low-close         -5.29      22.8%      5.68        35            8
+    eath|MW                      -5.54      23.9%      4.72        25            0
+    dv|55-20 1TF                 -5.74      27.2%      5.68        56            0
+    pineW-norsi|low-close        -6.47      17.8%      6.34        14            1
+    dv|20-10 1TF                 -7.02      12.7%      6.07        13            0
+    pineW-norsi|atr-open         -7.32       5.8%      6.77         5            0
+    dv|20-10                     -8.40       6.9%      7.77         5            0
+    pineW-full|atr-open          -8.85       0.7%      8.35         0            0
+    ema|0                       -13.84       2.5%      9.87         1            0
+    pair|MD                     -14.36       4.7%      9.98         5            0
+    e1|daily                    -15.01       4.0%     10.41         3            0
+
+**The Pine is mid-pack, not an outlier, and the verdict is unchanged: every
+row loses.** Third of thirteen is third-least-bad in a field where the leader
+still trails buy-and-hold by 2.94 points a year. Ranking it higher would not
+have made it addable; ranking it last would not have made it more wrong.
+
+Three things to take from the table rather than the headline:
+
+- **The RSI leg is worth KEEPING under the board's convention.** `full` beats
+  `norsi` 3rd vs 6th, -5.29 vs -6.47. This is Finding 2 again from the ranking
+  side, and it is the opposite of item 12's reading. The convention, not the
+  leg, was doing the talking.
+- **`pineW-full|low-close` is the only rule on this board with any nominally
+  significant cells at all — 8, where all nine board rules have 0.** Do not
+  read that as an edge: 8 of 276 is BELOW the ~13.8 expected by chance. Read
+  the nine's zero instead. If the nine had no edge, ~124 of their 2,484 cells
+  would clear 0.05 by luck; 0 do. **The nine are not "no edge", they are
+  reliably WORSE than hold**, and that is a stronger statement than the board's
+  empty-gate line makes. Worth its own test.
+- `avg rank` and `median excess` disagree slightly (`eath|MW` ranks 4th on
+  average but 4th-worst-but-one on median), so quote both or quote neither.
+
+Fair comparison check: the board cells and these come through the same path —
+`wa.spread_of` then `portfolio.run`, which is what `wf_attach`'s SELF_CHECK
+pins to a board cell. The Pine is a weekly rule against mostly daily ones;
+that is a difference in the rules, not in the charging.
