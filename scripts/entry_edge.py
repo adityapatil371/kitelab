@@ -38,7 +38,7 @@ honestly, which is most of the work below.
 
 WHY THE ERROR BARS ARE NOT sqrt(n). The 1.27M trades are nowhere near
 independent: on any given day hundreds of stocks fire the same signal because
-the market moved, the same stock is held by all 19 rules at once, and a
+the market moved, the same stock is held by every rule at once, and a
 250-session horizon overlaps the next 249 days of entries. Treating them as
 independent would divide the standard error by ~1,128 and manufacture
 significance out of nothing. So every test here:
@@ -48,15 +48,17 @@ significance out of nothing. So every test here:
     which is the standard correction for overlapping forward returns.
 The effective sample is ~5,000 dates, not 1.27M trades.
 
-Reads:  the 19 *_all.pkl signal caches and the daily parquet candles.
-Writes: output/measurements/entry_edge_2026-09-10.csv
-        output/measurements/holding_counterfactual_2026-09-10.csv
-        output/measurements/exposure_2026-09-10.csv
+Reads:  every registered rule's *_all.pkl signal cache and the daily
+        parquet candles. The rule count comes from registry.REGISTRY.
+Writes: output/measurements/entry_edge_<N>strat_<date>.csv
+        output/measurements/holding_counterfactual_<N>strat_<date>.csv
+        output/measurements/exposure_<N>strat_<date>.csv
         output/entry_edge_curve.png
 """
 from __future__ import annotations
 
 import csv
+import datetime
 import math
 import os
 
@@ -75,9 +77,14 @@ HORIZONS = (5, 20, 60, 250)
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
 CURVE = os.path.join(OUT, "entry_edge_curve.png")
-EVENT_CSV = os.path.join(OUT, "measurements", "entry_edge_2026-09-10.csv")
-HOLD_CSV = os.path.join(OUT, "measurements", "holding_counterfactual_2026-09-10.csv")
-EXPO_CSV = os.path.join(OUT, "measurements", "exposure_2026-09-10.csv")
+N_RULES = len(registry.REGISTRY)
+# The board has been cut twice (19 -> 13 -> 9) while these filenames stayed
+# fixed, so a CSV named for a DATE said nothing about which board it holds.
+STAMP = f"{N_RULES}strat_{datetime.date.today():%Y-%m-%d}"
+POOLED_LABEL = f"ALL {N_RULES} POOLED"
+EVENT_CSV = os.path.join(OUT, "measurements", f"entry_edge_{STAMP}.csv")
+HOLD_CSV = os.path.join(OUT, "measurements", f"holding_counterfactual_{STAMP}.csv")
+EXPO_CSV = os.path.join(OUT, "measurements", f"exposure_{STAMP}.csv")
 TOLL = 0.00222   # round-trip statutory cost, 0.222% of position value
 YEAR = 250.0     # trading sessions in a year, this project's convention
 NW_FLOOR = 21
@@ -325,11 +332,11 @@ def main() -> None:
         a, b = tstat(r, e, h), tstat(r, d, h)
         if a is None or b is None or a["se"] is None:
             raise SystemExit(f"pooled horizon {h}: HAC error undefined -- stop")
-        print(f"  {'ALL 19 POOLED':<34}{h:>5}{'':>9}"
+        print(f"  {POOLED_LABEL:<34}{h:>5}{'':>9}"
               f"{100 * a['mean']:>11.2f}{a['t']:>8.2f}"
               f"{100 * b['mean']:>16.2f}{b['t']:>8.2f}")
         curve.append((h, 100 * a["mean"], 100 * a["se"], 100 * b["mean"]))
-        rows_out.append({"rule": "ALL 19 POOLED", "horizon": h, "trades": int(r.size),
+        rows_out.append({"rule": POOLED_LABEL, "horizon": h, "trades": int(r.size),
                          "raw_pct": None,
                          "excess_vs_hold_pct": round(100 * a["mean"], 4),
                          "t_vs_hold": round(a["t"], 3),
@@ -459,7 +466,7 @@ def main() -> None:
             label="excess over the same stock's own drift")
     ax.set_xlabel("sessions after the entry")
     ax.set_ylabel("mean excess return, %")
-    ax.set_title("Pooled event study, 19 rules, all entries\n"
+    ax.set_title(f"Pooled event study, {N_RULES} rules, all entries\n"
                  "bars are 95% Newey-West, on ~5,000 date means")
     ax.legend(fontsize=8)
     fig.tight_layout()

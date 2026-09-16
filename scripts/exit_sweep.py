@@ -1,4 +1,4 @@
-"""When is the best time to sell? A holding-period sweep across all 19 rules.
+"""When is the best time to sell? A holding-period sweep across every rule.
 
     python3 -m scripts.exit_sweep
 
@@ -26,8 +26,9 @@ rules is 190 numbers, and the best of 190 is a lucky number, not a finding --
 the same multiple-testing problem the board's Benjamini-Hochberg bar exists to
 handle. Read the SHAPE, not the argmax.
 
-Reads:  the 19 *_all.pkl signal caches and the daily parquet candles.
-Writes: output/measurements/exit_sweep_2026-09-10.csv
+Reads:  every registered rule's *_all.pkl signal cache and the daily
+        parquet candles. The rule count comes from registry.REGISTRY.
+Writes: output/measurements/exit_sweep_<N>strat_<date>.csv
         output/exit_sweep_curve.png
 """
 from __future__ import annotations
@@ -44,11 +45,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from kitelab import config  # noqa: E402
 from scripts.entry_edge import (close_matrix, forward, hold_index,  # noqa: E402
-                                load_entries, per_trade_sessions, TOLL, YEAR)
+                                load_entries, per_trade_sessions,
+                                N_RULES, STAMP, TOLL, YEAR)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
-CSV_PATH = os.path.join(OUT, "measurements", "exit_sweep_2026-09-10.csv")
+# Same stamp as entry_edge: the file names the board it describes.
+CSV_PATH = os.path.join(OUT, "measurements", f"exit_sweep_{STAMP}.csv")
 CURVE = os.path.join(OUT, "exit_sweep_curve.png")
 
 HOLDS = (3, 5, 10, 20, 40, 60, 90, 120, 180, 250)
@@ -109,7 +112,7 @@ def main() -> None:
     grid = np.array([curves[k] for k in curves])
     owns = np.array([r["own_exit_pct_yr"] for r in rows])
     print("  " + "-" * (len(hdr) - 2))
-    print(f"  {'MEDIAN OF THE 19 RULES':<34}{'':>7}{np.median(owns):>7.1f}"
+    print(f"  {f'MEDIAN OF THE {N_RULES} RULES':<34}{'':>7}{np.median(owns):>7.1f}"
           + "".join(f"{100 * np.median(grid[:, k]):>7.1f}"
                     for k in range(len(HOLDS))))
     print(f"\n  equal-weight hold, same units: {100 * mkt:>5.1f}")
@@ -130,7 +133,7 @@ def main() -> None:
     for k in curves:
         ax.plot(HOLDS, [100 * v for v in curves[k]], color="#bbb", lw=0.8)
     ax.plot(HOLDS, [100 * np.median(grid[:, k]) for k in range(len(HOLDS))],
-            marker="o", color="#1f77b4", lw=2, label="median of the 19 rules")
+            marker="o", color="#1f77b4", lw=2, label=f"median of the {N_RULES} rules")
     ax.axhline(np.median(owns), color="#d62728", ls="--", lw=1.5,
                label="median rule's OWN exit")
     ax.axhline(100 * mkt, color="#2ca02c", ls=":", lw=1.5,
