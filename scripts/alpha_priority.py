@@ -141,8 +141,13 @@ def build_values(alphas: list[str], cell_coords: dict, panel, got: dict) -> dict
     print(f"  reading {sum(len(v[0]) for v in cell_coords.values()):,} trade "
           f"coordinates out of each alpha\n")
     t0 = time.time()
+    want = set(cell_coords)
     for n, key in enumerate(alphas, 1):
-        if key in got:
+        # A checkpointed alpha counts as done only if it covers EVERY cache this
+        # run needs. Checking `key in got` alone let a --pilot checkpoint (one
+        # cache) satisfy the full 19-cache run, which then died at cache 2 with
+        # KeyError 'QMW_b0' twenty minutes in.
+        if want <= set(got.get(key, ())):
             continue
         t1 = time.time()
         # shift(1): rank today's candidates on yesterday's close, as the engine does.
@@ -161,6 +166,11 @@ def build_values(alphas: list[str], cell_coords: dict, panel, got: dict) -> dict
             pickle.dump(got, fh, protocol=4)
     print(f"\n  {len(alphas)} alphas in {(time.time()-t0)/60:.1f} min -> {CKPT}\n")
     return got
+
+
+def cells_caches(cells) -> list[str]:
+    """The cache stems this run needs, in cell order."""
+    return [c for c, _ in cells]
 
 
 # ----------------------------------------------------- the trade caches ---
@@ -317,7 +327,8 @@ def main() -> None:
         with open(CKPT, "rb") as fh:
             got = pickle.load(fh)
         print(f"  checkpoint {os.path.basename(CKPT)}: {len(got)} alphas already computed")
-    if not set(got) >= set(alphas):
+    need = [k for k in alphas if not set(cells_caches(cells)) <= set(got.get(k, ()))]
+    if need:
         panel = A.build_panel(sorted(universe))
         idx, cols = panel["close"].index, panel["close"].columns
         cell_coords = {}
