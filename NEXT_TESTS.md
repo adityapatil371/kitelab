@@ -821,7 +821,7 @@ it can afford, so a bigger pool yields a better top slice. This is the
 never tested — now SUPPORTED, but not separated from plain diversification.
 Do that separation before believing the mechanism.
 
-### NEXT SESSION STARTS HERE (user's instruction, 2026-09-16)
+### NEXT SESSION STARTS HERE (user's instruction, 2026-09-16) -- ANSWERED, see item 13
 
 > "we will test the rule thoroughly first thing in the next session to see
 > if we can add it to our set of rules"
@@ -847,3 +847,94 @@ mean here, because -0.87 is ONE cell:
 
 Outputs: `output/measurements/pine_ablate_fix_2026-09-16.csv` (14 rows),
 `output/logs/pine_ablate_fix_run.log`.
+
+## 13. The RSI-free Pine over all 300 scenarios — RAN 2026-09-16. VERDICT: NO
+
+`scripts/pine_candidate.py`, 3.8 min, no rebuild. **This answers the question
+item 12 handed forward and CLOSES it.** The candidate does not join the board.
+
+    python3 -m scripts.pine_candidate        # W only; checkpointed per label
+
+Self-check PASSED both ways: the grid's
+`pineW-full|atr-open|all|1|10000000|1|2018|mom_hi` is 6.1 and the `norsi` twin
+is 11.1, reproducing item 12's charged-alike table exactly. Build counts match
+too (42,787 and 51,088 trades). So this grid and that table are the same
+arithmetic, extended from 1 cell to 276.
+
+### Finding 1 — the -0.87 was a 92nd-percentile cell, not a typical one
+
+    label                  cells  med CAGR  med hold  med excess  beat hold  own BH
+    pineW-full|atr-open      276      4.00     12.32       -8.97       0.7%       0
+    pineW-full|low-close     276      7.45     12.32       -5.32      22.1%       0
+    pineW-norsi|atr-open     276      5.30     12.32       -7.50       5.8%       0
+    pineW-norsi|low-close    276      6.30     12.32       -6.87      19.2%       0
+
+The one cell item 12 quoted sits at the **92nd percentile** of its own label's
+276 cells; the median cell loses by 7.50 CAGR points a year, not 0.87. The full
+rule's quoted cell was the 84th percentile. This is the project's oldest lesson
+arriving on schedule — a single cell is a maximum over choices nobody made in
+advance, and it flatters by ~6.6 points here.
+
+### Finding 2 — "RSI is the leg that hurts" is CONVENTION-DEPENDENT, and flips
+
+Paired scenario by scenario, dropping the RSI leg is worth:
+
+    the Pine's own convention (atr stop, next-open fill)  median +1.60 pts, helps 223/276 (81%)
+    the board's own convention (prev-low stop, close fill) median -1.05 pts, helps 109/276 (39%)
+
+Item 12 measured only the first and read it as a fact about RSI. It is a fact
+about **RSI under one execution convention**. Under the convention the nine
+board rules actually use, removing RSI makes the rule WORSE in three scenarios
+out of five. Item 12's four-independent-askings argument was four askings of
+one convention, so it did not catch this. The mechanism it proposed (a bigger
+candidate pool for `mom_hi` to rank) stays unseparated from diversification and
+is now moot for the board question.
+
+### Finding 3 — zero cells at the gate, under the most generous bar available
+
+    label                  cells  smallest p  p<=0.05  by chance  own BH  pooled BH  bonf
+    pineW-full|atr-open      276      0.5027        0       13.8       0          0     0
+    pineW-full|low-close     276      0.0068        8       13.8       0          0     0
+    pineW-norsi|atr-open     276      0.0919        0       13.8       0          0     0
+    pineW-norsi|low-close    276      0.0248        1       13.8       0          0     0
+
+"own BH" runs Benjamini-Hochberg on the candidate's 276 p-values ALONE — a bar
+no board rule is given, since the board's gate pools all 2,484. Nothing clears
+even that. The uncorrected count is **below** the ~13.8 expected by chance in
+every row. Median MDE is 12.2-17.1 CAGR pts/yr, so state the power alongside:
+this data could not have detected a true edge smaller than that. The finding is
+not "the edge is zero", it is "no edge large enough for this test to see, and
+the point estimate is negative by 5-9 points".
+
+### Finding 4 — it is NOT redundant. It is distinct, and it loses
+
+    candidate             nearest board rule   raw r  demeaned r  mean raw r
+    pineW-full|atr-open   dv|55-20 1TF         0.387       0.129       0.062
+    pineW-full|low-close  dv|55-20 1TF         0.616       0.355       0.302
+    pineW-norsi|atr-open  dv|55-20 1TF         0.329       0.105       0.040
+    pineW-norsi|low-close dv|55-20 1TF         0.495       0.188       0.264
+
+Item 12's step 4 guessed a tenth label correlating 0.9 with `pair|MW`. Wrong:
+the nearest twin is `dv|55-20 1TF` at 0.616 raw / 0.355 demeaned, well below
+the 0.646 worst surviving pair already on the board. **The Pine is the most
+independent idea tested here since `dv|55-20`.** That is exactly why the
+negative result is worth recording rather than quietly dropping: it is a
+genuinely different rule that still loses to buy-and-hold on 4 cells in 5.
+
+### Where this leaves the board
+
+Nine strategies, unchanged. No rebuild was run and none is warranted — adding
+a rule costs ~103-150 min through `registry.py` and would buy a tenth label
+whose median cell loses by 6.9 points. **Do not re-open this without a NEW
+reason**, and if one appears, the convention split in Finding 2 is the thing to
+design around, not the RSI leg.
+
+Two things this run did NOT do, stated rather than implied: it tested `W` only
+(the D and M rungs from 2026-09-11 are still mischarged and their numbers must
+not be quoted), and it used the cached hold curves, so it inherits whatever the
+2026-09-11 board's universe was.
+
+Outputs: `output/pine_candidate_2026-09-16.json`,
+`output/measurements/pine_candidate_2026-09-16.csv` (1,104 rows x 18 cols),
+`output/logs/pine_candidate_run.log`,
+`output/pine_candidate_ckpt_2026-09-11_8cbfd3_dd707a/` (4 pickles, resumable).
