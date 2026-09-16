@@ -1058,3 +1058,89 @@ finding, not a failure: it is the strongest result this board has produced.
 
 Outputs: `output/measurements/hold_dominance_2026-09-16.csv` (2,484 rows x 12
 cols), `output/logs/hold_dominance_run.log`.
+
+## 15. Does "the nine lose to hold" generalise? Mostly yes -- RAN 2026-09-16
+
+`scripts/oos_generalise.py`, 16.1 min, no rebuild. All 19 rules' cached trades
+(the 9 on the board + the 10 cut on 2026-09-11, still on disk with matching
+universe and price hashes) re-run through the board's own 276-cell grid, with
+the identical HAC daily-excess test applied three times per cell: whole span,
+and each side of a **pre-registered** 2017-01-01 split.
+
+**SELF-CHECK PASSED: 2,484 board cells, 0 disagree with `dashboard.json`'s
+stored `t_hac`.** This is the same arithmetic item 14 was made on.
+
+### Leg 2 first -- the genuine holdout, and it replicates
+
+The four rules cut for DUPLICATION carry no quality signal by measurement
+(Spearman(rank, twin r) = -0.18, p = 0.56) and took no part in establishing
+item 14. They behave like the nine:
+
+    cohort     rules  cells  med exc   neg     worse u/BH/bonf   BEATS u/bonf
+    board          9  2,484    -8.34   9/9          872/474/63            0/0
+    dup-cut        4  1,104    -8.96   4/4          392/213/21            8/0
+    rank-cut       6  1,656   -10.95   6/6          878/570/40            0/0
+
+**4 of 4 negative, median shortfall -8.96 against the board's -8.34, and 21
+cells clear Bonferroni as worse.** The finding is not about the nine.
+(`rank-cut` was selected ON performance and can only agree; shown so the
+exclusion is visible, excluded from the headline.)
+
+**MY PREDICTION WAS TOO STRONG AND IS PARTLY FALSIFIED.** I wrote that the
+holdout would clear *zero* cells in the favourable direction. It cleared **8**
+uncorrected (0 at BH, 0 at Bonferroni). Against ~55 expected by chance that is
+still seven times FEWER than luck would give, so the direction is untouched --
+but "zero" was the board's number, not a property of rules of this kind, and I
+should not have predicted the board's exact extremity for held-out rules. The
+board's 0/2,484 is very slightly more extreme than an unselected sample gives.
+
+### Leg 1 -- the shortfall is in both halves, but it is SHRINKING
+
+864 of 2,484 cells have >= 250 days each side of 2017 (the 2006 and 2012 start
+years). Every rule is negative in both halves -- prediction held, 9 of 9 -- but
+the two halves are not the same size of finding:
+
+    half    cells   worse u/BH/bonf   better u   expected by chance (each way)
+    EARLY     864       434/315/82           2                              43
+    LATE      864       274/101/ 1           1                              43
+
+    rule           med t E   med t L   exc E    exc L
+    e1|daily         -3.33     -1.54  -20.88   -11.20
+    pair|MD          -2.74     -1.93  -19.20   -12.55
+    ema|0            -2.55     -1.58  -17.70   -12.69
+    dv|20-10         -1.99     -1.28  -14.06    -8.58
+    dv|20-10 1TF     -1.19     -0.90   -8.18    -4.90
+    pair|MW          -0.88     -0.09   -6.06    -0.77
+    dv|55-20         -0.80     -0.74   -5.94    -5.06
+    dv|55-20 1TF     -0.41     -0.22   -2.73    -1.17
+    eath|MW          -0.55     -1.16   -3.20    -5.04
+
+**8 of 9 shortfalls shrank, several by half, and `pair|MW` has all but closed
+(-6.06 -> -0.77).** Only `eath|MW` got worse. The Bonferroni count collapses
+from 82 to 1. **This is NOT mainly a power artefact**: the halves are
+comparable in length (2,706 vs 2,396 days on the 2006 cells), so the driver is
+a genuinely smaller effect, not a shorter window.
+
+Cell-level agreement between halves is also weaker than the medians suggest --
+`pair|MW` and `dv|55-20 1TF` are negative in both halves in only 44% and 48% of
+cells.
+
+### What survives, and what has to be narrowed
+
+SURVIVES: the claim is about rules of this kind, not the nine labels. The
+holdout cohort, the rank-cut cohort and the out-of-project Pine rule (item 13,
+0 of 1,104 favourable) all lose by the same margin.
+
+NARROWED: item 14's strength is period-dependent. The honest sentence is now
+**"these rules lost to buy-and-hold over 2006-2026, decisively so before 2017
+and more weakly after"** -- not "they lose, full stop". Whether the narrowing
+is regime (a decade in which holding Indian equities was very hard to beat),
+decay, or noise is NOT answered here and is the obvious next question.
+
+STILL UNTESTED, and no leg here touches it: one market, one country, one asset
+class, one cost model, one realised price path. Nothing was out of sample in
+the only sense that would settle it -- data that did not exist when the rules
+were written.
+
+Outputs: `output/measurements/oos_generalise_2026-09-16.csv` (5,244 rows x 17
+cols), `output/oos_generalise_2026-09-16.json`, `output/logs/oos_generalise_run.log`.
