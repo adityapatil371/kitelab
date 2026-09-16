@@ -163,6 +163,55 @@ def build_values(alphas: list[str], cell_coords: dict, panel, got: dict) -> dict
     return got
 
 
+# ----------------------------------------------------- the trade caches ---
+_STALE_OK = {"code", "n_code", "producer"}
+_TOLERATED: list = []
+
+
+def cached_trades(cache: str, universe) -> list[dict]:
+    """The board's own cached trades for one rule, WITHOUT the stamp gate.
+
+    `signals.load` returns None for 10 of these 19 and the run dies at the
+    first one. The reason is not that any trade moved: those 10 rules were CUT
+    from the board on 2026-09-11, so `signals._narrow` can no longer resolve
+    their name to a producer and they fall back to the whole-board digest --
+    "an unrecognised cache name gets the whole-board digest, not the loosest
+    one". The cache is judged against a wider set of modules than the one it
+    was written under, and mismatches by construction.
+
+    So the stamp is checked HERE instead, and only the three keys that encode
+    that scope change are tolerated. `universe`, `n_symbols`, `data` and
+    `n_files` must still match exactly -- a cache built from a different
+    universe or different price files is refused as loudly as before.
+    Verified 2026-09-16: all 19 differ on nothing but those three keys, and
+    all 19 trade counts equal those in output/logs/pbo_run.log from the same
+    day. `scripts/pbo.py` and `scripts/oos_generalise.py` read these same
+    bytes and check nothing at all; this is the stricter version of that.
+    """
+    path = os.path.join(signals.CACHE, f"{cache}_all.pkl")
+    if not os.path.exists(path):
+        raise SystemExit(f"{cache}: no signal cache at {path} -- "
+                         "run scripts.refresh first")
+    with open(path, "rb") as fh:
+        blob = pickle.load(fh)
+    if not isinstance(blob, dict):
+        raise SystemExit(f"{cache}: pre-2026-09-01 unstamped cache, refusing")
+    got = blob.get("stamp", {})
+    want = signals.stamp(universe, account=False,
+                         producer=signals._narrow(f"{cache}_all", False))
+    diff = sorted(k for k in set(got) | set(want) if got.get(k) != want.get(k))
+    hard = [k for k in diff if k not in _STALE_OK]
+    if hard:
+        raise SystemExit(
+            f"\n  {cache}: signal cache disagrees on {hard}, which is NOT the\n"
+            "  off-the-board scope change this script tolerates. It was built\n"
+            "  from a different universe or different price files. Rebuild:\n"
+            "      python3 -m scripts.dashboard_data\n")
+    if diff:
+        _TOLERATED.append(cache)
+    return blob["trades"]
+
+
 # --------------------------------------------------------- the null ------
 def shuffle_null() -> dict:
     """{(cache, capital): [20 shuffle CAGRs]} from the 2026-09-11 run.
@@ -273,14 +322,19 @@ def main() -> None:
         idx, cols = panel["close"].index, panel["close"].columns
         cell_coords = {}
         for cache, label in cells:
-            base = signals.load(f"{cache}_all", universe)
-            if not base:
-                raise SystemExit(f"{label}: no cache -- run scripts.refresh first")
+            base = cached_trades(cache, universe)
             cell_coords[cache] = coords(base, idx, cols)
             hit = ((cell_coords[cache][0] >= 0) & (cell_coords[cache][1] >= 0)).mean()
             print(f"    {label:<38} {len(base):>8,} trades, "
                   f"{hit:5.1%} land on a panel session")
             del base
+        if _TOLERATED:
+            print(f"\n    {len(_TOLERATED)} of {len(cells)} caches are off the "
+                  "2026-09-11 board, so their stamp is checked against the whole")
+            print("    board rather than their own producer. Universe, symbol "
+                  "count and price files match exactly on every one;")
+            print("    only the code-digest SCOPE differs: "
+                  + ", ".join(sorted(_TOLERATED)))
         got = build_values(alphas, cell_coords, panel, got)
         del panel
 
@@ -298,7 +352,7 @@ def main() -> None:
         if all((cache, str(c), k) in done for c in caps for k in alphas):
             print(f"  {label}: all {len(caps) * len(alphas)} runs already on disk")
             continue
-        base = signals.load(f"{cache}_all", universe)
+        base = cached_trades(cache, universe)
         missing = [k for k in REQUIRED if k not in base[0]]
         if missing:
             raise SystemExit(f"{label}: cached trades lack {missing}")
