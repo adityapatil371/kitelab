@@ -1269,3 +1269,104 @@ overfitting. Some of the 0.412 is that.
 Outputs: `output/measurements/pbo_2026-09-16.csv` (104 rows x 13 cols),
 `output/pbo_2026-09-16.json`, `output/pbo_2026-09-16.png` (pooled logit
 histograms, both metrics), `output/logs/pbo_run.log`.
+
+---
+
+## 18. Do any of Kakushadze's 101 alphas beat `mom_hi` as cash priority? NO, IN EITHER DIRECTION -- RAN 2026-09-16
+
+`scripts/alpha_priority.py` (commits `096a56d`, `f504fe9`, `29b37ab`,
+`376badc`). Two runs, **16.7 min forward + 18.4 min mirror**, no rebuild.
+
+**The question.** More signals fire on a given day than the account can fund,
+so `portfolio.run` needs a rule for who gets the cash. The board's default is
+`mom_hi` (+3.84 pts over the shuffle mean, 35 of 38 cells, item: the priority
+memo). Kakushadze 2016 (arXiv:1601.00991) publishes 101 formulaic
+cross-sectional alphas. They are RANKING formulas -- they say which stock to
+prefer, never when to act -- which is exactly the shape a priority function
+needs. 52 of the 101 compute from daily OHLCV + volume alone; 30 need a VWAP
+stand-in and 19 need industry classification or market cap, and all 49 were
+excluded rather than approximated.
+
+### The mechanism, reusable: a priority function WITHOUT touching `kitelab/`
+
+`portfolio._order` rejects a callable, and adding a named ordering to
+`portfolio.PRIORITIES` would put the edit in `signals._ACCOUNT` and cost a
+103-150 min rebuild for a question that needs none of it. **`priority="time"`
+sorts on `entry_ts` with Python's stable sort**, so pre-sorting the trade list
+by any key at all and then passing `"time"` installs that key as an arbitrary
+tie-break inside each timestamp. No `kitelab/*.py` byte moves, no digest moves.
+Every alpha is `.shift(1)`ed before lookup, matching `portfolio.momentum_at`
+and `slippage.liquidity_at`.
+
+Two guards worth keeping: `_desc`/`_asc` both send a MISSING value LAST
+(`-inf`/`+inf` sentinel), so flipping the direction does not also flip where
+no-history trades go; and `cached_trades()` reads the 19 signal caches with the
+stamp gate relaxed on `code`/`n_code`/`producer` ONLY -- 10 of the 19 are off
+the 2026-09-11 board, so `signals._narrow` hands them the whole-board digest
+and they mismatch by construction. `universe`, `n_symbols`, `data` and
+`n_files` matched exactly on all 19, and all 19 trade counts equal
+`output/logs/pbo_run.log` from the same day.
+
+### The result, both directions
+
+    direction     positive of 52   clears BH   best alpha        beats mom_hi
+    highest-first        27          13        #88  +2.28  33/38      0 of 52
+    lowest-first         15          17        #99  +2.06  36/38      0 of 52
+
+Reference orderings reproduce exactly in both runs (`mom_hi` +3.84 35/38,
+`nearhigh_hi` +2.37, `tight` +1.06, `time` +0.94, `liquidity` -0.57, `mom_lo`
+-3.62). **The headline is the last column: nothing in the 101 beats the
+momentum priority already in use, sorted either way.** That comparison is
+head-to-head on the same 38 cells and is the part of this that survives.
+
+### The 13 that "cleared BH" are much weaker evidence than they look
+
+**I over-read the forward run and said so.** Pairing the two directions alpha
+by alpha:
+
+    corr(forward, mirror)               +0.130   (a pure direction effect: -1.00)
+    median of (forward + mirror)        -0.444   (a pure direction effect:  0.00)
+    positive in BOTH directions         11 of 52
+    negative in BOTH directions         21 of 52
+    opposite signs                      20 of 52
+
+A formula that genuinely knows which stock is better cannot help when sorted
+forwards AND when sorted backwards. 11 of 52 do. So "median gap vs the shuffle
+null" is substantially NOT a measure of directional ranking skill, and the
+13-cleared-BH line from the forward run should not be quoted as 13 useful
+formulas.
+
+**The fitting explanation is concentration** -- any consistent ordering keeps
+funding the same subset of names where a shuffle spreads the money -- and it is
+**my explanation, NOT measured**. Do not quote it as a result. It is consistent
+with the 2026-09-10 concentration finding, which is the only reason it is
+written down at all. Testable cheaply by whoever wants it: score a few
+arbitrary but fixed orderings with no financial content (alphabetical by
+symbol, hash of the symbol) against the same null. If those also land positive,
+the null is the problem, not the alphas.
+
+### Two pre-registered predictions, both WRONG
+
+- "0 to 3 alphas clear BH" -- **13 did** forward, 17 mirrored. The cross-
+  direction analysis above is what that miss turned into.
+- "the three that cleared BH NEGATIVELY should flip positive when mirrored"
+  -- **none did**: #20 -1.30 -> -0.33, #49 -1.03 -> -1.04, #51 -1.04 -> -0.59.
+  There is no usable anti-signal here either.
+
+### Faults this run cost, all mine
+
+- Kept a `--pilot` checkpoint "to save 2.6s"; the pilot computes ONE cache, and
+  `key in got` counted it as done, so the full run died at cache 2 of 19 with
+  `KeyError 'QMW_b0'` twenty minutes in. Fixed: a checkpointed alpha counts as
+  done only if it covers every cache the run needs (`want <= set(got[key])`).
+- Reported that run as complete off my shell wrapper's exit code, which was not
+  Python's.
+- Monitored progress with `pgrep -f "scripts.alpha_priority"`, which matched the
+  monitor's own shell -- the exact trap `CLAUDE.md` documents for
+  `pkill -f "scripts.dashboard"`. It read as alive for 6 minutes after the
+  process had gone. **The log is the authority; go there first.**
+
+Outputs (gitignored): `output/measurements/alpha_priority_2026-09-16.csv` and
+`..._mirror.csv` (1,976 rows each), `output/alpha_priority_2026-09-16.png` and
+`..._mirror.png`, `output/logs/alpha_priority_run.log` and
+`..._mirror_run.log`, checkpoint `output/alpha_ckpt_2026-09-16.pkl`.
