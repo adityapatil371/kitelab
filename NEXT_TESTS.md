@@ -1144,3 +1144,128 @@ were written.
 
 Outputs: `output/measurements/oos_generalise_2026-09-16.csv` (5,244 rows x 17
 cols), `output/oos_generalise_2026-09-16.json`, `output/logs/oos_generalise_run.log`.
+
+---
+
+## 16. Circuit bands are not modelled — OPEN, not yet run
+
+**Where this came from.** 2026-09-16, reading a due-diligence report on
+HKUDS/Vibe-Trading (a public repo doing broadly what this workbench does, on
+Indian equities). Almost none of it was news: their cost stack agrees with
+`kitelab/backtest.py` to within ~Rs 10 a crore on the NSE transaction charge,
+we already carry the DP charge they default to zero and the dated STT schedule
+they do not, and we already print per-reason rejection counters. **Two things
+they raised that we genuinely do not have** — PBO (item 17) and this one.
+
+**The gap.** NSE applies a daily price band to most equities: 20%, 10% or 5%
+of the previous close depending on the scrip, and a stock that reaches the
+band stops trading at that price for the rest of the session (or, for the 5%
+and 10% bands, the band widens only after a cooling-off period). We model
+liquidity (`slippage.MAX_PARTICIPATION`, one order <= 1% of daily turnover) and
+a half-spread ladder, but **nothing in the engine knows a price band exists**.
+So a stop-loss placed inside a limit-down move is filled here at a price the
+exchange would not have printed, and an entry on a limit-up gap is taken when
+in reality there would have been no seller.
+
+**Why it might matter more than it sounds.** The direction is not symmetric.
+Band-hitting days are disproportionately the large adverse gaps, and the board
+is `small` 631 stocks of 1,000 — exactly the bucket most likely to carry a 5%
+or 10% band rather than 20%. So the bias runs the SAME WAY as the friction
+finding (`kitelab-friction-cap-kills-the-edge`): modelling it should make the
+rules look worse, not better, which means it cannot rescue the board and is
+therefore not urgent. It is worth doing to bound the error, not to change a
+verdict.
+
+**Why it is not cheap, unlike items 14-17.** Every measurement since 2026-09-16
+has been free because the signal caches hold FINISHED TRADES and a standalone
+script under `scripts/` is in neither stamp tier. A band model is not like
+that: it changes which fills are possible, so it lives in `backtest.py` (in
+every engine's import closure) or in `slippage.py` (`_SUPPORT`, global). Either
+one invalidates **all 19 signal caches** and costs a 103-150 min rebuild
+(`kitelab-rebuild-speed-is-host-bound`). Budget for that before starting.
+
+**What is missing to do it at all.** We do not have the band assignment per
+scrip per day. `/data/raw/kitelab` is daily OHLCV only; NSE publishes the band
+in its daily bhavcopy/security-master, which we have never fetched. Without it
+the band would have to be INFERRED — e.g. a day whose high == low == a round
+percentage of the previous close — which is a guess, not a measurement, and
+would have to be labelled as one. **Fetching the real band data is step one,
+and it is a `scripts.backfill`-side job needing a Zerodha session.**
+
+Suggested shape when someone does it: measure first, model second. A
+standalone script can count, off the cached trades and the raw bars, how many
+fills in the board's ~1.1 M trades land on a day whose range is consistent
+with a band being hit. If that count is tiny the whole item closes for the
+price of one afternoon and no rebuild at all.
+
+---
+
+## 17. Was the 19 -> 9 cut selecting signal or noise? MOSTLY NOISE -- RAN 2026-09-16
+
+`scripts/pbo.py`, 6.2 min, no rebuild. **Self-check PASSED: 468 board cells
+compared against `dashboard.json`, 0 disagree** -- these are the board's own
+accounts, re-run from the signal caches and kept as daily curves instead of
+being collapsed to a t-statistic.
+
+**The first test here that asks about the PROCEDURE rather than a cell.** Every
+gate on the board asks "is this cell real?". None asked "is the ranking that
+picked the survivors any good?". PBO -- probability of backtest overfitting,
+Bailey/Borwein/Lopez de Prado/Zhu 2015 -- answers exactly that: cut the
+timeline into 16 blocks, and for all C(16,8) = 12,870 ways of splitting them
+into a training half and a testing half, find the rule that scored best in
+training and see where it ranks in testing. PBO is the share of splits where
+the training winner lands below the testing median.
+
+Trials = the **19 cached rules**, because that is what the 2026-09-11 cut
+actually chose among. 52 scenarios (5 universes x 3 start years x 2 risks x 2
+capitals; 8 of 60 collapse on `gridded_years`, the same nulls the grid writes).
+
+    ranked on                      median PBO   scenarios >= 0.5
+    daily excess over hold  [OURS]      0.412             20 / 52
+    own returns  [textbook]             0.222              9 / 52
+
+    excess, by universe                excess, distribution over 52 scenarios
+      all      0.560                     <= 0.25        11
+      large    0.462                     0.25 - 0.40    12
+      mid      0.192                     0.40 - 0.50     9
+      recent   0.314                     0.50 - 0.75    17
+      small    0.603                     > 0.75          3
+
+**0.412 is near a coin flip, and that is the finding.** The rule that looked
+best on half the history was a below-average rule on the other half 41% of the
+time; chance alone gives 50%. So the ranking that cut 19 to 13 carried very
+little durable information. This does not overturn the cut -- pass two
+(redundancy) used a different criterion entirely, and `dv|55-20` was identified
+by its LOW common-factor loading, not by its rank -- but the rank component of
+pass one should now be quoted as weak evidence, not as a finding.
+
+**Where the board's weight sits, it is WORSE than a coin flip.** `small` is
+0.603 and `all` is 0.560. `small` is 631 of the 1,000 stocks. `mid` looks
+durable at 0.192 but carries 109.
+
+**The 0.412 vs 0.222 gap is most likely beta, and this is UNTESTED.** Ranking
+on own returns looks twice as durable -- but all 19 rules ride the same market,
+so that ordering is substantially an ordering of how INVESTED each rule is,
+which is stable for a reason unrelated to rule quality. Subtracting hold
+removes the common factor and what remains is near noise. Consistent with
+`validation_summary`'s avg_correlation 0.48 and the 0.25-0.35 common-factor
+loadings in `scripts/redundancy.py`, but not separately measured. Anyone who
+wants it: rank on excess-over-hold with each scenario's cross-rule mean also
+removed, and see whether PBO moves toward 0.5 or away.
+
+**PRE-REGISTERED, in the script's docstring before the run: 0.3-0.6. Outcome
+0.412.** The reasoning was that near-copies with no edge should rank close to
+randomly.
+
+**What this CANNOT say, and must not be quoted as saying.** A noisy ranking
+does not make any rule good, and a durable ranking would not either -- a
+reliable ordering of losers is still an ordering of losers. Item 14 (the nine
+are reliably WORSE than hold) and item 15 (it generalises, but weakens after
+2017) are untouched by this in both directions. Also: the 16 blocks are
+contiguous calendar time, so a rule whose behaviour is regime-bound -- which
+item 15 showed is the case here -- looks unstable for a reason that is not
+overfitting. Some of the 0.412 is that.
+
+Outputs: `output/measurements/pbo_2026-09-16.csv` (104 rows x 13 cols),
+`output/pbo_2026-09-16.json`, `output/pbo_2026-09-16.png` (pooled logit
+histograms, both metrics), `output/logs/pbo_run.log`.
