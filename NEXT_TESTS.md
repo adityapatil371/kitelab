@@ -375,11 +375,62 @@ timeframe per variant for 1,000 symbols).
    way, so the honest read is **breadth does not predict the board** — not that
    owning more names hurts. "Hold more stocks" is not a lead.
 
-   Two things this leaves standing, both worth a next session's time: the
-   concentration finding from 2026-09-10 is *reinforced*, not overturned; and
-   nobody has yet measured what the rules earn per session in the market **net
-   of slippage and the fill cap**, which is the only version of that column that
-   could ever have been compared to hold.
+   Two things this leaves standing: the concentration finding from 2026-09-10
+   is *reinforced*, not overturned; and the net-of-costs in-market rate, which
+   was the last open piece, is now measured — item 8.
+
+8. ~~**What do the rules earn per session in the market, net of real fills?**~~
+   — **MEASURED 2026-09-16, `scripts/net_in_market.py`, commit `2668118`.
+   70s, no rebuild. Self-check reproduces `entry_edge`'s published column on
+   all 9 rules (worst gap 0.089 pts).**
+
+   `entry_edge`'s `net_pct_yr_in_market` carries the 0.222% statutory round
+   trip and nothing else — its own output says "no slippage, no 1% fill cap".
+   Charged properly, in four levels (hold = 14.09%/yr):
+
+   | rule | sess | gross | +stat | **+spread** | vs hold |
+   |---|---:|---:|---:|---:|---:|
+   | Turtle 55-20 (1 TF) | 34.9 | 23.2 | 21.3 | **15.6** | +1.5 |
+   | EMA · M/W | 43.1 | 21.4 | 19.9 | **15.4** | +1.3 |
+   | Turtle 55-20 + weekly | 30.5 | 22.9 | 20.7 | **15.2** | +1.1 |
+   | EMA · M/W · within 10% | 47.3 | 17.0 | 15.6 | **12.2** | −1.8 |
+   | Turtle 20-10 (1 TF) | 21.3 | 23.1 | 19.9 | **10.8** | −3.3 |
+   | Turtle 20-10 + weekly | 19.0 | 19.0 | 15.5 | **7.3** | −6.8 |
+   | EMA · M/W/D · no band | 8.4 | 24.9 | 16.9 | **−2.2** | −16.3 |
+   | EMA · M/D | 8.2 | 24.2 | 16.1 | **−3.2** | −17.3 |
+   | EMA · daily only | 7.9 | 28.7 | 20.0 | **−5.3** | −19.4 |
+
+   **The half-spread alone** takes the median from 16.8 to 10.8 and cuts
+   "beats hold" from 9 of 9 to 3 of 9 — and those three lead by ~1.3 points,
+   inside any noise band. The three fast EMA families go **negative**. Note
+   what orders this table: **holding period, not signal quality.** Every rule
+   holding 19+ sessions survives the spread; every rule holding ~8 dies.
+
+   Add market impact at the board's own ₹1cr book and **0 of 9 beat hold**
+   (median 7.8). At ₹2 lakh, 2 of 9 survive at 14.6–14.7 vs 14.09. Level 4 is
+   a curve, not a number — impact is a fact about order size, and the cached
+   lists scale linearly with the book, so the script sweeps ₹2L → ₹500cr.
+
+   **Read the cap table beside it or level 4 reads as good news.** The 1% cap
+   refuses 82–90% of the intended position at ₹1cr (41–49% at ₹2L), which makes
+   the surviving shares cheaper per rupee and *flatters* the rate. It is a
+   sizing rule, not a cost; its real price lands on breadth.
+
+   **The gap to the board closes.** Median gap between this rate and the
+   board's own median CAGR: **+13.53 gross → +1.57 with the fills charged.**
+   Real costs account for 11.96 of the 13.53 points. Not independent
+   confirmation — both routes price the same cached trades — but it locates the
+   money: **the aggregation was never the problem, the fills were.** The three
+   fast EMA rules now *undershoot* the board by 8–10 points, which is the cash
+   constraint working in their favour: the account can only afford 5–7% of
+   their signals and `mom_hi` picks them.
+
+   **Where this points.** The only rules that survive real fills are the slow
+   ones, and the surviving margin is ~1 point at a book small enough not to
+   move the price. Turnover is the tax. A next session's cheapest lead is the
+   one this table hands over: the same rules held **longer** — the ladder from
+   7.9 to 47.3 sessions is monotone in survival, and nobody has yet tested an
+   exit that deliberately lengthens it.
 
 5. **`PERMUTATION_WORKERS` is the bigger lever on rebuild time than the board
    size, and it is untested.** The box has 10 cores and 7 GB; the cap is 4
