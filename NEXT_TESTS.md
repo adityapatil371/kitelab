@@ -255,6 +255,23 @@ timeframe per variant for 1,000 symbols).
 
 ## Open items, in priority order
 
+### NEXT SESSION, set by the user 2026-09-16
+
+**"we will do 16,5,18 next session"** — in that order, and note they are three
+very different sizes:
+
+| | item | cost | blocker |
+|---|---|---|---|
+| 1 | **16** circuit bands | free to SCOPE, 103–150 min to MODEL | Do the free half first: count how many of the ~1.1 M cached fills land on a day whose range is consistent with a band being hit. If that count is tiny the item closes with no rebuild and no Zerodha fetch at all. Only if it is large does anyone need the real band data (a `scripts.backfill` job needing a Zerodha session) and the engine change. |
+| 2 | **5** `PERMUTATION_WORKERS` | cheap to MEASURE, a rebuild if wrong | Measure actual per-worker RSS on a pilot before touching the cap. `validation.py` is in `signals._ACCOUNT`. Do not reason from the comment. |
+| 3 | **18-followup** the null itself | minutes, no rebuild | Score financially-meaningless but fixed orderings (alphabetical by symbol, hash of symbol) against the same shuffle null as section 18. If those also land positive, the metric is measuring "having a consistent order" and not ranking skill — which is what the forward/mirror pairing already suggests. |
+
+Also decided the same day: **item 6 is now YES** (the Pine rule goes on the
+board — see it below for the move-into-`kitelab/` prerequisite, the rebuild
+cost, and the one variant question still open), and the ranking harness has
+been **moved to `scripts/rank_board.py`** and is now tracked.
+
+
 1. ~~**THE REBUILD**~~ — **DONE 2026-09-11, and the projection held.**
    `python3 -m scripts.refresh`, 14:33:55 → 15:32:02 UTC, exit 0, **58.1 min**
    against the ~63 min pro-rata projection. Stages: preflight 0.6, grid
@@ -289,14 +306,17 @@ timeframe per variant for 1,000 symbols).
    identifier naming a DATE rather than its contents. Output names now derive
    `N_RULES` from `registry.REGISTRY`: `entry_edge_9strat_2026-09-16.csv` and
    siblings. Every hardcoded 19 (table footer, pooled row label, plot legend and
-   title) now reads `N_RULES`. The 09-10 CSVs survive untouched, and
-   `output/measurements/rank19_2026-09-11.py` globs for the newest rather than
-   naming a date.
+   title) now reads `N_RULES`. The 09-10 CSVs survive untouched, and the ranking
+   harness globs for the newest rather than naming a date.
 
-   **`rank19_2026-09-11.py` lives in gitignored `output/` and is therefore NOT
-   under version control** — the same exposure that lost the original
-   `NEXT_TESTS.md`. Moving it to `scripts/` was not done on my own initiative;
-   raise it with the user.
+   **MOVED 2026-09-16, user's call: `output/measurements/rank19_2026-09-11.py`
+   is now `scripts/rank_board.py`, TRACKED.** It had been sitting in gitignored
+   `output/`, one `rm` from gone — the same exposure that destroyed the original
+   `NEXT_TESTS.md`. Renamed as well as moved: dots and hyphens in a filename
+   make `python3 -m scripts.<name>` impossible. Content unchanged apart from the
+   docstring; re-run after the move reproduces the 9-rule table (`dv|55-20` top
+   at avg rank 3.33, `ema|0` last at 7.00). Run it as
+   `python3 -m scripts.rank_board [board.json]`; costs no rebuild.
 
 3. ~~**`scripts/wf_lookahead.py:105` fails SILENTLY.**~~ — **DONE 2026-09-16,
    commit `b2b1a73`, and it was NOT a one-line fix.** The name was only half of
@@ -537,11 +557,47 @@ timeframe per variant for 1,000 symbols).
    actual per-worker RSS on a pilot before touching it — do not reason from the
    comment.
 
-6. **Should the Pine rule go on the board?** My reading is no, and the next
-   session should not do it on its own initiative: it is a user-supplied idea that
-   failed at every timeframe, registering it costs a full rebuild (`registry.py` is
-   in `signals._SUPPORT`), and `wf_pine.py` already measures it for free. Raise it
-   with the user rather than deciding.
+6. **Should the Pine rule go on the board? — DECIDED YES, 2026-09-16, by the
+   user: "yes pine should go on board its something different than rest of the
+   rules".** I had read it as no. The user's reason overrides mine and is the
+   better one, so record WHY rather than just the verdict.
+
+   **The reason is distinctness, not performance, and the two must not be
+   conflated when the board is next read.** Section 13 finding 4 measured it:
+   the Pine rule is NOT redundant with the nine — it is a genuinely different
+   idea, and it LOSES (0 of 276 cells at the gate; it also failed at every
+   timeframe, section 12/13, and up the D→W→M ladder). The board's standing
+   problem is that 9 labels carry `n_eff` 4.0 independent ideas
+   (`validation_summary`), so adding a distinct loser raises the board's
+   information content while lowering its best row. Both of those are true at
+   once. **Do not let a future session quote the addition as evidence the rule
+   works.**
+
+   **This one is NOT free, unlike everything since 2026-09-16.** Two costs:
+
+   - **The producer has to move into `kitelab/` first.** The trades are built by
+     `scripts/wf_pine.py`, and `signals.reachable_from` walks imports inside
+     `kitelab/` only — a `scripts/` module cannot be stamped, which is exactly
+     why `wf_pine.py` was put there (see its "WHY IT IS OUT OF BAND"
+     docstring). So: lift `heikin_ashi`, `signals`, `entry_mask` and
+     `trades_for` into a new `kitelab/pine.py`, leave `wf_pine.py` importing
+     them so its recorded measurements still reproduce, then `register(...)`
+     pointing at the new module.
+   - **A full rebuild, 103–150 min** (`kitelab-rebuild-speed-is-host-bound`).
+     `registry.py` is in `signals._SUPPORT`, so all 19 signal caches go. Budget
+     it as its own session; run the pre-rebuild checks in CLAUDE.md first
+     (~400 unittests, pyflakes, `scripts.preflight`).
+
+   **One thing to settle with the user before starting: WHICH variant.**
+   `wf_pine.VARIANTS` is five readings of the same Pine (`atr-open` = the Pine
+   as written; `atrfill-open` = stop re-anchored to the fill; `atr-close`;
+   `low-close` = the board's own stop and fill; `low-open`), times three
+   timeframes. Registering all fifteen would be absurd — every rule added
+   raises the luck bar for all of them (`registry.py` docstring). My reading is
+   **one row: `low-close` on daily**, because that is the only variant charged
+   exactly like the nine and therefore the only one whose comparison means
+   anything; `atr-open` as written would be a second row if the user wants the
+   rule as they actually trade it. Ask, do not assume.
 
 ## Traps that cost time in these sessions
 
@@ -584,8 +640,8 @@ timeframe per variant for 1,000 symbols).
                                           harness. python3 -m scripts.redundancy
                                           [board.json]; costs no rebuild.
     output/measurements/  (all 2026-09-11, gitignored — output/ is not in git)
-    rank19_2026-09-11.py                  ranking harness; takes a board path arg
-                                          run: PYTHONPATH=/work/kitelab python3 <it> <board.json>
+    (rank19_2026-09-11.py)                MOVED 2026-09-16 to scripts/rank_board.py,
+                                          TRACKED. python3 -m scripts.rank_board [board.json]
     rank13_board_13strat_2026-09-11.log   ranks + redundancy, the 13-board
     rank19_board_19strat_2026-09-11.log   same, pre-cut 19-board (for comparison)
     redundancy_2026-09-11.log             pass-two tables
