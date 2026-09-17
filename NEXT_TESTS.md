@@ -1938,3 +1938,88 @@ constant in `scripts/entry_zoo.py`.
 Outputs: `output/measurements/xrank_account_2026-09-17.csv` (276 rows),
 `output/xrank_account_2026-09-17.json`, `output/xrank_account_2026-09-17.png`,
 `output/logs/xrank_account_run.log`.
+
+---
+
+## 22. Making `xrank` pick 5 instead of 100 — WRONG WAY, and a lead — RAN 2026-09-17
+
+`scripts/xrank_breadth.py`, 61.8 s, no rebuild. Top N by trailing 252-session
+return instead of the top decile, N in 5/10/20/50/100, stop pinned 3xATR and
+exit pinned `stop` (item 20/21's best cell). One axis moves.
+
+**My pre-registered prediction was WRONG, in direction.** I predicted N=5 would
+beat N=100 by >2 CAGR points and still lose. It lost to N=100 by 6.07 points.
+
+    N     trades   median excess   p90    best cell   beats hold (of 92)   taken
+    5        882      -10.58      -2.70    +5.23           4              8.1%
+    10     1,527       -8.34      +3.40    +7.26          18              7.2%
+    20     2,776       -7.29      +6.66   +14.07          25              7.0%
+    50     5,938       -5.34      +5.92   +11.53          21              6.1%
+    100   10,713       -4.51      +1.85    +6.23          16              4.5%
+
+### Finding 1 — item 21's explanation was WRONG, and this falsifies it
+
+Item 21 said the account could afford only 2.6-6.6% of `xrank`'s signals and
+concluded **"the binding constraint is breadth vs capital"**. If that were
+true, cutting breadth 12-fold would raise the fraction taken sharply. It does
+not move: **8.5% at N=5, 6.2% at N=100**, across every (capital, risk) pair.
+The account was never choking on the number of signals. Whatever limits it to
+~7% is something else -- cash tied up in open positions is the obvious
+candidate, since a 3xATR stop is ~11% wide and at 1% risk that is ~9% of
+capital per position, i.e. ~11 slots, against a median hold near 80 sessions.
+**Not measured here. Do not quote the explanation; quote the 7%.**
+
+Second time in three items I have explained a result before measuring the
+mechanism and been wrong (the other: "strangled", item 21). The pattern is
+that the SIGN of a headline survives and my STORY about why does not.
+
+### Finding 2 — the median and the tails want opposite things
+
+Median excess improves monotonically with breadth (-10.58 -> -4.51). Every
+other column peaks in the middle: cells beating hold 4 -> 25 -> 16, p90
+-2.70 -> +6.66 -> +1.85, best cell +5.23 -> +14.07 -> +6.23, all maximal at
+**N=20**. Concentrating raises the ceiling and lowers the floor, which is what
+concentration is supposed to do and is the same trade-off item 11 found on the
+stop. Quoting only the median would have hidden it.
+
+### Finding 3 — a LEAD, not a finding: N=20 on `all` beats buy-and-hold
+
+Median excess by universe:
+
+    N      all    large     mid   recent   small
+    5    -7.02  -10.68  -13.96    -8.71   -8.15
+    10   -0.17  -11.04  -14.00    -6.56   -3.85
+    20   +3.51   -8.70  -11.12    -4.65   +0.78
+    50   -1.22  -10.14   -5.74    -5.01   -3.08
+    100  -2.32   -5.97   -2.53    -5.81   -4.07
+
+**`all` at N=20 is +3.51 CAGR points ABOVE buy-and-hold on its median cell,
+with 12 of its 20 cells beating hold.** `small` at N=20 is +0.78. That is the
+first positive median any variant has produced in this project.
+
+**Treat it as a lead and nothing more, for three reasons.**
+1. It is **the best of 25** (5 breadths x 5 universes) looked at at once. Item
+   17 measured this project's own selection process and got PBO 0.412 -- worse
+   than chance. The prior on a best-of-25 cell is bad.
+2. It has had **no luck gate**. The board's own gate is min(t_cluster, t_stat)
+   on daily excess; nothing here has been near it.
+3. `large` and `mid` are deeply negative at every breadth, so the effect is not
+   general -- `all` is dominated by the 631 small caps by count.
+
+Mildly encouraging against those: the shape is a **peak with shoulders**, not a
+lone spike (N=10 `all` is -0.17, N=50 is -1.22, so three adjacent breadths sit
+near or above zero), and `small` moves with `all`, which is the bucket `all` is
+mostly made of. A spike at one N with negative neighbours would be dismissible;
+this is not quite that.
+
+### The next test, and it is the one that matters
+
+Run `xrank` N=20, 3xATR, on the board's full luck gate the way any board
+candidate is judged -- all three priorities, the daily-excess t-test, the
+Bonferroni correction. If it clears, it is the first thing in this project that
+has. If it does not, item 22 closes as another best-of-25 that was not there.
+**Do not add it to the board on the +3.51.**
+
+Outputs: `output/measurements/xrank_breadth_2026-09-17.csv` (460 rows),
+`output/xrank_breadth_2026-09-17.json`, `output/xrank_breadth_2026-09-17.png`,
+`output/logs/xrank_breadth_run.log`.

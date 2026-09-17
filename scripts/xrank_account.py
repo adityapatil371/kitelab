@@ -52,6 +52,7 @@ Writes: output/xrank_account_<date>.json,
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import time
@@ -76,37 +77,51 @@ EXIT = "stop"
 STOPS = ["own", "atr2", "atr3"]
 
 
-def build_all(members, *, quiet=False):
-    """Every stop variant of xrank x stop, as board-shaped trade dicts.
+@contextlib.contextmanager
+def spread_off():
+    """The board's producers simulate with the spread OFF.
 
-    The spread is forced OFF for the duration: the board's producers simulate
-    without it and wf_attach.spread_of charges the half-spread once afterwards.
-    Restored in a finally whatever the caller left set.
+    wf_attach.spread_of charges the half-spread once afterwards and LEAVES
+    slippage.ENABLED True. Simulate again after that and the spread is charged
+    a second time inside slippage.fill, which moves entry_price, which moves
+    the risk distance, which makes sizing.position return a different share
+    count -- a different trade, not a rounding difference. Item 10's bug, hit
+    three times. The invariant lives with the builder, not the caller.
     """
     was_enabled, was_cap = slippage.ENABLED, slippage.MAX_PARTICIPATION
     slippage.ENABLED, slippage.MAX_PARTICIPATION = False, None
     slippage.reset()
     try:
-        return _build_all(members, quiet=quiet)
+        yield
     finally:
         slippage.ENABLED, slippage.MAX_PARTICIPATION = was_enabled, was_cap
         slippage.reset()
 
 
-def _build_all(members, *, quiet=False):
-    p = G.panels(members)
-    sig = G.build_signals(p)[ENTRY]
-    print(f"  signal panel {sig.shape[0]:,} sessions x {sig.shape[1]:,} symbols, "
-          f"{int(sig.to_numpy().sum()):,} firings", flush=True)
+def build_all(members, *, quiet=False):
+    """Every stop variant of xrank x stop, as board-shaped trade dicts."""
+    with spread_off():
+        p = G.panels(members)
+        sig = G.build_signals(p)[ENTRY]
+        print(f"  signal panel {sig.shape[0]:,} sessions x {sig.shape[1]:,} "
+              f"symbols, {int(sig.to_numpy().sum()):,} firings", flush=True)
+        return trades_for(p, sig, quiet=quiet)
 
+
+def trades_for(p, sig, *, stops=STOPS, quiet=False):
+    """Board-shaped trade dicts for ONE boolean signal panel, per stop line.
+
+    Split out so scripts/xrank_breadth.py drives the identical walk with a
+    different signal. Caller owns the spread guard (see spread_off).
+    """
     O, H, L, C = (p[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     S = sig.to_numpy(bool)
     cols = list(p["close"].columns)
     ts = p["close"].index
     rng = np.random.default_rng(G.SEED + 1)
 
-    out = {s: [] for s in STOPS}
-    raw = {s: 0 for s in STOPS}          # before sizing drops anything
+    out = {s: [] for s in stops}
+    raw = {s: 0 for s in stops}          # before sizing drops anything
     t0 = time.time()
     for ci in range(len(cols)):
         c = C[:, ci]
@@ -123,7 +138,7 @@ def _build_all(members, *, quiet=False):
         atr = pd.Series(tr).rolling(14, min_periods=14).mean().to_numpy()
         stop_lines = {"own": l, "atr2": c - 2.0 * atr, "atr3": c - 3.0 * atr}
         sym_ts = ts[s:e]
-        for sname in STOPS:
+        for sname in stops:
             stop_l = stop_lines[sname]
             risk = c - stop_l
             good = np.isfinite(risk) & (risk > 0)
@@ -164,7 +179,7 @@ def _build_all(members, *, quiet=False):
         if not quiet and (ci + 1) % 250 == 0:
             print(f"    ... {ci + 1:,} of {len(cols):,} symbols "
                   f"({time.time() - t0:.0f}s)", flush=True)
-    for sname in STOPS:
+    for sname in stops:
         print(f"    {sname:<5} {raw[sname]:>7,} trades at trade level -> "
               f"{len(out[sname]):>7,} after sizing "
               f"({raw[sname] - len(out[sname]):,} dropped, shares <= 0)")
