@@ -400,7 +400,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
         const note = sameAs ? `same as ${sameAs}` : "no trades";
         out.push({ key, family, setting: setting === "—" ? note : `${setting} · ${note}`,
                    noTrades: true, validated: null, gates: null, mar: null,
-                   cells: ["—", "—", "—", "—", "—", "—", "—", "—", "—", "—"] });
+                   cells: ["—", "—", "—", "—", "—", "—", "—", "—", "—", "—", "—"] });
         continue;
       }
       const fcu = val && val.fixed_checks_by_universe;
@@ -427,9 +427,24 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
       ];
       const validated = gates.every(g => g != null) ? gates.every(g => g === true) : null;
       const passed = gates.filter(g => g === true).length;
+      /* The page's Gates strip in ITS display order, rebuilt here from the
+         payload rather than read off the page -- the point of this file. The
+         order differs from `gates` above (which is the page's rows() order),
+         so this lists the five again deliberately; if the two ever disagree
+         the strip and the N/5 count stop matching and gateStripAgrees() below
+         fails. */
+      const strip = [
+        vsHold == null ? null : vsHold > 0,
+        fg ? fg.distinguishable : null,
+        DG ? dailyExcess : ((wf && wf.total_windows) ? wf.wins * 2 > wf.total_windows : null),
+        fg ? fg.breakeven_margin : null,
+        (cred && cred.t_gate != null && VS.hurdle != null) ? cred.t_gate > VS.hurdle : null,
+      ];
       out.push({ key, family, setting, noTrades: false, validated, mar: cell.mar,
         cells: [
           validated == null ? "—" : (validated ? "✓" : "✗") + ` ${passed}/5`,
+          strip.every(g => g == null) ? "—"
+            : strip.map(g => g == null ? "·" : g ? "✓" : "✗").join(" "),
           cell.wiped ? "wiped" : fmt.pct1(cell.cagr),
           fmt.signed1(vsHold),
           fmt.pct1(cell.maxdd),
@@ -444,7 +459,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
     }
   return out;
 }
-const HEAD = ["Strategy", "Setting", "Validated", "CAGR", "vs Hold", "Drawdown", "MAR",
+const HEAD = ["Strategy", "Setting", "Validated", "Gates", "CAGR", "vs Hold", "Drawdown", "MAR",
               "Daily edge", "Next open", "Walk-fwd", "Credibility", "Trades", "Captured"];
 
 function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
@@ -721,6 +736,109 @@ function smoke() {
         ? ok(`  ${f.padEnd(6)} ${labels.join(" / ")}`)
         : bad(`  ${f.padEnd(6)} settings not distinct or unlabelled: ${labels.join(" / ")}`);
     }
+  }
+
+  console.log("\n== the gate breakdown ==");
+  // ADDED 2026-09-17. Validated said pass/fail and "N/5"; nothing on the board
+  // said WHICH check stopped a row, which on a board where 0 of 20 pass is the
+  // only question left. The strip must agree with the count it sits beside --
+  // two readings of the same row is worse than one.
+  {
+    S.view = "compare"; S.uni = "all"; S.year = DATA.start_default;
+    S.prio = null; S.stop = "all"; S.sort = "rankKey"; S.desc = true; render();
+    const iVal = HEAD.indexOf("Validated") + 1, iGate = HEAD.indexOf("Gates") + 1;
+    const got = tableRows();
+    let disagree = 0, unscored = 0, ticksSeen = 0;
+    for (const cells of got) {
+      const v = cells[iVal], g = cells[iGate];
+      if (v === "—") { if (g !== "—") disagree++; unscored++; continue; }
+      const want = +v.split(" ")[1].split("/")[0];
+      const ticks = (g.match(/✓/g) || []).length;
+      ticksSeen += ticks;
+      if (ticks !== want) disagree++;
+      if (g.split(" ").length !== 5) disagree++;
+    }
+    disagree === 0
+      ? ok(`strip and N/5 agree on all ${got.length} rows (${unscored} unscored)`)
+      : bad(`${disagree} row(s) where the Gates strip contradicts the Validated count`);
+    // A board on which every gate passed everywhere would make the column
+    // pointless and is also not this board -- catch a strip stuck on one glyph.
+    const crosses = got.map(c => (c[iGate].match(/✗/g) || []).length)
+                       .reduce((a, b) => a + b, 0);
+    crosses > 0 && ticksSeen > 0
+      ? ok(`strip varies: ${ticksSeen} ✓ and ${crosses} ✗ across the board`)
+      : bad(`Gates strip is constant (${ticksSeen} ✓, ${crosses} ✗) -- not reading the gates`);
+    // Sorting on it must order by how far each row got, not by glyph text.
+    S.sort = "gatesPassed"; S.desc = true; render();
+    const passed = tableRows().filter(c => c[iGate] !== "—")
+                              .map(c => (c[iGate].match(/✓/g) || []).length);
+    passed.every((v, i) => i === 0 || passed[i - 1] >= v)
+      ? ok(`sorts by gates passed (${passed[0]} down to ${passed[passed.length - 1]})`)
+      : bad(`sorting on Gates does not order by count: ${passed.join(",")}`);
+    S.sort = "rankKey"; S.desc = true; render();
+    // The named breakdown must reach the reader, not just the glyphs.
+    const tips = ((els["cmp"] || {})._body || { rows: [] }).rows
+      .map(tr => (tr.cells[iGate] || {}).title || "");
+    const named = tips.filter(t => t.includes("Clears the luck hurdle")
+                                && t.includes("Beats buy & hold")).length;
+    named === got.length - unscored
+      ? ok(`every scored cell names its five gates on hover (${named})`)
+      : bad(`${named} of ${got.length - unscored} scored cells carry the named breakdown`);
+    /* Read the header's own tooltip, not the FORMULA map -- that map is a
+       const inside the page's scope and never reaches this file. */
+    const hrow = ((els["cmp"] || {})._head || { rows: [] }).rows[0] || { children: [] };
+    const gtip = (hrow.children[iGate] || {}).title || "";
+    gtip.includes("luck hurdle") && gtip.includes("fixed order")
+      ? ok("Gates header carries the legend") : bad("no legend on the Gates header");
+  }
+
+  console.log("\n== the stop-width filter ==");
+  // ADDED 2026-09-17 with the control itself. The filter narrows the ROW SET
+  // and must not touch which cell each row reads -- the whole point is that
+  // "Both" and either arm show the SAME numbers for the rows they share. A
+  // filter that quietly re-keyed would look right and be wrong.
+  {
+    S.view = "compare"; S.uni = "all"; S.year = DATA.start_default;
+    S.prio = null; S.stop = "all"; render();
+    const fams = Object.keys(DATA.strategies);
+    const arms = [...new Set(fams.flatMap(variantsOf))];
+    const both = rows();
+    const bothBy = new Map(both.map(r => [r.id, r]));
+    both.length === fams.flatMap(variantsOf).length
+      ? ok(`Both: ${both.length} rows, every family x arm`)
+      : bad(`Both shows ${both.length} rows, board has ${fams.flatMap(variantsOf).length}`);
+    /* The stub's textContent is per-element and does not aggregate children,
+       so a control built by appendChild is invisible to Object.values(els).
+       Walk the scenario box instead. */
+    const deepText = e => [e.textContent || "",
+                           ...(e.children || []).map(deepText)].join(" ");
+    const bar = deepText(els["scenario"] || { children: [] });
+    bar.includes("Stop width") ? ok("Stop width control offered")
+      : bad("Stop width control missing from the scenario bar");
+    for (const arm of arms) {
+      S.stop = arm; render();
+      const got = rows();
+      const wrong = got.filter(r => r.setting !== settingLabel(r.id.split("|")[0], arm));
+      const want = fams.filter(f => variantsOf(f).includes(arm)).length;
+      got.length === want && wrong.length === 0
+        ? ok(`${String(arm).padEnd(5)}: ${got.length} rows, all on that arm`)
+        : bad(`${arm}: ${got.length} rows (want ${want}), ${wrong.length} on another arm`);
+      // Same cell, same numbers as under Both.
+      const moved = got.filter(r => {
+        const b = bothBy.get(r.id);
+        return !b || String(b.cagr) !== String(r.cagr) || String(b.mar) !== String(r.mar);
+      });
+      moved.length === 0 ? ok(`${String(arm).padEnd(5)}: numbers identical to Both`)
+        : bad(`${arm}: ${moved.length} row(s) changed value under the filter`);
+    }
+    S.stop = "all"; render();
+    rows().length === both.length ? ok("Both restores the full row set")
+      : bad("returning to Both did not restore every row");
+    // A tag the payload does not carry must fall back, not empty the table.
+    S.stop = "nosuchstop"; render();
+    rows().length === both.length ? ok("an unknown stop tag falls back to Both")
+      : bad(`an unknown stop tag left ${rows().length} rows on the page`);
+    S.stop = "all"; render();
   }
 
   console.log("\n== detail strategy picker ==");

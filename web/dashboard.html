@@ -237,7 +237,8 @@ const winPct = v => v == null ? "—" : (v <= 1 ? v * 100 : v).toFixed(0) + "%";
 
 /* ── scenario: one row of controls, shared by every view ──────────────── */
 const S = { uni: "all", cap: 0, risk: 1, fill: "1", year: null, view: "compare",
-            prio: null, sel: null, sort: "rankKey", desc: true, stock: null };
+            prio: null, sel: null, sort: "rankKey", desc: true, stock: null,
+            stop: "all" };
 
 /* NOTHING PINS THE START YEAR ANY MORE. Until 2026-09-03 the extra priority
    rules were computed only at one year, so picking any ordering but the default
@@ -278,6 +279,9 @@ function segment(label, options, get, set) {
 function clampScenario() {
   const years = yearsAvailable();
   if (!years.includes(S.year)) S.year = years[years.length - 1];
+  /* rows() already falls back on its own (stopShown); this only stops the
+     button row from showing nothing lit while the table shows everything. */
+  if (stopShown() === null) S.stop = "all";
 }
 
 function buildScenario() {
@@ -294,6 +298,12 @@ function buildScenario() {
                 () => S.cap, v => S.cap = +v)),
     add(segment("Risk per trade", riskKeep.map(i => [i, DATA.risks[i] + "%"]),
                 () => S.risk, v => S.risk = +v)),
+    /* Hidden when the board carries a single stop: a one-choice segment beside
+       a "Both" button asks the reader to pick between a thing and itself. */
+    ...(stopTags().length > 1 ? [
+      add(segment("Stop width",
+                  [["all", "Both"]].concat(stopTags().map(v => [v, stopLabel(v)])),
+                  () => S.stop, v => { S.stop = v; render(); }))] : []),
     /* WHICH SIGNAL WINS THE CASH. Scanning is free and the whole market is
        watched, so a small account sees more signals than it can fund -- 52% of
        the EMA stack's are skipped over 500 stocks. This picks who gets the
@@ -363,6 +373,50 @@ const variantsOf = skey => (DATA.variant_tags || {})[skey] || [];
 
 const settingLabel = (skey, v) =>
   ((DATA.variant_labels || {})[skey] || {})[v] || String(v);
+
+/* THE STOP WIDTH IS A FILTER, NOT A SCENARIO AXIS (2026-09-17). Every one of
+   the ten entry families is on the board TWICE, once per entry in
+   registry.STOPS, so the table is twenty rows and half of them differ from the
+   other half in the stop alone. That is the point of the axis -- portfolio.py
+   sizes off `entry_price - stop`, so the wide arm takes SMALLER positions on
+   the same signal, and the two arms rank almost independently (Spearman 0.152
+   between the two family orderings) -- but it also means a reader comparing
+   entries is reading two interleaved leaderboards at once. This control shows
+   one of them at a time.
+
+   It filters the row set; it does NOT touch keyFor(). Nothing is recomputed
+   and no cell is re-selected -- "Both" is the old page exactly.
+
+   Derived from the payload, like variantsOf above and for the same reason: a
+   third stop added to registry.STOPS gets a button without an edit here. The
+   button text is the payload's own setting label with a leading "stop"/"at
+   the" trimmed, and falls back to the bare tag, which still renders a working
+   button -- unlike the hardcoded maps this file used to carry, where an
+   unknown key rendered nothing at all. */
+const stopTags = () => {
+  const seen = [];
+  for (const skey of Object.keys(DATA.strategies || {}))
+    for (const v of variantsOf(skey)) if (!seen.includes(v)) seen.push(v);
+  return seen;
+};
+
+const stopLabel = v => {
+  for (const skey of Object.keys(DATA.strategies || {}))
+    if (variantsOf(skey).includes(v)) {
+      const t = settingLabel(skey, v)
+        .replace(/^stop\s+/i, "").replace(/^at the\s+/i, "");
+      return t.charAt(0).toUpperCase() + t.slice(1);
+    }
+  return String(v);
+};
+
+/* The fallback is STRUCTURAL, not a clamp that has to be remembered. S.stop
+   holding a tag the payload does not carry means "show everything", so a
+   renamed stop arm costs the reader the filter and never the table. */
+const stopShown = () =>
+  (S.stop !== "all" && stopTags().includes(S.stop)) ? S.stop : null;
+
+const keepStop = v => { const want = stopShown(); return want === null || v === want; };
 
 const keyFor = (skey, v, year = S.year) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +
@@ -512,7 +566,7 @@ function rows() {
   const hurdle = DATA.validation_summary ? DATA.validation_summary.hurdle : null;
   const holdCagr = holdFor(S.uni, S.year);
   for (const [skey, label] of Object.entries(DATA.strategies))
-    for (const v of variantsOf(skey)) {
+    for (const v of variantsOf(skey).filter(keepStop)) {
       const r = DATA.grid[keyFor(skey, v)];
       const id = skey + "|" + v;
       const val = valFor(id);
@@ -644,6 +698,9 @@ const EXPORT_COLS = [
   ["Setting",   r => r.setting],
   ["Validated", r => r.validated == null ? null : (r.validated ? "yes" : "no")],
   ["Gates passed", r => r.gatesPassed == null ? null : `${r.gatesPassed}/${r.gatesTotal}`],
+  /* Named, not glyphs: a CSV is read without the tooltip. */
+  ["Gates failed", r => gateItems(r).filter(([, ok]) => ok === false)
+                          .map(([lab]) => lab).join("; ")],
   ["CAGR %",    r => r.noTrades ? emptyNote(r) : r.wiped ? "wiped" : r.cagr],
   ["vs Hold pp", r => r.vsHold],
   // The benchmark itself, so the difference can be checked in the sheet.
@@ -690,6 +747,7 @@ function exportCsv() {
     ["Fills", fillName()],
     ["Started", S.year],
     ["Signal priority", S.prio || DATA.priority_default],
+    ["Stop width", S.stop === "all" ? "both" : S.stop],
     ["Built", DATA.built],
   ];
   const head = EXPORT_COLS.map(c => c[0]).concat(scenario.map(c => c[0]));
@@ -733,6 +791,7 @@ const FORMULA = {
   exposure:"Invested = share of days with at least one open position, i.e. money was at work (the payload's `exposure`). 99% means nearly always in the market. Detail and export only, alongside Fully deployed (share of days with under 5% of equity in cash -- the account could not have taken one more signal) and Captured, which answers the more direct version of the same question.",
   final:   "Closing account value. Export and Detail only -- redundant with CAGR once you know the years and starting capital, which are already in the scenario line above the table.",
   taken:   "Trades the account could actually fund. Compare with signals offered: the gap is cash starvation.",
+  gatesPassed: "WHICH of Validated's five checks this row passed, left to right, in a fixed order: beats buy & hold / beats shuffled prices / beats the hold day by day / survives a realistic cost margin / clears the family-wise luck hurdle. Hover any cell to see the five named with their results. A middot means the check could not be computed here (usually too few trades), which is not the same as a fail. Validated is the AND of all five, so one cross is enough to sink a row however good the rest look -- this column says which cross. Click to sort by how many passed.",
   capture: "Captured = trades taken / signals offered. The rest were refused for want of cash, because the position the cash or the risk budget allowed fell under the ₹5.5k floor, or because one order would have exceeded the size cap (1% of the stock's daily turnover). Detail breaks the refusals down by reason.",
 };
 
@@ -755,6 +814,44 @@ const GLOSSARY = {
   "Fully deployed": "Share of days with under 5% of equity in cash -- days on which one more signal could not have been taken however good it looked.",
 };
 
+/* THE FIVE GATES IN ONE PLACE (2026-09-17). Compare shows them as a strip,
+   Detail as a checklist, and until today the two were separate literal lists
+   -- Detail's naming them, Compare's only counting them -- so the page could
+   say "3/5" on one view and tick a different three on the other without
+   anything noticing. The verdict column answered "did it pass" and nothing on
+   the board answered "WHICH one stopped it", which is the question a reader
+   with an all-red column actually has.
+
+   The ORDER here is the display order and is not the order rows() builds its
+   gateVals in; only the count is shared, and check_dashboard.js asserts the
+   strip's ticks and the N/5 count agree, so a future divergence fails loudly
+   rather than showing two readings of the same row.
+
+   The fourth item swaps from windows to days on 2026-09-10 -- but only when
+   the payload actually carries the daily test, so an older payload still
+   names the gate it was really judged on. */
+function gateItems(row) {
+  const fg = row.fixedGates || {};
+  return [
+    ["Beats buy & hold", row.beatsHold],
+    ["Beats shuffled prices", fg.distinguishable],
+    DATA.diagnostics ? ["Beats hold day by day", row.dailyExcess]
+                     : ["Wins a majority of windows", row.walkForwardMajority],
+    ["Survives realistic cost", fg.breakeven_margin],
+    ["Clears the luck hurdle", row.clearsHurdle],
+  ];
+}
+
+/* A middot, not a blank, for a gate that could not be computed: "not tested"
+   and "tested and failed" are different facts and the strip must not merge
+   them. A row where NONE of the five ran is an em dash, like every other
+   uncomputed cell on the page. */
+function gateStrip(row) {
+  const g = gateItems(row);
+  return g.every(([, ok]) => ok == null) ? "—"
+    : g.map(([, ok]) => ok == null ? "·" : ok ? "✓" : "✗").join(" ");
+}
+
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
   ["setting", "Setting",  r => !r.noTrades ? r.setting
@@ -763,6 +860,10 @@ const COLS = [
   ["validated", "Validated", r => r.validated == null ? "—"
                                 : (r.validated ? "✓" : "✗")
                                   + (r.gatesTotal != null ? ` ${r.gatesPassed}/${r.gatesTotal}` : "")],
+  /* Sorted on r.gatesPassed, which is why the key is that and not "gates":
+     sortedRows() reads r[S.sort], so clicking this header orders the board by
+     how far each row got rather than alphabetically by its glyphs. */
+  ["gatesPassed", "Gates", gateStrip],
   ["cagr",    "CAGR",     r => r.r ? cagrText(r.r) : "—"],
   /* "Is it real", not just "how big" -- computed once per strategy, fixed
      scenario, see valFor()/FORMULA above. Missing (an em dash) below the
@@ -855,6 +956,14 @@ function renderCompare() {
          own docstring), so neither needs a baseline caveat any more: a row
          showing Validated now means validated FOR WHAT'S ON SCREEN. */
       if (key === "validated" && r.validated != null) td.classList.add(r.validated ? "up" : "down");
+      /* The whole point of the column: the strip is scannable across twenty
+         rows, the tooltip names what the glyph under the cursor means. */
+      if (key === "gatesPassed") {
+        const g = gateItems(r);
+        if (!g.every(([, ok]) => ok == null))
+          td.title = g.map(([lab, ok]) =>
+            `${ok == null ? "·" : ok ? "✓" : "✗"}  ${lab}`).join("\n");
+      }
       /* Walk-fwd keeps its green/red -- it is still a real result, just no
          longer the gate. Only Validated's own tint says what passed. */
       if (key === "walkFrac" && r.walkForwardMajority != null)
@@ -1148,19 +1257,7 @@ function bigPct(v) {
    built from what rows() already computed, not re-derived. */
 function gateChecklist(row) {
   if (!row.val) return "";
-  const fg = row.fixedGates || {};
-  /* The fourth check swapped from windows to days on 2026-09-10 -- but only
-     when the payload actually carries the daily test, so an older payload
-     still shows the gate it was really judged on rather than a label for a
-     check that never ran. */
-  const items = [
-    ["Beats buy & hold", row.beatsHold],
-    ["Beats shuffled prices", fg.distinguishable],
-    DATA.diagnostics ? ["Beats hold day by day", row.dailyExcess]
-                     : ["Wins a majority of windows", row.walkForwardMajority],
-    ["Survives realistic cost", fg.breakeven_margin],
-    ["Clears the luck hurdle", row.clearsHurdle],
-  ];
+  const items = gateItems(row);   // shared with Compare's Gates strip
   return `<div class="stats" style="margin-bottom:var(--gap)">` +
     items.map(([label, ok]) => `<div class="stat">
       <div class="k">${label}</div>

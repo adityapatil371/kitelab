@@ -3,7 +3,16 @@
     python3 -m scripts.board_span --pilot    # 150 symbols, times the loop
     python3 -m scripts.board_span            # the full run
 
-THE QUESTION. The dashboard shows nine strategy labels. scripts/redundancy.py
+READ THIS FIRST, 2026-09-17 (updated after the rebuild this file caused).
+The board is no longer the nine rows the narrative below argues about. It is
+TWENTY: ten entry families x two stop widths, built from the slate this script
+chose. Six of the nine candidates in step 2 are now board rows, so a re-run
+compares e.g. cand:mr against board:mr|own -- near-twins by construction, and
+NOT evidence of redundancy. Re-run this to ask "does the board that got built
+span the space?", not to re-choose a board.
+
+THE QUESTION (as asked on 2026-09-17, before the rebuild). The dashboard shows
+nine strategy labels. scripts/redundancy.py
 measured (2026-09-11) that the thirteen before the cut carried only 3-9
 independent ideas, and that the surviving nine still leave n_eff at 4.0. The
 user's objection, 2026-09-17: the board is "the same thing wearing different
@@ -31,20 +40,21 @@ WHAT IS PRE-REGISTERED HERE, before any number is looked at:
 
 TWO AXES, because a board is a grid and both sides of it can be redundant:
 
-  1. ENTRY SPAN. 18 boolean panels -- the board's nine, recovered from their
-     signal caches by scripts.entry_zoo.board_signals, plus the nine candidates
+  1. ENTRY SPAN. One boolean panel per board row (today 20, one per
+     registry.REGISTRY entry) recovered from its signal cache by
+     scripts.entry_zoo.board_signals, plus the nine candidates
      of scripts.entry_exit_grid.build_signals -- compared pairwise by phi over
      LISTED cells only (the rectangle is ~40% empty and counting blanks as
      agreement flatters every pair).
-  2. EXIT SPAN. The board has ONE exit convention hard-wired into all nine
-     engines, and item 20 measured the exit carrying 3.5x the entry's share of
+  2. EXIT SPAN. The board has ONE exit convention hard-wired into every
+     engine, and item 20 measured the exit carrying 3.5x the entry's share of
      the trade-level spread. Exits are not boolean, so they are compared on
      WHEN they get out: Spearman correlation between the exit-horizon vectors
      that scripts.entry_exit_grid.exits_for_symbol returns, pooled over a
      sample of symbols, for all 8 exits x 3 stop widths.
 
 Reads:  the cleaned parquet candles, via kitelab.frames
-        <CLEAN>/signal_cache/*_all.pkl        (the board's nine, entry stamps)
+        <CLEAN>/signal_cache/*_all.pkl        (one per board row, entry stamps)
 Writes: output/measurements/board_span_<date>.csv   (every pair, both axes)
         output/board_span_<date>.json               (matrices + the slate)
         output/board_span_<date>.png                (heatmaps + the n_eff curve)
@@ -70,7 +80,11 @@ from scripts.redundancy import meff
 from scripts.xrank_account import spread_off
 
 OUT = Path(__file__).resolve().parent.parent / "output"
-SLATE_K = 9              # today's board size -- keeps the comparison cost-neutral
+# Slate size. The selection axis is ENTRIES, and the board carries 10 entry
+# families (each registered twice, once per stop arm in registry.STOPS), so 10
+# keeps a re-run cost-neutral against what is on the page. Was 9 for the
+# 2026-09-17 selection run, when the board was nine single-stop rows.
+SLATE_K = 10
 # Designated NULL CONTROLS, excluded from the selection pool but kept in the
 # matrix as a ruler for what "no relationship" looks like. This exclusion is
 # returns-blind: both are labelled controls in the source that defines them,
@@ -263,7 +277,8 @@ def main():
 
     print("\n2. the nine candidate entries (scripts.entry_exit_grid)")
     cand = G.build_signals(p)
-    print("\n3. the board's nine entries, from their signal caches")
+    print(f"\n3. the board's {len(Z.registry.REGISTRY)} rows, "
+          "from their signal caches")
     board = Z.board_signals(close.index, close.columns)
 
     panels = {f"cand:{k}": v for k, v in cand.items()}
