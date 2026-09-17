@@ -262,7 +262,7 @@ very different sizes:
 
 | | item | cost | blocker |
 |---|---|---|---|
-| 1 | **16** circuit bands | free to SCOPE, 103–150 min to MODEL | Do the free half first: count how many of the ~1.1 M cached fills land on a day whose range is consistent with a band being hit. If that count is tiny the item closes with no rebuild and no Zerodha fetch at all. Only if it is large does anyone need the real band data (a `scripts.backfill` job needing a Zerodha session) and the engine change. |
+| 1 | ~~**16** circuit bands~~ | **DONE 2026-09-17, 55.7 s** | **CLOSED, no rebuild.** The free half answered it outright: 0 of 1,800,058 fills are priced outside their own day's printed range, and the residual locked-day exposure is 0.0171% of traded value. No Zerodha fetch, no engine change. |
 | 2 | **5** `PERMUTATION_WORKERS` | cheap to MEASURE, a rebuild if wrong | Measure actual per-worker RSS on a pilot before touching the cap. `validation.py` is in `signals._ACCOUNT`. Do not reason from the comment. |
 | 3 | **18-followup** the null itself | minutes, no rebuild | Score financially-meaningless but fixed orderings (alphabetical by symbol, hash of symbol) against the same shuffle null as section 18. If those also land positive, the metric is measuring "having a consistent order" and not ranking skill — which is what the forward/mirror pairing already suggests. |
 
@@ -1203,7 +1203,7 @@ cols), `output/oos_generalise_2026-09-16.json`, `output/logs/oos_generalise_run.
 
 ---
 
-## 16. Circuit bands are not modelled — OPEN, not yet run
+## 16. Circuit bands are not modelled — SCOPED 2026-09-17. VERDICT: CLOSE IT, no rebuild
 
 **Where this came from.** 2026-09-16, reading a due-diligence report on
 HKUDS/Vibe-Trading (a public repo doing broadly what this workbench does, on
@@ -1253,6 +1253,115 @@ standalone script can count, off the cached trades and the raw bars, how many
 fills in the board's ~1.1 M trades land on a day whose range is consistent
 with a band being hit. If that count is tiny the whole item closes for the
 price of one afternoon and no rebuild at all.
+
+### RAN 2026-09-17 — `scripts/band_scope.py`, 55.7 s, no rebuild
+
+That is exactly what was done. **1,800,058 fills** — the 9 board rules' cached
+trades plus the user's Pine rule rebuilt daily (see below) — joined against
+3,767,256 symbol-sessions read through `frames.daily`, i.e. the same cleaned
+bars the engine traded on.
+
+**The detector, and why it is not the obvious one.** We have no band
+assignments, so a band is INFERRED from the bars. The first draft counted days
+whose extreme landed within 0.15pp of 5/10/20% and compared that against 7/13/17%
+as a placebo. **That comparison is worthless** — it measures nothing but the
+fact that 5% days are commoner than 7% days. A binding band does not make big
+moves common, it makes the move pile up AT EXACTLY the cap. So the test is a
+LOCAL DENSITY one: count days in `[v-0.15, v+0.15]` against the mean of the
+same-width windows at `v ± 0.6`. The placebo values then get the same spike
+test and must come back at ~1.0, which is what validates the detector rather
+than the hypothesis.
+
+    move  kind      dir    observed   expected     ratio
+     5%   band      up        96,449   54,748.5     1.76
+    10%   band      up        15,124    6,750.0     2.24
+    20%   band      up         7,492      566.0    13.24
+     7%   placebo   up        19,540   20,099.5     0.97
+    13%   placebo   up         2,509    2,427.0     1.03
+    17%   placebo   up         1,193    1,160.5     1.03
+     5%   band      down      72,847   44,366.5     1.64
+    10%   band      down       6,561    3,548.5     1.85
+    20%   band      down       1,863      279.5     6.67
+
+**Bands are real, visible and binding** — a 20% up-move lands on exactly 20.00%
+thirteen times more often than the local density says it should. All six
+placebo cells sit in 0.97-1.09. The detector works and the phenomenon exists.
+
+### Finding 1 — the engine has NEVER filled at an impossible price. 0 of 1,800,058
+
+This is what closes the item. Every fill the engine books sits INSIDE its own
+day's printed `[low, high]`, to within one tick. Not "rarely outside" —
+**zero**, across all ten rules. Whatever a price band would have forbidden, the
+engine was never asking for it, because every fill price is a price that
+actually traded that session.
+
+The mechanism is not luck: `backtest.simulate` fills a gapped stop at the
+session's OPEN rather than at the stop level (`wf_pine.trades_for` does the
+same), so the one construction that could manufacture an unprintable price is
+already handled. The band model would have been correcting a fault that is not
+there.
+
+### Finding 2 — what IS outside the range is the half-spread, and that is a choice
+
+The **spread-charged** price the board books leaves the printed range on
+**184,832 fills, 10.27%** (88,794 above the high, 96,038 below the low). That
+is not a bug and not a band question: the half-spread pushes entries up and
+exits down by construction, and an entry at the day's high should be charged
+above the last traded price, because the offer sits above the bid. Recorded so
+that nobody re-discovers it and calls it one. Per rule it runs 7.0% (`pair|MW`)
+to 13.0% (`pine|HA-RSI D`).
+
+### Finding 3 — the residual exposure, money-weighted, is 0.1%
+
+The only case a band could genuinely have refused is a LOCKED day (`high ==
+low`): one price all session, nothing else transactable. Counting fills
+understates it if the impossible fills are the big ones, so weight by notional:
+
+    subset                        fills   by count   by value
+    on a locked day               6,971    0.3873%    0.2853%
+    locked AT a band value        2,825    0.1569%    0.1085%
+    stop exit, locked at a band     443    0.0246%    0.0171%
+
+**Only 40% of locked days are locked at a band value.** The other 4,146 are
+simply illiquid — one price printed all day, no band involved — which is a
+liquidity question already partly priced by `slippage.MAX_PARTICIPATION`, not
+this item's. Median volume on a locked fill day is **22,612 shares against
+264,206** on all fill days, a 12x thinning, so the participation cap is
+already refusing most of the intended size on exactly these days.
+
+The worst case in the whole board — a stop sale on a day locked at the floor,
+which could not have happened at all — is **0.0171% of traded value.** Against
+a gap to buy-and-hold of 8-14 CAGR points a year
+([[kitelab-nine-are-worse-than-hold]]), that cannot move a verdict.
+
+### The decision
+
+**CLOSE IT. Do not fetch the band data, do not touch `backtest.py` or
+`slippage.py`, do not spend the 103-150 min rebuild.** The direction of the
+bias was predicted correctly (it would make the rules look worse, not better)
+and its size is now bounded at roughly one part in a thousand of traded value.
+
+Re-open only if the board moves to intraday fills or to a materially smaller,
+thinner universe, both of which would raise the locked-day share.
+
+### The Pine rule is the most band-exposed of the ten, and it is included here
+
+`scripts/band_scope.py` rebuilds the user's Heikin Ashi + RSI rule rather than
+reading a cache, because it has none — 390,964 fills in 1.7 s on the pilot
+subset, ~20 s over the full universe. **Its `locked_pct` of 0.8740% is the
+highest of the ten rules** (board range 0.1658-0.7864%), and so is its
+charged-outside rate at 13.02%. That is the expected direction — it is the
+fastest rule here and trades the thinnest days — and it is still far too small
+to matter.
+
+**Only the DAILY variant is covered.** A weekly or monthly fill is stamped on
+one session inside an aggregated bar, and a price band is a per-session rule,
+so joining those would compare a fill against the wrong day's range. The W and
+M rungs of item 12 are NOT measured for band exposure.
+
+Outputs: `output/measurements/band_scope_9strat_2026-09-17.csv` (per rule),
+`output/measurements/band_scope_days_9strat_2026-09-17.csv` (the spike table),
+`output/band_scope_2026-09-17.png`, `output/logs/band_scope_run.log`.
 
 ---
 
