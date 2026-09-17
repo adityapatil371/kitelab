@@ -93,6 +93,15 @@ RND_MEAN_HOLD = 15.0   # the exit control's mean holding period, in sessions
 
 ENTRIES = ["mr", "pull", "vcon", "vol", "xrank", "mktrel", "gap", "cal", "rand"]
 EXITS = ["stop", "t5", "t20", "t60", "ma20", "chan10", "r2", "rnd"]
+# Item 11 (2026-09-16, scripts/stop_sweep.py, 6,624 cells) swept six stop levels
+# across the nine board rules and found the incumbent -- the entry candle's own
+# low -- is on the TIGHT side of the optimum for essentially every rule, worth
+# +1.14 (2xATR) to +1.55 (3xATR) CAGR points a year to widen, monotone, with
+# tighter never better. The first version of this grid ran every cell on the
+# incumbent alone, which risked crediting the exit axis for work a too-tight
+# stop was doing: a stop that ends 60-93% of trades leaves an exit rule very
+# little to act on. So the stop is a THIRD AXIS here, not a constant.
+STOPS = ["own", "atr2", "atr3"]
 ENTRY_CONTROL, EXIT_CONTROL = "rand", "rnd"
 REQUIRED = ["ts", "open", "high", "low", "close", "volume"]
 
@@ -203,8 +212,10 @@ def half_spread_panel(p):
     return np.nan_to_num(hs, nan=slippage.MAX_HALF_SPREAD)
 
 
-def exits_for_symbol(o, h, l, c, rng):
+def exits_for_symbol(o, h, l, c, stop, rng):
     """For EVERY bar i, where does a position opened at close[i] get out?
+
+    `stop` is the exit line for a position opened at bar i, one value per bar.
 
     Returns {exit_name: (exit_index, exit_price)}, both length n. The exit of
     a trade opened at bar i does not depend on WHICH entry rule fired at i, so
@@ -216,7 +227,6 @@ def exits_for_symbol(o, h, l, c, rng):
     series, which is why the tail of `valid` is False.
     """
     n = len(c)
-    stop = l                                     # the entry candle's own low
     pad = np.full(MAXHOLD, np.nan)
     ow, hw, lw, cw = (sliding_window_view(np.concatenate([x[1:], pad]),
                                           MAXHOLD) for x in (o, h, l, c))
@@ -323,8 +333,8 @@ def main():
           f"({len(ENTRIES) * len(EXITS)} cells), one pass per symbol")
     O, H, L, C = (p[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     sig_np = {k: sig[k].to_numpy() for k in ENTRIES}
-    acc = {(e, x): {"ret": [], "hold": [], "R": [], "bystop": []}
-           for e in ENTRIES for x in EXITS}
+    acc = {(e, x, st): {"ret": [], "hold": [], "R": [], "bystop": []}
+           for e in ENTRIES for x in EXITS for st in STOPS}
     rng = np.random.default_rng(SEED + 1)
     n_sym = len(cols)
     for ci in range(n_sym):
@@ -337,30 +347,38 @@ def main():
         n = len(c)
         if n < 260 or not np.isfinite(c).all():
             c = np.nan_to_num(c, nan=0.0)
-        risk = c - l
-        good = risk > 0
-        ex = exits_for_symbol(o, h, l, c, rng)
+        # ATR(14), Wilder's true range, for the two wider stops.
+        pc = np.concatenate([[np.nan], c[:-1]])
+        tr = np.maximum(h - l, np.maximum(np.abs(h - pc), np.abs(l - pc)))
+        atr = pd.Series(tr).rolling(14, min_periods=14).mean().to_numpy()
+        stop_lines = {"own": l, "atr2": c - 2.0 * atr, "atr3": c - 3.0 * atr}
         spread = hs[s:e, ci]
-        for ename in ENTRIES:
-            fires = np.flatnonzero(sig_np[ename][s:e, ci] & good)
-            if not len(fires):
-                continue
-            for xname in EXITS:
-                k_out, px_out, by_stop = ex[xname]
-                idxs = walk(fires, k_out, n)
-                if not len(idxs):
+        for sname in STOPS:
+            stop_l = stop_lines[sname]
+            risk = c - stop_l
+            good = np.isfinite(risk) & (risk > 0)
+            ex = exits_for_symbol(o, h, l, c, stop_l, rng)
+            for ename in ENTRIES:
+                fires = np.flatnonzero(sig_np[ename][s:e, ci] & good)
+                if not len(fires):
                     continue
-                jdx = idxs + k_out[idxs]
-                entry_px = c[idxs] * (1.0 + spread[idxs])
-                exit_px = px_out[idxs] * (1.0 - spread[np.minimum(jdx, n - 1)])
-                fin = np.isfinite(entry_px) & np.isfinite(exit_px) & (entry_px > 0)
-                if not fin.any():
-                    continue
-                a = acc[(ename, xname)]
-                a["ret"].append((exit_px[fin] - entry_px[fin]) / entry_px[fin])
-                a["hold"].append(k_out[idxs][fin])
-                a["R"].append((exit_px[fin] - entry_px[fin]) / risk[idxs][fin])
-                a["bystop"].append(by_stop[idxs][fin])
+                for xname in EXITS:
+                    k_out, px_out, by_stop = ex[xname]
+                    idxs = walk(fires, k_out, n)
+                    if not len(idxs):
+                        continue
+                    jdx = idxs + k_out[idxs]
+                    entry_px = c[idxs] * (1.0 + spread[idxs])
+                    exit_px = px_out[idxs] * (1.0 - spread[np.minimum(jdx, n - 1)])
+                    fin = (np.isfinite(entry_px) & np.isfinite(exit_px)
+                           & (entry_px > 0))
+                    if not fin.any():
+                        continue
+                    a = acc[(ename, xname, sname)]
+                    a["ret"].append((exit_px[fin] - entry_px[fin]) / entry_px[fin])
+                    a["hold"].append(k_out[idxs][fin])
+                    a["R"].append((exit_px[fin] - entry_px[fin]) / risk[idxs][fin])
+                    a["bystop"].append(by_stop[idxs][fin])
         if (ci + 1) % 200 == 0:
             print(f"    ... {ci + 1:,} of {n_sym:,} symbols simulated "
                   f"({time.time() - started:.0f}s)")
@@ -368,7 +386,7 @@ def main():
     print("\n5. cells")
     stock_years = float(np.isfinite(C).sum()) / SESSIONS_PER_YEAR
     rows = []
-    for (ename, xname), a in acc.items():
+    for (ename, xname, sname), a in acc.items():
         if not a["ret"]:
             continue
         ret = np.concatenate(a["ret"])
@@ -377,7 +395,7 @@ def main():
         bs = np.concatenate(a["bystop"])
         lo, hi = np.percentile(R, [1, 99])
         rows.append({
-            "entry": ename, "exit": xname,
+            "entry": ename, "exit": xname, "stop_rule": sname,
             "trades": len(ret),
             "ret_per_trade_pct": 100.0 * ret.mean(),
             "win_rate_pct": 100.0 * (ret > 0).mean(),
@@ -413,24 +431,25 @@ def main():
           f"so the DIFFERENCE is fair even though the level is not a return "
           f"anyone\n   earned.")
     grid["vs_hold_bp"] = grid["ret_per_session_bp"] - hold_bp
-    piv = grid.pivot(index="entry", columns="exit", values="ann_pct") \
-              .reindex(index=ENTRIES, columns=EXITS)
+    def pv(metric, stop_rule):
+        return grid[grid["stop_rule"] == stop_rule].pivot(
+            index="entry", columns="exit", values=metric).reindex(
+            index=ENTRIES, columns=EXITS)
+    piv = pv("ann_pct", "own")
     print("\n   ann_pct = mean return per trade x trades per stock-year, spread "
           "charged.\n   An arithmetic scaling, NOT a CAGR and NOT an account. "
           "Read cells against\n   each other and against the controls, never "
           "against a buy-and-hold number.\n")
     print(piv.to_string(float_format=lambda v: f"{v:,.2f}"))
 
-    psv = grid.pivot(index="entry", columns="exit", values="vs_hold_bp") \
-              .reindex(index=ENTRIES, columns=EXITS)
+    psv = pv("vs_hold_bp", "own")
     print("\n   The same 72 cells per SESSION IN THE MARKET, minus the drift a "
           "holder got for\n   free over the same sessions (bp/session). This is "
           "the exposure-adjusted view:\n   it asks whether the rule picks better "
           "days, not whether it trades more often.\n")
     print(psv.to_string(float_format=lambda v: f"{v:,.2f}"))
 
-    expo = grid.pivot(index="entry", columns="exit", values="exposure_pct") \
-               .reindex(index=ENTRIES, columns=EXITS)
+    expo = pv("exposure_pct", "own")
     print("\n   ...and the exposure behind those numbers (% of all stock-sessions "
           "held):\n")
     print(expo.to_string(float_format=lambda v: f"{v:,.1f}"))
@@ -438,7 +457,8 @@ def main():
     print("\n5b. WHO ENDS THE TRADE. The stop is on in every cell, so an exit "
           "rule only\n    binds when it fires FIRST. Averaged over the eight "
           "entries:\n")
-    who = grid[(grid["entry"] != ENTRY_CONTROL)].groupby("exit").agg(
+    who = grid[(grid["entry"] != ENTRY_CONTROL)
+               & (grid["stop_rule"] == "own")].groupby("exit").agg(
         pct_ended_by_stop=("pct_ended_by_stop", "mean"),
         ret_when_stop_pct=("ret_when_stop_pct", "mean"),
         ret_when_rule_pct=("ret_when_rule_pct", "mean")).reindex(EXITS)
@@ -479,10 +499,29 @@ def main():
             "sum_of_squares": ss,
             "share_pct": [100 * v / tot for v in ss]}), row_eff, col_eff
 
-    a1, row_eff, col_eff = decompose(piv, "ann_pct")
-    a2, row2, col2 = decompose(psv, "vs_hold_bp (exposure-adjusted)")
-    attrib = pd.concat([a1, a2], ignore_index=True)
+    blocks, effs = [], {}
+    for sname in STOPS:
+        for metric, lab in (("ann_pct", "ann_pct"),
+                            ("vs_hold_bp", "vs_hold_bp (exposure-adj)")):
+            b, r_, c_ = decompose(pv(metric, sname), f"{lab} @ stop={sname}")
+            blocks.append(b)
+            effs[(metric, sname)] = (r_, c_)
+    attrib = pd.concat(blocks, ignore_index=True)
     print(attrib.to_string(index=False, float_format=lambda v: f"{v:,.2f}"))
+    print("\n   THE STOP AXIS IS THE CHECK ON FINDING 1. Item 11 measured the "
+          "incumbent\n   stop to be too tight; if 'the exit dominates' were an "
+          "artifact of that, the\n   exit share would collapse as the stop "
+          "widens. Read the six rows above.")
+    print("\n   Best cell at each stop, per session vs hold (bp):")
+    for sname in STOPS:
+        t = pv("vs_hold_bp", sname).loc[ENTRIES[:-1], EXITS[:-1]]
+        i, j = np.unravel_index(np.nanargmax(t.to_numpy()), t.shape)
+        n_beat = int((pv("vs_hold_bp", sname).to_numpy() > 0).sum())
+        print(f"     stop={sname:<5} best {t.index[i]:>6} x {t.columns[j]:<7}"
+              f" {t.to_numpy()[i, j]:+7.2f}   cells beating hold: "
+              f"{n_beat:>2} of {len(ENTRIES) * len(EXITS)}")
+    row_eff, col_eff = effs[("ann_pct", "own")]
+    row2, col2 = effs[("vs_hold_bp", "own")]
     print("\n   Read the SECOND block. ann_pct rewards an exit for trading "
           "more often, so\n   part of its exit share is arithmetic rather "
           "than skill; vs_hold_bp divides\n   that out and asks the same "

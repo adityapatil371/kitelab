@@ -1658,7 +1658,8 @@ to attribute which layer earns what — still under `scripts/`, still free. The
 
 ---
 
-## 20. Entry × exit grid — the EXIT does ~3.5× the work of the entry — RAN 2026-09-17
+## 20. Entry × exit grid — the EXIT does ~3.5× the work of the entry — RAN 2026-09-17,
+REVISED 2026-09-17 with a stop axis
 
 Asked by the user 2026-09-17 ("do the entry x exit grid"), following item 19.
 `scripts/entry_exit_grid.py`, **18.4 s, no rebuild, nothing stamped touched.**
@@ -1771,6 +1772,58 @@ The entry axis is not where the money is. If the next thing built is a rule
 meant to beat hold, **it should vary the exit, and specifically the
 profit-give-back**, with entries treated as the cheap axis. `stop` and `t60`
 are the only two exits that clear the null.
+
+### Revision — the stop is now a THIRD AXIS, and the finding got STRONGER
+
+The first version ran all 72 cells on the incumbent stop (the entry candle's
+own low). Item 11 had **already measured that stop to be too tight** for
+essentially every board rule, so the grid was crediting the exit axis for work
+a too-tight stop might have been doing: a stop that ends most trades leaves an
+exit rule nothing to act on. The user caught this ("didnt we test that? exit
+rules and stuff?"). `STOPS = ["own", "atr2", "atr3"]` — 216 cells, 30.9 s.
+
+**The exit share did not collapse. It rose, and the ENTRY share is what
+collapsed.**
+
+    stop        entry    exit   inter.   best cell   cells > hold (of 72)
+    own         19.1%   66.4%    14.5%     +2.21          2
+    2xATR        7.3%   75.8%    16.9%     +4.19          8
+    3xATR        7.0%   76.7%    16.4%     +4.52         13
+
+(`vs_hold_bp`, the exposure-adjusted metric; `ann_pct` agrees — 23.7/64.8/11.5
+→ 3.8/76.9/19.3 → 2.6/78.6/18.8. Best cell is `xrank × stop` at all three.)
+
+So the original headline **survives its own most dangerous check**, and the
+entry axis turns out to matter even less than reported, not more.
+
+**What the incumbent stop was actually doing**, across the 56 real cells:
+
+    stop     ended by stop   median hold   mean ret when stopped
+    own            78.5%          1              -3.00%
+    2xATR          38.5%         15              -9.90%
+    3xATR          27.0%         20             -13.72%
+
+A median hold of **one session** is the tell. The incumbent stop was killing
+trades before any exit rule could express an opinion — which is why the grid's
+first version showed every cell losing to hold and only 2 of 72 beating it.
+
+**This is item 11 replicating on rules it never saw.** Item 11 measured
+"widen the stop, +1 to +1.6 CAGR pts/yr" on the nine *board* rules. These are
+nine *new* entry rules, a different exit menu, and a trade-level harness with
+no account layer — and the direction is identical and larger. Two independent
+paths to the same conclusion is the strongest form this record has.
+
+**Best cells now, per session vs buy-and-hold (bp), costs ON:**
+
+    xrank x stop @ 3xATR   +4.52    8,158 trades   med hold 77   15.4% exposure
+    xrank x stop @ 2xATR   +4.19   10,290 trades   med hold 28   14.4% exposure
+    pull  x stop @ 3xATR   +3.33   16,847 trades   med hold 83   32.7% exposure
+    gap   x stop @ 2xATR   +2.62   33,690 trades   med hold 37   50.6% exposure
+
+Still trade-level only — **no account layer, no cash constraint, no
+concentration**. Item 10's Finding 3 is the standing warning that the account
+layer takes back most of a trade-level gain. Nothing here is addable until it
+has been through `portfolio.run`.
 
 ### Outputs
 
