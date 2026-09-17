@@ -204,6 +204,15 @@ def main() -> None:
 
     print(f"  preflight: full build over {len(small.merged)} symbols -> {tmp}",
           flush=True)
+    # dd.main() PARSES sys.argv ITSELF, so preflight's own flags reach it and
+    # its parser exits(2) on them. Found 2026-09-17: `--keep` and `-v` are both
+    # documented here and neither worked -- the run died before the build with
+    # "unrecognized arguments: --keep -v" and an exit code, no traceback, which
+    # read like a build failure and was not. Hand the build an empty argv (the
+    # defaults are what preflight wants: no --stocks-only, grid cache on) and
+    # put the real one back afterwards.
+    argv = sys.argv
+    sys.argv = [argv[0]]
     try:
         if args.verbose:
             dd.main()
@@ -215,6 +224,7 @@ def main() -> None:
         print("\n  BUILD FAILED. The rebuild would fail the same way.\n", flush=True)
         raise
     finally:
+        sys.argv = argv
         (signals.CACHE, dashboard_server.STAMP_PATH, dd.OUT, dd.GRID_CKPT,
          config.load) = saved
 

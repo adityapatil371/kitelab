@@ -50,7 +50,7 @@ from kitelab import (backtest, config, contracts, dashboard_server, frames,
 from kitelab.progress import Bar
 from kitelab.curves import (bh_stats, calmar, episodes, exposure_pct,
                             sharpe, sortino, underwater_stats)
-from kitelab import registry, timeframes
+from kitelab import registry
 
 ASSIGNED = config.CLASS_ASSIGNED
 
@@ -275,7 +275,6 @@ ASSET_EXCLUDED = {
 # (scripts/fetch_assets.py, ASSET_EXCLUDED below), so putting a series back is
 # one line here.
 ASSETS: list[tuple[str, str, float]] = []
-BANDS = registry.BANDS
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
 # computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
 # variant still work and still have scripts -- they are simply not on the board.
@@ -284,87 +283,81 @@ BANDS = registry.BANDS
 # module docstring has always said so.
 STRATEGY_LABELS = registry.families()
 
-# HOW MANY HIGHER TIMEFRAMES DOES THE RULE NEED, AND WHICH?
-#
-# The class stacks use two (M/W/D, Q/M/W). These use one, and not always the
-# adjacent one -- M/D skips the weekly, Q/W skips the monthly. Together with
-# "daily only" that is a ladder from zero higher timeframes to two, which is the
-# question item 2 is actually asking.
-PAIR_TAGS = [k for k, _, _ in timeframes.PAIRS]
-PAIR_LABEL = {k: label for k, label, _ in timeframes.PAIRS}
+def tag(variant) -> str:
+    """Key fragment for the variant slot of a grid key.
 
-# Two questions asked on 2026-09-02, each answered by ONE variant at the class's
-# own 2% band rather than a fresh band sweep -- the question is the filter, not
-# the band, and a sweep on each would have tripled the grid to say the same thing.
+    The slot has held a band (a float), a window pair ("20-10"), a stack ("MW")
+    and, since 2026-09-17, a stop-arm name ("own", "atr3"). Numbers are
+    formatted rather than str()'d so 0.0 keys as "0" and not "0.0"; everything
+    else passes through. THE RESULT MUST NOT CONTAIN "|" -- the grid key is
+    strategy|variant|universe|risk|capital|fill|start|priority and is split on
+    that character.
+    """
+    return f"{variant:g}" if isinstance(variant, (int, float)) else str(variant)
+
+
+# ONE VARIANT AXIS FOR THE WHOLE BOARD, from 2026-09-17, and one map instead of
+# six hand-kept lists.
 #
-#   e1    the daily 20 EMA with no higher timeframe consulted. The control that
-#         says what monthly and weekly are actually worth.
-#   eath  the full M/W/D stack, but only buying within 10% of the running
-#         all-time high.
+# WHAT THIS REPLACED. Until today this file published `bands`, `pair_tags`,
+# `pair_labels`, `ath_tags`, `ath_labels`, `hg_tags` and `darvas_windows` --
+# one list per family, because each family swept a different thing (a band, a
+# stack, a window pair, a stop reading). web/dashboard.html then held a chain
+# of ternaries keyed on hardcoded family strings to decide which of those lists
+# a given family's rows came from, and a second chain to label them. Adding a
+# family meant editing this file and that chain; forgetting the chain rendered
+# the family with NO rows at all, silently, because the fallback was
+# `DATA.bands`. That is the same hand-kept-list fault kitelab/registry.py's
+# docstring was written about, displaced into the browser.
+#
+# WHAT IT IS NOW. Every family on the board carries the same axis -- the stop
+# width (registry.STOPS) -- and nothing else, so the page needs exactly two
+# derived maps and no family names of its own:
+#
+#   variant_tags    family key -> the variant tags it has, in registry order
+#   variant_labels  family key -> {tag: what the Setting column shows}
+#
+# Both come from kitelab.registry, which is the file the caches are stamped
+# against, so a row the page shows is a row the board actually built.
+VARIANT_TAGS = {k: [tag(v) for v in registry.variants(k)] for k in STRATEGY_LABELS}
+VARIANT_LABELS = {k: {tag(v): registry.setting_label(k, v)
+                      for v in registry.variants(k)} for k in STRATEGY_LABELS}
+
+# Still read by this file's own build path and by scripts/stop_sweep.py; no
+# longer published, because the page has no view for either. The percentage
+# reaches the reader through the family label, which registry.FAMILY_LABELS
+# builds from this same constant.
 ATH_BAND = registry.ATH_BAND
-# The eath family stopped being one row on 2026-09-05 -- see registry.ATH_STACKS
-# for why five. Published like PAIR_TAGS so the page enumerates the family from
-# the payload instead of the hardcoded ["near-high"] it carried until then, which
-# would have shown one row and silently hidden the other four.
-ATH_TAGS = registry.ATH_STACKS
-ATH_LABELS = {k: registry.ATH_STACK_LABEL[k] for k in ATH_TAGS}
-# ATH_BAND is deliberately NOT published: the page would have no view for it.
-# The percentage reaches the reader through the family label instead, which
-# registry.FAMILY_LABELS builds from the same constant.
+BANDS = registry.BANDS
 
-# The Holy Grail's band slot carries its STOP, because "SL will be swing low"
-# (rule 6) has two defensible readings and the choice is worth more than any
-# band sweep. BOTH are published, restored on 2026-09-03.
+# THE PER-FAMILY TAG LISTS ARE GONE, 2026-09-17 -- see the block above. The
+# history they carried, kept because nothing else records it:
 #
-#   candle  the signal candle's own low. What the class's DI-crossover note
-#           spells out ("STOPLOSS: signal candle low") and what its standing
-#           rule says; fits the 39 stops marked in the sheet to 0.80%.
-#   swing   the last multi-bar pivot low already CONFIRMED at entry. The
-#           literal reading of "swing low"; fits those same 39 stops to 5.82%.
+#   e1 / eath   two questions asked on 2026-09-02, each answered by ONE variant
+#               rather than a fresh band sweep. `e1` is the daily 20 EMA with no
+#               higher timeframe consulted -- the control that says what monthly
+#               and weekly are actually worth. `eath` buys only within 10% of
+#               the running all-time high.
+#   pair        one higher timeframe instead of two, and not always the adjacent
+#               one: M/D skips the weekly, Q/W skips the monthly. With "daily
+#               only" that was a ladder from zero higher timeframes to two. Cut
+#               to M/W alone on 2026-09-17 (phi 0.843 between M/D and the M/W/D
+#               stack), where it stays as eath|MW's unfiltered control.
+#   hg          the Holy Grail's slot carried its STOP, because "SL will be
+#               swing low" has two defensible readings. Measured over the 101 at
+#               2,00,000 and 1% risk: `candle` 4.63% stop distance, +0.561R
+#               expectancy, 41.1% win rate, MAR 0.14; `swing` 13.41%, +0.404R,
+#               57.5%, MAR 0.20. Structurally different trades from identical
+#               signals, and BOTH lose at account level. Family off the board
+#               2026-09-11.
+#   dv          the two systems the Turtles actually traded -- System 1 (20 in,
+#               10 out) and System 2 (55 in, 20 out) -- each computed with and
+#               without the weekly gate, because the class found one timeframe
+#               took every breakout including the ones against the larger trend.
+#               Cut to 55-20 + weekly on 2026-09-17: the two window pairs fired
+#               together at phi = 0.958, the worst pair the board has measured.
 #
-# Only `swing` was published between 2026-09-02 and 2026-09-03, on the grounds
-# that the candle reading was fitted to a classmate's spreadsheet. That was
-# wrong twice over. The candle reading has its own written support in the class
-# notes, so it is not a curve fit; and holygrail.py has always called it the
-# DEFAULT, so the repo was asserting one thing in the module and the opposite on
-# the dashboard. Worse, the page labelled the pivot variant "stop at swing low"
-# -- the very phrase the module argues means the candle.
-#
-# Publishing one was also read as a verdict it could not support. Measured over
-# the 101 at 2,00,000 and 1% risk, all history:
-#
-#             stop dist   expectancy   win rate   avg win/loss    MAR
-#   candle       4.63%      +0.561R      41.1%    2.95R/-1.11R    0.14
-#   swing       13.41%      +0.404R      57.5%    1.31R/-0.82R    0.20
-#
-# Structurally different trades from identical signals, and BOTH lose at account
-# level -- so showing both cannot be cherry-picking a winner. There isn't one.
-HG_VARIANTS = registry.HG_VARIANTS
-HG_TAGS = [tag for tag, _ in HG_VARIANTS]
-
-# Darvas has no band. It has a pair of windows instead, and they matter at least as
-# much, so they ride in the same slot of the key that the band uses for the EMA
-# stacks: "dv|20-10|all|1|250000|0". 20/10 is what the class specified and is the
-# page default; it is not the best of them.
-# The two systems the Turtles actually traded: System 1 (20 in, 10 out) and
-# System 2 (55 in, 20 out). The other window pairs tried earlier were ours, not
-# theirs, and are dropped.
-DARVAS_WINDOWS = registry.DARVAS_WINDOWS
-
-# Every window is computed BOTH ways, because that is the question being asked.
-# The class found that one timeframe took every breakout, including the ones
-# against the larger trend, and that those were where the losses were. The weekly
-# gate is the proposed fix; "1TF" is the control it has to beat. Testing the gate
-# at only one window would answer half the question.
-DARVAS_GATED = registry.DARVAS_GATED
-DARVAS_TAGS = [f"{a}-{b}" + ("" if g else " 1TF")
-               for g in DARVAS_GATED for a, b in DARVAS_WINDOWS]
-
-
-def tag(band) -> str:
-    """Key fragment for the band slot: a number for the EMA stacks, a window pair
-    like "20-10" for Darvas."""
-    return f"{band:g}" if isinstance(band, (int, float)) else str(band)
+# The stop reading that `hg` argued over is now the axis EVERY family carries.
 
 
 # ------------------------------------------------------------ helpers ----
@@ -1266,13 +1259,13 @@ def main() -> None:
         # the control rather than offering five settings with one answer.
         "single_name": sorted(k for k, v in universes.items()
                               if v[1] is not None and len(v[1]) == 1),
-        "start_years": START_YEARS, "start_default": START_DEFAULT, "bands": BANDS,
-        "hg_tags": HG_TAGS,
-        "pair_tags": PAIR_TAGS, "pair_labels": PAIR_LABEL,
-        "ath_tags": ATH_TAGS, "ath_labels": ATH_LABELS,
+        "start_years": START_YEARS, "start_default": START_DEFAULT,
+        # family key -> its variant tags, and -> {tag: Setting-column text}.
+        # These two replaced bands/hg_tags/pair_tags/pair_labels/ath_tags/
+        # ath_labels/darvas_windows on 2026-09-17; see the block above tag().
+        "variant_tags": VARIANT_TAGS, "variant_labels": VARIANT_LABELS,
         # index -> the date list every curve carrying that index shares
         "calendars": [list(k) for k, _ in sorted(_CALENDARS.items(), key=lambda kv: kv[1])],
-        "darvas_windows": DARVAS_TAGS,
         # Only what was actually gridded. Publishing all four let the page
         # offer three modes that resolve to nothing, and a missing cell renders
         # as an em dash -- indistinguishable from a rule that took no trades.

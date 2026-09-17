@@ -635,6 +635,7 @@ def permutation_test(strat, universe, rounds, rng, sample=PERMUTATION_SAMPLE, tr
 def _shuffled_cagrs(strat, pool, calendar, seeds) -> list:
     """The rule's CAGR on one shuffled market per seed. Runs in the calling
     process (tests, small round counts) or inside a forked worker."""
+    from . import entries      # local: entries imports the engines, this does not
     saved_daily = frames.daily
     saved_enabled = slippage.ENABLED
     got = []
@@ -652,11 +653,19 @@ def _shuffled_cagrs(strat, pool, calendar, seeds) -> list:
             slippage.ENABLED = False
             frames.daily = fake
             built = []
-            for sym in pool:
-                try:
-                    built.extend(strat.build(sym))
-                except (SystemExit, FileNotFoundError, ValueError, IndexError):
-                    continue
+            # A cross-sectional rule ranks each stock against the others, so
+            # it needs to be told which market this round is: the pool, the
+            # same names the calendar and the observed CAGR already use.
+            # Without this, entries.xrank ranks against all 1,000 symbols and
+            # the round materialises the whole universe twice -- the 7.47 GB
+            # that got the 2026-09-17 rebuild OOM-killed. A no-op for the five
+            # entries that read only their own bars.
+            with entries.panel_scope(pool):
+                for sym in pool:
+                    try:
+                        built.extend(strat.build(sym))
+                    except (SystemExit, FileNotFoundError, ValueError, IndexError):
+                        continue
             frames.daily = saved_daily
             slippage.ENABLED = saved_enabled
             built = [slippage.apply_spread(t) for t in built]

@@ -428,12 +428,34 @@ def walk_pair(symbol, p, exit_spec, size_spec):
 # so a row that moves on the board cannot silently stop matching here.
 
 def _rules():
-    out = []
+    """The board's rows, each wired to the engine that can replay it.
+
+    SUPERSEDED IN PART ON 2026-09-17, and this function is what had to change.
+    Until then every family's variant slot held that family's own sweep -- a
+    window pair for `dv`, a stack for the timeframes rows -- and this file read
+    those strings back out to rebuild the rule. The slot now holds the STOP ARM
+    ("own" / "atr3") for every family alike, so the entry configuration is read
+    from the registry CONSTANTS instead. That is strictly safer: the constants
+    are what _build_registry itself builds the board from.
+
+    Two narrowings, both deliberate:
+
+      * Only the `own` arm is mirrored. This script exists to sweep the stop
+        width on a fixed board; the board now carries two stop widths of its
+        own, so mirroring both arms would sweep a swept axis and count the same
+        rule twice. Read the board's `atr3` rows for the wide arm.
+      * kitelab/entries.py rows are SKIPPED rather than fatal. They have no
+        mirror here (this file replays EMA and Darvas engines only) and their
+        stop is already an argument to entries.simulate, so the sweep has
+        nothing to add. A skipped row is printed, never silently dropped.
+    """
+    out, skipped = [], []
+    entry_len, exit_len = registry.DARVAS_WINDOWS[0]
+    weekly = registry.DARVAS_GATED[0]
     for s in registry.REGISTRY:
-        v = str(s.variant)
+        if str(s.variant) != "own":
+            continue
         if s.key == "dv":
-            entry_len, exit_len = (int(x) for x in v.split()[0].split("-"))
-            weekly = "1TF" not in v
             out.append(dict(
                 label=s.label, cache=s.cache, engine="darvas",
                 prep=(lambda sym, a=entry_len, b=exit_len, g=weekly:
@@ -450,14 +472,20 @@ def _rules():
                 walk=walk_backtest))
         elif s.module == "timeframes.py":
             ath = registry.ATH_BAND if s.key == "eath" else None
+            stack = (registry.ATH_STACKS if s.key == "eath"
+                     else registry.PAIR_STACKS)[0]
             out.append(dict(
                 label=s.label, cache=s.cache, engine="pair",
-                prep=(lambda sym, k=v, a=ath:
+                prep=(lambda sym, k=stack, a=ath:
                       prep_ema(sym, engine="pair", variant=k, ath_band=a)),
                 walk=walk_pair))
         else:
-            raise SystemExit(f"stop_sweep does not know how to mirror {s.label!r} "
-                             f"({s.module}). Add it or take it off the board.")
+            skipped.append(f"{s.key}|{s.variant} ({s.module})")
+    if skipped:
+        print(f"  stop_sweep mirrors no engine for {len(skipped)} board rows, "
+              f"skipped: {', '.join(skipped)}")
+    if not out:
+        raise SystemExit("stop_sweep can mirror no row on the board at all.")
     return out
 
 

@@ -5,6 +5,7 @@ scan result against a chart: EMA uses adjust=False, RSI and ATR use Wilder smoot
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -36,6 +37,24 @@ def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
 
 def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
     return true_range(high, low, close).ewm(alpha=1 / length, adjust=False).mean()
+
+
+def atr_stop_line(high: pd.Series, low: pd.Series, close: pd.Series,
+                  mult: float, length: int = 14) -> np.ndarray:
+    """close - mult x ATR(length), the WIDE arm of the board's stop axis.
+
+    Added 2026-09-17. One helper rather than three inline copies, so the three
+    engines and kitelab.entries cannot drift apart on what "3xATR" means. NaN
+    through the ATR warm-up; every caller skips a signal whose stop is not
+    finite rather than inventing one.
+
+    WHY THE STOP BECAME AN AXIS. scripts/board_span.py measured that the
+    board's uniform stop -- the entry candle's own low -- ends 54.6% of trades
+    on day one, leaving a median holding period of ONE session, which collapses
+    the eight exit rules onto 1 independent idea out of 8. The stop was never
+    chosen against an alternative; it was inherited. This gives it one.
+    """
+    return (close - mult * atr(high, low, close, length)).to_numpy(float)
 
 
 def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14):

@@ -341,42 +341,28 @@ function buildScenario() {
 }
 
 /* ── the rows: every strategy variant at the chosen scenario ──────────── */
-/* The ADX rule shows BOTH readings of "SL will be swing low" -- the signal
-   candle's own low and the last confirmed multi-bar pivot. The rule is genuinely
-   ambiguous, the class's own notes support the candle while the phrase itself
-   reads as the pivot, and neither wins: publishing one was presenting a coin
-   flip as a finding. See HG_VARIANTS in kitelab/registry.py. */
-const variantsOf = skey =>
-  skey === "dv" ? (DATA.darvas_windows || []) :
-  skey === "hg" ? (DATA.hg_tags || []) :
-  skey === "pair" ? (DATA.pair_tags || []) :
-  skey === "e1" ? ["daily"] :
-  skey === "eath" ? (DATA.ath_tags || ["MWD"]) :
-  (DATA.bands || []);
+/* BOTH OF THESE USED TO BE HARDCODED HERE, and that was a bug waiting on a
+   rebuild (fixed 2026-09-17). Each family swept a different thing -- a band, a
+   stack, a window pair, a stop reading -- so this file held a chain of
+   ternaries keyed on the literal strings "dv", "hg", "pair", "e1", "eath" to
+   pick which payload list a family's rows came from, and a second chain to
+   label them. A family added to kitelab/registry.py and not to these two
+   chains fell through to `DATA.bands` and rendered with NO rows at all,
+   silently. The board is stamped against registry.py; the page was not, and
+   the page is what the reader sees.
+
+   Now the build derives both maps from the registry and publishes them, so the
+   rows on screen are the rows the board built. Falling back to [] rather than
+   to another family's list is deliberate: a missing family should show as
+   missing, not as somebody else's settings.
+
+   What the variant slot holds today is the STOP WIDTH -- "own" (the entry
+   bar's own low) or "atr3" (3 x ATR(14) below entry) -- uniformly for every
+   family, which is why one map can serve all of them. */
+const variantsOf = skey => (DATA.variant_tags || {})[skey] || [];
 
 const settingLabel = (skey, v) =>
-  skey === "dv" ? (String(v).includes("1TF")
-      ? String(v).replace(" 1TF", "") + " · daily only"
-      : String(v) + " · + weekly") :
-  skey === "hg" ? (v === "candle" ? "stop at the signal candle's low"
-                                  : "stop at the last confirmed swing low") :
-  skey === "pair" ? (DATA.pair_labels || {})[v] || v :
-  skey === "e1" ? "no higher timeframe" :
-  /* The stack, not the filter. Every row in this family carries the same 10%
-     ATH filter -- what separates them is which EMA stack it sits on top of, and
-     that is what the reader needs in this cell. The percentage is in the family
-     label and the column tooltip. Was the constant string "within 10% of the
-     high" while the family had one row; five rows sharing one label made four
-     of them unreadable. */
-  skey === "eath" ? ((DATA.ath_labels || {})[v] || v) :
-  /* THE BAND IS OFF THE PAGE, 2026-09-05. This cell names what distinguishes
-     one row from the others in its family; the EMA stack families now have a
-     single row each, so there is nothing to name and it shows an em dash. It
-     read "2% band" while the sweep existed and "0% band" for the few minutes
-     between removing the sweep and removing the wording -- both stated a
-     setting the reader could not change and no longer had a choice about.
-     The percentage form stays live for the day BANDS is widened again. */
-  (v ? (v * 100).toFixed(0) + "% band" : "—");
+  ((DATA.variant_labels || {})[skey] || {})[v] || String(v);
 
 const keyFor = (skey, v, year = S.year) =>
   `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}|${S.fill}` +

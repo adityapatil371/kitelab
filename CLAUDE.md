@@ -68,39 +68,61 @@ the analysis side writes or reads prices from.
 
 ## The grid
 
-**Cut 19 → 13 → 9 on 2026-09-11, in two passes with different criteria.**
-Keep the two apart when reading the board: the first cut removed rules that
-LOST, the second removed rules that DUPLICATED.
+**The board was rebuilt returns-blind on 2026-09-17: ten entry families ×
+two stop widths = twenty rows.** How the rows were chosen matters more than
+which rows they are, so read this first.
 
-*Pass one, on rank* (a re-rank of all 19 over the rebuilt momentum board, six
-views averaged). Removed: `hg|swing` (last of 19 — 0.0% of its 300 cells beat
-buy-and-hold and its luckiest cell still lost 3.1 points); `eath|QM` (rank 18)
-and `eath|QD` (correlating 0.93/0.92 with the ATH rows kept) with their
-unfiltered controls `pair|QM` and `pair|QD`, which existed only to control
-them; and `eath|MWD` (correlating **0.968 at a median gap of 0.00** with the
-better-ranked `eath|WD` — indistinguishable, not merely similar).
+*Why the selection changed.* Every earlier board was assembled by RANKING —
+run everything, keep what scored well. `scripts/pbo.py` measured what that
+buys here: **probability of backtest overfitting 0.412**, worse than a coin
+flip. A rule that ranks top half in-sample is more likely than not to rank
+bottom half out of sample. So ranking was abandoned as a selection rule.
 
-*Pass two, on redundancy* (`scripts/redundancy.py`, run the same evening). The
-13-board's labels carried only **3–9 independent ideas**: Kaiser says 3, 90% of
-variance 7, Li-Ji 9 — quote the range, never one number. Six of the thirteen
-were EMA rules chained at r ≥ 0.65, and the duplication is REAL rather than an
-artifact of the 300 shared scenarios (`qmw|0`/`pair|QW` 0.963 falls only to
-0.922 once each scenario's cross-strategy mean is subtracted). Removed
-`qmw|0`, `pair|QW`, `pair|WD` and — because its control went with them —
-`eath|WD`. **None of the four was beaten; each was duplicated**, so the cut
-carries no quality signal in either direction: Spearman(average rank,
-nearest-twin r) = −0.18, p = 0.56. `pair|MW` was kept as the cluster's
-representative. Worst surviving pair: `ema|0`/`pair|MD` at r = 0.646.
-Every surviving ATH row still has its control: `eath|MW`→`pair|MW`.
+*What replaced it.* `scripts/board_span.py` picks by **coverage of the design
+space**, greedy farthest-point (maximin) on `d = 1 − max(phi, 0)` over the
+FIRING PANEL only — which stock-sessions each rule fires on, phi computed over
+LISTED cells only because the 5,124 × 1,000 rectangle is ~40% empty. **No
+return, CAGR or rank is read at any point.** Of 18 candidates it kept 3
+incumbents and displaced 6; max phi within the slate 0.103, against 0.958 for
+the board it replaced.
 
-Two things neither cut changed, both worth knowing before reading the board:
-**not one** of the rules beats buy-and-hold on its median cell (best is −2.51
-CAGR points/yr), and `dv|55-20` is the find — it ranks 2nd of 13 AND has the
-**lowest** loading on the common factor (0.080 against 0.25–0.35 for every EMA
-rule), the one top-ranked rule that is not a near-copy of another.
+*Why the stop is an axis.* `portfolio.py:564` sizes off `entry_price − stop`,
+so the stop is a SIZING input and not only an exit line: the wide arm takes
+SMALLER positions on the same signal. The two arms are different strategies at
+the account level, which is why each gets its own row. `registry.STOPS`
+= `{"own": None, "atr3": 3.0}`.
 
+*What the rebuilt board says* (2026-09-17, 6,000 cells, 5,520 scored):
 
-**2,700 cells** (9 variants × 300: 5 equity universes × 5 start years × 3
+- **Not one of the twenty rows beats buy-and-hold on its median cell.** Median
+  across all scored cells −8.30 CAGR pts/yr; 8.8% of cells beat hold. Best row
+  `pull|atr3` at −3.45, worst `e1|atr3` at −18.65.
+- **0 of 5,520 cells pass the day-by-day gate** at BH 5%. 59 clear an
+  uncorrected p ≤ 0.05 where **276 were expected by chance alone** — fewer than
+  chance, which points away from an edge rather than merely failing to find one.
+- **The board is genuinely more varied**: `n_eff` **7.7 of 20** labels against
+  4.0 of 9 before, average pairwise correlation 0.34 against up to 0.958.
+  The returns-blind pass did what it was for.
+- **The stop width reshuffles the leaderboard almost completely.** Spearman
+  between the two arms' family rankings is **0.152**: `pair` is best under the
+  tight stop and 8th of 10 under the wide one, `pull` goes 5th to 1st. The wide
+  stop helps 7 of 10 families (median +3.6 pts) and halves the trade count, and
+  never lifts a row to zero. "Which entry is best" is not a property of the
+  entry.
+- 5 of 20 rows clear the family-wise luck hurdle (t ≥ 2.48, best `dv|own` at
+  4.15 against 1.0 expected). That gate asks "distinguishable from luck", not
+  "beats holding" — the medians above answer the second question.
+
+*Historical, kept because the cuts are still visible in the docstrings.* The
+board went 19 → 13 → 9 on 2026-09-11 in two passes with different criteria —
+the first removed rules that LOST (`hg|swing` last of 19; `eath|QM`/`eath|QD`
+and their controls; `eath|MWD` at 0.968 correlation to `eath|WD`), the second
+removed rules that DUPLICATED (`qmw|0`, `pair|QW`, `pair|WD`, `eath|WD`;
+none was beaten, each was duplicated, and Spearman(rank, nearest-twin r) was
+−0.18, p = 0.56). That 9-row board is the one the 2026-09-17 span pass
+replaced; six of its nine entries were displaced.
+
+**6,000 cells** (20 rows × 300: 5 equity universes × 5 start years × 3
 priorities × 2 risks × 2 capitals), keyed
 `strategy|variant|universe|risk|capital|fill|start|priority`. Take live counts
 from `refresh --check`; the arithmetic is what to trust. Axis values live in
@@ -165,16 +187,19 @@ describes rather than tests. The replacement asks the same question of ~5,000
 daily rule-minus-hold returns instead of 7 win/lose bits, with a Newey-West HAC
 standard error — lag `max(4·(n/100)^(2/9), 21)` — so overlapping positions and
 volatility clustering are not counted as independent evidence. Detectable edge
-falls to **~11.8 pts/yr**. Walk-forward keeps its column and its Detail table:
+falls to **13.94 pts/yr** on the 2026-09-17 board (`diagnostics.median_mde_80`
+— it is a property of the board, so re-read it after a rebuild rather than
+quoting this line; earlier boards measured 11.8 and 16.35). Walk-forward keeps its column and its Detail table:
 it answers *when* the edge was there, which a whole-sample test cannot.
 
-The bar is **not** a nominal 0.05. 2,700 cells tested at once is 2,700 chances
-to be lucky (~135 would clear 0.05 with no edge at all), so the gate is a
+The bar is **not** a nominal 0.05. 6,000 cells tested at once is 6,000 chances
+to be lucky (5,520 are scored, and ~276 would clear 0.05 with no edge at all
+— the 2026-09-17 board produced 59), so the gate is a
 **Benjamini-Hochberg** false-discovery-rate threshold across every tested cell;
 the uncorrected and Bonferroni counts are shown beside it, never gated on. BH
-rather than Bonferroni because these cells are heavily correlated — 9 rules
-re-run over overlapping universes and start years, and the 2026-09-11
-redundancy pass showed the rules themselves are not independent either — and
+rather than Bonferroni because these cells are heavily correlated — 20 rows
+re-run over overlapping universes and start years, and the rows themselves are
+not independent either (n_eff 7.7 of 20, average pairwise correlation 0.34) — and
 Bonferroni on correlated tests is far stricter than its own nominal level.
 **The redundancy cut does not move this gate.** BH is valid under positive
 dependence, and correlation changes the VARIANCE of the "how many cells clear
@@ -217,7 +242,10 @@ the fallback as `ok`.
 **Arm B is shown, never gated**, and the reason is written on the page rather
 than buried: `NEXT_OPEN_FILLS` (`kitelab/backtest.py:77`, default `False`) has
 per-producer semantics, and its next-open branch is independently verified for
-**`backtest.py` only** — one engine of the nine rules on the board. Gating a
+**`backtest.py` only** — one engine of the twenty rows on the board, so 18 of
+20 rows travel marked provisional. `entries.py` joined `NEXT_OPEN_ENGINES` on
+2026-09-17 (it honours `NEXT_OPEN_FILLS` at entries.py:265, 283, 297); leaving
+it out would have skipped arm B on twelve of twenty rows, silently. Gating a
 verdict on a computation whose own code has not been checked is worse than
 showing the number with a provisional flag. Promote engines into
 `ARM_B_VERIFIED` as they are checked; the page's wording follows the constant.
@@ -281,9 +309,9 @@ and must never be blocked by it; viewing must work with neither.
   `config.DEMERGERS`, `config.HISTORY_STARTS`): Kite serves phantom pre-listing
   bars and does NOT adjust demergers, so bars before the last break are
   dropped — severe by design. `data_audit` checks for all of it.
-- **The live exposure is multiple testing, not contamination**: 9 variants
-  ranked and a winner reported — and 9 LABELS is not 9 independent tries, since
-  the surviving rules still correlate up to 0.646. The luck hurdle is a
+- **The live exposure is multiple testing, not contamination**: 20 rows
+  ranked and a winner reported — and 20 LABELS is not 20 independent tries
+  (n_eff 7.7, average pairwise correlation 0.34). The luck hurdle is a
   family-wise 95% bar; quote the `validation_summary` spread the page shows
   above the table.
 - **Survivorship is untouched and remains the largest known bias here.** The
@@ -347,7 +375,7 @@ longer "invalidates all of them".** Two independent tiers:
 Verified 2026-09-09 on the 3-symbol preflight board: building twice into one
 temp dir gave 0/19 partitions reused then 19/19, 78.1s then 0.8s, and all
 cells identical. Left as measured; that board had 19 partitions and five
-priorities, where today's has 9 and three.
+priorities, where today's has 20 and three.
 
 **The code digest reads bytes, not timestamps (2026-09-09).** It used to hash
 each module's `st_mtime_ns`, which is a fact about the filesystem and not about

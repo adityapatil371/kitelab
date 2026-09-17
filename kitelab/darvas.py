@@ -76,7 +76,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from . import backtest, frames, sizing, slippage
+from . import backtest, frames, indicators, sizing, slippage
 from .backtest import charges
 
 ENTRY_LEN = 20
@@ -121,7 +121,8 @@ def weekly_gate(day: pd.DataFrame, weekly_len: int = WEEKLY_LEN) -> np.ndarray:
 
 
 def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
-             intrabar: bool = False, weekly: bool = True) -> list[dict]:
+             intrabar: bool = False, weekly: bool = True,
+             stop_mult: float | None = None) -> list[dict]:
     """Walk the channels and produce closed trades, oldest first.
 
     weekly=False drops the gate, giving the single-timeframe Turtle rule. That
@@ -139,6 +140,13 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
     close = frame["close"].to_numpy(dtype=float)
     upper = frame["upper"].to_numpy(dtype=float)
     lower = frame["lower"].to_numpy(dtype=float)
+    # The stop axis, 2026-09-17. None keeps THE ENTRY CANDLE'S OWN LOW, the
+    # convention this file's docstring calls "one rule across every strategy";
+    # a float draws it at close - stop_mult x ATR(14) instead. The docstring is
+    # still true of stop_mult=None, which is what the historical rows trade.
+    stop_line = (indicators.atr_stop_line(frame["high"], frame["low"],
+                                          frame["close"], stop_mult)
+                 if stop_mult else None)
     stamps = frame["ts"].tolist()
     total = len(frame)
 
@@ -159,7 +167,13 @@ def simulate(symbol: str, entry_len: int = ENTRY_LEN, exit_len: int = EXIT_LEN,
             position += 1
             continue
 
-        stop = float(low[position])
+        if stop_line is None:
+            stop = float(low[position])
+        elif np.isfinite(stop_line[position]):
+            stop = float(stop_line[position])
+        else:
+            position += 1
+            continue                    # inside the ATR warm-up; no stop to draw
         if backtest.NEXT_OPEN_FILLS:
             if position + 1 >= total:
                 break                  # breakout on the last bar; nothing to fill at

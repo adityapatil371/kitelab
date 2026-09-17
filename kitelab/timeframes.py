@@ -172,7 +172,8 @@ def stack_signal(base: pd.DataFrame, highers: list[pd.DataFrame],
 def simulate_variant(symbol: str, variant: str,
                      stop_on_close: bool = True,
                      band: float = BAND,
-                     ath_band: float | None = None) -> list[dict]:
+                     ath_band: float | None = None,
+                     stop_mult: float | None = None) -> list[dict]:
     """Closed trades, oldest first. Mirrors backtest.simulate's walk exactly.
 
     stop_on_close=True is the class convention (everything checked at bar
@@ -210,6 +211,12 @@ def simulate_variant(symbol: str, variant: str,
     near_ath = signal["near_ath"].to_numpy(dtype=bool)
     open_, high, low, close = (signal[c].to_numpy()
                                for c in ("open", "high", "low", "close"))
+    # The stop axis, 2026-09-17. ATR is taken on the TRADED base -- a weekly
+    # stack gets a weekly ATR -- because the stop is the line drawn on the
+    # chart the rule is read on. See indicators.atr_stop_line.
+    stop_line = (indicators.atr_stop_line(signal["high"], signal["low"],
+                                          signal["close"], stop_mult)
+                 if stop_mult else None)
     # Stamp each trade on the session it was DECIDED on -- the session whose close
     # is the fill price. Stamping a Mon->Fri weekly bar on the Monday made the
     # account engine free and commit cash up to four days before the price it uses
@@ -231,7 +238,13 @@ def simulate_variant(symbol: str, variant: str,
         if not fresh or not near_ath[position]:
             position += 1
             continue
-        stop = float(low[position])
+        if stop_line is None:
+            stop = float(low[position])
+        elif np.isfinite(stop_line[position]):
+            stop = float(stop_line[position])
+        else:
+            position += 1
+            continue                    # inside the ATR warm-up; no stop to draw
         if backtest.NEXT_OPEN_FILLS:
             if position + 1 >= total:
                 break                    # signal on the last bar; nothing to fill at

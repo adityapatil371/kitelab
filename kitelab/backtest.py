@@ -292,7 +292,8 @@ def ema_stack_signal(symbol: str, length: int = EMA_LENGTH,
 def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
              band: float = BAND, scale_out: str | None = None,
              stop_on_close: bool = True, scale_r: float = 1.0,
-             stack: str = "mwd", ath_band: float | None = None) -> list[dict]:
+             stack: str = "mwd", ath_band: float | None = None,
+             stop_mult: float | None = None) -> list[dict]:
     """Walk the signal series and produce closed trades, oldest first.
 
     stop_on_close=True is the CLASS convention (2026-08-28): everything --
@@ -302,6 +303,12 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     stop_on_close=False is the broker convention used by all results before
     2026-08-28: the stop is a live intrabar order (a touch fills at the stop,
     a gap through it fills at the open).
+
+    stop_mult (2026-09-17) is the board's new stop axis. None keeps the
+    historical convention -- the entry candle's own low, uniform across every
+    strategy since the project began. A float draws the stop at
+    close - stop_mult x ATR(14) instead. See indicators.atr_stop_line for why
+    the convention stopped being taken for granted.
     """
     if NEXT_OPEN_FILLS and scale_out:
         raise ValueError("scale_out under NEXT_OPEN_FILLS is not modelled: the banked "
@@ -317,6 +324,9 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
     near_ath = (signal["near_ath"].to_numpy(dtype=bool) if "near_ath" in signal.columns
                 else np.ones(len(signal), dtype=bool))
     open_, high, low, close = (signal[c].to_numpy() for c in ("open", "high", "low", "close"))
+    stop_line = (indicators.atr_stop_line(signal["high"], signal["low"],
+                                          signal["close"], stop_mult)
+                 if stop_mult else None)
     stamps = signal["ts"].tolist()
     total = len(signal)
 
@@ -332,7 +342,13 @@ def simulate(symbol: str, length: int = EMA_LENGTH, shares: int = SHARES,
             position += 1
             continue
 
-        stop = float(low[position])
+        if stop_line is None:
+            stop = float(low[position])
+        elif np.isfinite(stop_line[position]):
+            stop = float(stop_line[position])
+        else:
+            position += 1
+            continue                    # inside the ATR warm-up; no stop to draw
         if NEXT_OPEN_FILLS:
             if position + 1 >= total:
                 break                       # signal on the last bar; nothing to fill at

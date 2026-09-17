@@ -156,7 +156,12 @@ const tableRows = () => ((els["cmp"] || {})._body || { rows: [] }).rows
 console.log("\n== payload contract ==");
 const REQUIRED_TOP = ["built", "strategies", "universes", "risks", "capitals", "priorities",
   "priority_default", "single_name", "start_years", "start_default", "fills", "grid",
-  "validation", "validation_summary", "curve_index", "partial", "assets"];
+  "validation", "validation_summary", "curve_index", "partial", "assets",
+  /* ADDED 2026-09-17, replacing bands/hg_tags/pair_tags/pair_labels/ath_tags/
+     ath_labels/darvas_windows. The page enumerates and labels every row from
+     these two, so a build that stops emitting them renders an EMPTY compare
+     table rather than failing -- which is the case this list exists to catch. */
+  "variant_tags", "variant_labels"];
 const REQUIRED_SUMMARY = ["tried", "n_eff", "avg_correlation", "alpha", "hurdle", "expected_best",
   "expected_by_chance", "cleared", "best_t", "best_key", "clears_hurdle", "hold_cagr_by_scenario"];
 const REQUIRED_CELL = ["cagr", "wiped", "final", "maxdd", "uw_long", "uw_now", "taken", "signals",
@@ -216,14 +221,29 @@ const DG = DATA.diagnostics || null;
   new Set(cagrs).size > 1 && cagrs.some(v => v !== 0)
     ? ok("cagr varies across the grid") : bad("cagr is constant/zero across the grid -- the build emitted a placeholder");
 
-  /* NULL START YEARS MUST FORM A PREFIX (2026-09-11). The build stops gridding
-     a start year earlier than the rule's first trade in that universe, because
-     that window is the next start year's window exactly. Start-year windows
-     are NESTED -- an earlier start can only ever see MORE trades -- so a live
-     cell at an early year with a null above it is arithmetically impossible,
-     and a gap in the middle means the collapse kept the wrong end. Either
-     would be silent: both render as dashes and neither throws. Checked here
-     from the payload alone, with no knowledge of which universe is which. */
+  /* NULL START YEARS SIT AT THE ENDS, NEVER IN THE MIDDLE.
+
+     Start-year windows are NESTED: the 2024 window is inside the 2022 window
+     is inside the 2006 window. So a rule with a trade in the 2024 window has a
+     trade in every earlier window too -- "this cell is live" can only go from
+     true to false as the start year rises, never back. Nulls therefore come in
+     two runs and the reasons are different:
+
+       BEFORE the live run -- the build stopped gridding a start year earlier
+         than the rule's first trade, because that window is the next start
+         year's window exactly. The page renders these as "same as YYYY".
+       AFTER the live run -- the rule genuinely took no trades that late. The
+         page renders these as "no trades".
+
+     A null BETWEEN two live years is what nesting makes impossible, and it
+     would be silent: it renders as a dash and nothing throws.
+
+     THIS USED TO FLAG EVERY LATE NULL (fixed 2026-09-17). The rule was "live
+     then null is impossible", which confused a drought with a collapse -- a
+     rule whose last trade falls before the highest start year is ordinary, not
+     broken, and the preflight board produced three of them on its first run
+     under the 20-row registry. The invariant that actually holds is
+     contiguity, and that is what is checked now. */
   const yrs = DATA.start_years || [];
   const runs = {};
   for (const [k, c] of cells) {
@@ -232,22 +252,23 @@ const DG = DATA.diagnostics || null;
     (runs[p.slice(0, 6).join("|") + "|" + p[7]] ||= {})[year] = c !== null;
   }
   const broken = [];
-  let collapsed = 0;
+  let collapsed = 0, drought = 0;
   for (const [scen, live] of Object.entries(runs)) {
-    let seenLive = false;
-    for (const y of yrs) {
-      if (live[y] === undefined) continue;
-      if (live[y]) seenLive = true;
-      else if (seenLive) { broken.push(`${scen} @ ${y}`); break; }
-      else collapsed++;
-    }
+    const seq = yrs.filter(y => live[y] !== undefined);
+    const first = seq.findIndex(y => live[y]);
+    if (first < 0) continue;                       // never live: nothing to order
+    let last = first;
+    for (let i = first; i < seq.length; i++) if (live[seq[i]]) last = i;
+    for (let i = first; i <= last; i++)
+      if (!live[seq[i]]) { broken.push(`${scen} @ ${seq[i]}`); break; }
+    collapsed += first;
+    drought += seq.length - 1 - last;
   }
   broken.length
-    ? bad(`${broken.length} scenario(s) go live and then null again at a LATER start year, `
+    ? bad(`${broken.length} scenario(s) have a null start year BETWEEN two live ones, `
           + `which nested windows make impossible: ${broken.slice(0, 3).join(", ")}`)
-    : ok(`null start years form a prefix in every scenario (${collapsed} cells collapsed into a later year)`);
-}
-{
+    : ok(`null start years sit at the ends only (${collapsed} collapsed early, `
+         + `${drought} late droughts, ${Object.keys(runs).length} scenarios)`);
   const problems = [];
   let stale = 0;
   for (const [key, v] of Object.entries(DATA.validation || {})) {
@@ -655,24 +676,52 @@ function smoke() {
     if ((DATA.single_name || []).includes(u)) {
       const gridded = new Set(cells.map(k => k.split("|")[7]));
       gridded.size === 1 && gridded.has(DATA.priority_default) ? ok(`${u.padEnd(8)} one priority only`) : bad(`${u}: ${gridded.size} priorities gridded on a single instrument`);
+      /* ONLY AN `assets` ROW CARRIES ITS OWN BUY-AND-HOLD (fixed 2026-09-17).
+         `single_name` means "this universe holds exactly one instrument", and
+         that was the same set as `assets` while BITCOIN and GOLD were on the
+         board. It is not any more: an EQUITY bucket can hold one name (the
+         3-symbol preflight board makes large/mid/small single-name by
+         construction), and no equity bucket was ever in `assets`, so this
+         demanded a key the build cannot emit and failed three times on a
+         healthy payload. The benchmark is still required of every universe
+         that does appear in `assets`. */
       const bh = (DATA.assets || {})[u];
-      bh && bh.bh ? ok(`${u.padEnd(8)} buy & hold ${bh.bh.cagr}%/yr`) : bad(`${u}: no buy-and-hold benchmark in assets`);
+      if (!(u in (DATA.assets || {})))
+        ok(`${u.padEnd(8)} single-name equity bucket, no assets row expected`);
+      else if (bh && bh.bh) ok(`${u.padEnd(8)} buy & hold ${bh.bh.cagr}%/yr`);
+      else bad(`${u}: an assets row with no buy-and-hold benchmark`);
       const labels = Object.values(els).map(e => e.textContent || "").join(" ");
       labels.includes("Signal priority") ? bad(`${u}: priority control still offered`) : ok(`${u.padEnd(8)} priority control hidden`);
     }
   }
   S.uni = "all";
 
-  console.log("\n== Holy Grail stop on the board ==");
-  // The family was cut from the board on 2026-09-11 (registry.HG_VARIANTS is
-  // empty), so ZERO is the expected count now and this asserts it is gone
-  // rather than asserting it is present. If a row ever comes back it must
-  // still be exactly one, and must still describe its stop.
-  const hg = variantsOf("hg");
-  hg.length === 0 ? ok("hg is off the board, as registry.HG_VARIANTS says")
-    : hg.length === 1 ? ok(`hg variants: ${hg.join(", ")}`)
-    : bad(`hg variants: ${hg.join(", ")}, expected 0 or 1`);
-  for (const v of hg) { const l = settingLabel("hg", v); /^stop at /.test(l) ? ok(`  "${v}" -> "${l}"`) : bad(`  "${v}" -> "${l}"`); }
+  console.log("\n== the stop axis is on the board ==");
+  // ADDED 2026-09-17, replacing the Holy Grail stop check (that family came off
+  // the board on 2026-09-11 and the check had degenerated into asserting an
+  // empty list). The stop width is now the ONE axis every family carries, and
+  // it is the axis scripts/board_span.py says the board's variety depends on:
+  // under the tight arm 54.6% of trades are stopped out on their first session
+  // and every exit rule collapses onto one behaviour. If the page ever shows
+  // only one arm, the whole reason for the 2026-09-17 rebuild is invisible.
+  {
+    const fams = Object.keys(DATA.strategies);
+    const arms = new Set(fams.flatMap(variantsOf));
+    fams.length ? ok(`${fams.length} families on the board`) : bad("no families");
+    const missing = fams.filter(f => variantsOf(f).length === 0);
+    missing.length === 0 ? ok("every family enumerates at least one variant")
+      : bad(`families with no variants: ${missing.join(", ")}`);
+    arms.size >= 2 ? ok(`stop arms offered: ${[...arms].join(", ")}`)
+      : bad(`only one stop arm on the page: ${[...arms].join(", ")}`);
+    // Every label must be distinct within its family, or two rows read the same.
+    for (const f of fams) {
+      const labels = variantsOf(f).map(v => settingLabel(f, v));
+      const raw = labels.filter((l, i) => l === String(variantsOf(f)[i]));
+      new Set(labels).size === labels.length && raw.length === 0
+        ? ok(`  ${f.padEnd(6)} ${labels.join(" / ")}`)
+        : bad(`  ${f.padEnd(6)} settings not distinct or unlabelled: ${labels.join(" / ")}`);
+    }
+  }
 
   console.log("\n== detail strategy picker ==");
   S.view = "detail"; S.sel = null; render();

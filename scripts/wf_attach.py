@@ -75,17 +75,43 @@ CACHE = CLEAN / "signal_cache"
 # The board cell arm A must reproduce, read off the built grid rather than
 # constructed here: the key format is dashboard_data's business.
 #
-# The priority is taken from dashboard_data rather than written out. It used to
-# read "...|2018|liquidity", and when PRIORITIES was cut to three on 2026-09-11
-# that cell stopped being built, so this leg died on its own self-check after
-# the 116-minute grid had already finished. A self-check must fail when the
-# NUMBERS stop reproducing, never because it names an axis value the board
-# retired.
-SELF_CHECK_KEY = f"ema|0|all|1|10000000|1|2018|{dd.PRIORITY_DEFAULT}"
+# EVERY SLOT IS NOW READ FROM THE FILE THAT DEFINES IT, and this is the second
+# time that lesson has been paid for at the end of a finished grid.
+#   2026-09-11: the key ended "...|2018|liquidity"; PRIORITIES was cut to three
+#     and that cell stopped being built, so this leg died after a 116-minute
+#     grid. The priority was moved to dd.PRIORITY_DEFAULT.
+#   2026-09-17: the STRATEGY slot died the same way. The board's variant axis
+#     became the stop width, the EMA row was renamed "ema|0" -> "e1|own", and
+#     this leg died after a 100-minute grid on "self-check cell ema|0|... is
+#     not in the grid".
+# A self-check must fail when the NUMBERS stop reproducing, never because it
+# names an axis value the board retired. So the family is named here (it is a
+# deliberate choice -- see below) and everything else is looked up: the variant
+# from registry.variants, the risk and capital from dashboard_data's axis
+# lists, the start year and priority from its defaults.
+#
+# The family is `e1` -- EMA, daily only -- because it is the one engine whose
+# next-open branch is independently verified (ARM_B_VERIFIED below), and it is
+# the same account this check has reproduced since it was written; only its
+# label changed on 2026-09-17.
+SELF_CHECK_FAMILY = "e1"
+SELF_CHECK_KEY = (
+    f"{SELF_CHECK_FAMILY}|{dd.tag(registry.variants(SELF_CHECK_FAMILY)[0])}"
+    f"|all|{max(dd.RISKS):g}|{max(dd.CAPITALS)}|1"
+    f"|{dd.START_DEFAULT}|{dd.PRIORITY_DEFAULT}")
 
 # Engines with a next-open path. Keyed on Strategy.module so an engine that
 # loses its path raises here rather than being silently measured as zero.
-NEXT_OPEN_ENGINES = {"backtest.py", "timeframes.py", "darvas.py", "holygrail.py"}
+#
+# `entries.py` was ADDED 2026-09-17, when the returns-blind board put six
+# entry families (twelve of twenty rows) on that engine. It honours
+# backtest.NEXT_OPEN_FILLS in three places (entries.py:265, 283, 297) and its
+# module docstring says so, so leaving it out would have skipped arm B on the
+# majority of the board -- silently, which is the exact failure this set was
+# written to prevent. It is NOT in ARM_B_VERIFIED below, so its numbers reach
+# the page marked provisional, which is the designed treatment.
+NEXT_OPEN_ENGINES = {"backtest.py", "timeframes.py", "darvas.py",
+                     "holygrail.py", "entries.py"}
 
 # Arm B is only VERIFIED for backtest.py: scripts.wf_lookahead's self-check
 # reproduced a board cell for ema|0 and nothing else. The other three engines
@@ -490,7 +516,8 @@ def main():
     self_check(payload, strategies, unis, holds)
     if args.pilot:
         strategies = strategies[:args.pilot]
-        print(f"\nPILOT: {args.pilot} of 19 strategies")
+        print(f"\nPILOT: {args.pilot} of {len(registry._build_registry())} "
+              f"strategies")
 
     t0 = time.time()
     daily, timing = {}, {}

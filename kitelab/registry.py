@@ -42,7 +42,7 @@ from typing import Callable
 
 import pandas as pd
 
-from . import backtest, darvas, holygrail, timeframes
+from . import backtest, darvas, entries, holygrail, timeframes
 from .timeframes import simulate_variant
 
 # ---------------------------------------------------------------- shape ----
@@ -101,6 +101,13 @@ class Strategy:
 # this removes a fitted parameter rather than adding one.
 #
 # Kept as a list, so restoring the sweep is one edit here and a rebuild.
+#
+# NOTHING READS THIS FOR THE BOARD ANY MORE, from 2026-09-17. The `ema` family
+# (M/W/D, the only one whose variant slot ever held a band) came off the board
+# that day, so _build_registry no longer loops over BANDS at all; SOLO_BAND is
+# what the surviving EMA families trade. The list stays because it is the
+# declaration of what a band sweep WOULD be, and because scripts and docstrings
+# still point at it for the 2026-09-05 reasoning.
 BANDS = [0.0]
 
 # The band for the EMA families that never swept it -- one-higher-TF, daily-only
@@ -164,9 +171,21 @@ ATH_STACKS = ["MW"]
 # pair|MW -- the tightest pair on the board, two labels on one rule) and WD
 # (r = 0.895 with ema|0, and it was the last thing holding eath|WD on).
 # Restoring one is one edit here plus a rebuild.
-PAIR_STACKS = ["MD", "MW"]
-DARVAS_WINDOWS = [(20, 10), (55, 20)]
-DARVAS_GATED = [True, False]
+# CUT 2 -> 1 ON 2026-09-17, on scripts/board_span.py and NOT on rank. MD was
+# the second-most overlapping entry pair on the whole board: phi = 0.843 with
+# ema|0.0, measured over the firing panel alone with no return ever read. MW
+# stays because it is eath|MW's designed control, and an ATH row cannot be read
+# without its unfiltered twin.
+PAIR_STACKS = ["MW"]
+# CUT 4 ROWS -> 1 ON 2026-09-17, same pass. dv|20-10 and dv|55-20 fire together
+# at phi = 0.958 -- the single worst pair on the board, two labels on one rule --
+# and the 1TF controls overlap each other at 0.309 while adding a second axis
+# (the weekly gate) that no other family carries. 55-20 is kept because the
+# returns-blind maximin slate picked it; 20-10 was the page default, which is a
+# convention and not evidence. The lists stay lists so restoring a row is one
+# edit here plus a rebuild.
+DARVAS_WINDOWS = [(55, 20)]
+DARVAS_GATED = [True]
 
 # EMA_MWD_RETIRED IS GONE, 2026-09-05, and this is the uncomfortable half of
 # removing the band. It held {0.0}: M/W/D at a 0% band was cut from the board
@@ -223,42 +242,150 @@ HG_VARIANTS: list[tuple[str, str]] = []
 # timeframes.py still implements "QMW" and _padded can still build it; this file
 # simply no longer registers it.
 
+# ---------------------------------------------------------- the stop axis ----
+# ADDED 2026-09-17, and it is the finding that forced the rest of this file.
+#
+# THE STOP IS NOT A DETAIL, IT IS THE BOARD'S BINDING CONSTRAINT.
+# scripts/board_span.py compared 24 exit rules x stop widths over 596,729
+# pooled bars, returns-blind. Under this project's uniform convention -- the
+# stop is the entry bar's own low -- the exit axis does not exist:
+#
+#     stop      Kaiser ideas   Li-Ji   median |rho|   median hold   ends day 1
+#     own            1          3.00      0.907            1d          54.6%
+#     atr2           2          5.00      0.419           11d           8.6%
+#     atr3           2          6.00      0.269           17d           8.0%
+#
+# At `own`, 54.6% of trades are stopped out on their FIRST session and the
+# median trade lives two. Nothing downstream of the entry gets a chance to
+# differ, so every exit rule the lab can write collapses onto one behaviour
+# (stop|own and t60|own correlate at 1.000 -- a 60-session limit and a stop are
+# the same rule when the stop fires first 55% of the time). Widen the stop and
+# the axis reappears: three times as many independent ideas out of the same 24
+# labels.
+#
+# So the stop width becomes a board AXIS rather than a fixed convention. Two
+# arms, every family carried on both:
+#
+#   own    the entry bar's own low. The inherited convention, kept so every
+#          number published before today stays comparable.
+#   atr3   close - 3 x ATR(14) at entry. The WIDE arm.
+#
+# WHY 3 AND NOT A SWEEP. A sweep over stop width is exactly the fitted
+# parameter this project keeps removing (see BANDS above). Two arms answer
+# "does stop width change the answer?"; a sweep answers "which width won?",
+# which is a question about luck. 3 x ATR is the width scripts/xrank_account.py
+# already used and is a standard outside this repo, so it is not a value this
+# board chose for itself.
+#
+# THE STOP IS ALSO A SIZING INPUT, not only an exit line: portfolio.py sizes
+# off entry_price - stop, so the wide arm takes SMALLER positions on the same
+# signal. The two arms are therefore different strategies at the account level,
+# not the same strategy exited differently, and that is why each gets its own
+# row rather than a footnote.
+#
+# Cache stems get the arm appended (the `own` arm keeps the historical stem, so
+# its caches are reused unchanged); signals.producer_of resolves by LONGEST
+# prefix, so EMA_daily_only_atr3_all cannot be mistaken for EMA_daily_only.
+STOPS = {"own": None, "atr3": 3.0}
+
+STOP_LABEL = {"own": "stop at the entry bar's own low",
+              "atr3": "stop 3 x ATR(14) below entry"}
+
+
+# ------------------------------------------------- the six new entry rules ----
+# ADDED 2026-09-17. Chosen by scripts/board_span.py's maximin (farthest-point)
+# pass over 18 candidate entry rules, on the FIRING PANEL only: the selection
+# read which stock-sessions each rule fires on and never read a return, a CAGR
+# or a rank. That is the whole point. The previous board was assembled by
+# ranking, and scripts/pbo.py measured what ranking buys here -- PBO 0.412,
+# worse than a coin flip -- so a rule's past score is not evidence about which
+# rules belong on a board together. Coverage of the design space is.
+#
+# What it bought, same slate size (k = 9), no returns read:
+#
+#     slate            Kaiser   90% var   Li-Ji   max phi   mean phi
+#     the old board       4        6       8.0     0.958     0.127
+#     maximin             4        8       9.0     0.103     0.027
+#
+# The worst-overlapping pair falls from 0.958 to 0.103. Six of nine incumbents
+# were displaced; eath|MW, e1|daily and dv|55-20 survived on distance alone.
+#
+# These six deliberately include rules this project would never have ranked
+# onto a board -- a mean-reversion entry, a calendar entry with no price
+# content at all -- because a board that only holds trend-following variations
+# cannot answer whether trend-following is the thing that matters.
+ENTRY_FAMILIES = [
+    ("mr", "20-day low", "Mean reversion"),
+    ("vcon", "narrowest 7-day range", "Volatility contraction"),
+    ("vol", "volume 3x its 50-day median", "Volume spike"),
+    ("cal", "first session of the month", "Calendar"),
+    ("xrank", "top decile 252-day return", "Cross-sectional momentum"),
+    ("pull", "above the 200-day, below the 20-day", "Pullback in an uptrend"),
+]
+
+
+# THE FAMILY LABEL NOW CARRIES THE SETTING, because the variant slot carries
+# the STOP. Every family on the board has exactly one entry configuration and
+# two stop arms, so "M/W" and "55-20" moved up into the family name where they
+# are stated once, and the Setting column says which stop the row trades. That
+# is the only thing that varies within a family now, and a Setting column that
+# named something uniform across the family was unreadable -- the same fault the
+# 2026-09-05 eath note describes.
 FAMILY_LABELS = {
-    "ema": "EMA · M/W/D", "pair": "EMA · one higher TF",
-    # "qmw": "EMA · Q/M/W" -- family removed 2026-09-11, see the note above.
-    # The percentage lives HERE, once, because it is the same on every row of
-    # the family (five until the 2026-09-11 cut, two after it) and the Setting
-    # column carries the stack instead. It was in Strategy.label
-    # only, which the payload never publishes -- so until 2026-09-05 the page
-    # never showed the 10% anywhere at all.
-    "e1": "EMA · daily only", "eath": f"EMA · within {ATH_BAND:.0%} of the high",
-    "dv": "Turtle channel",
-    # "hg": "Holy Grail · ADX" -- family removed 2026-09-11, see HG_VARIANTS.
+    # The three incumbents the returns-blind pass kept, plus one control.
+    "e1": "EMA · daily only",
+    # KEPT AS A CONTROL, NOT AS A PROPOSAL. It is the unfiltered twin of
+    # eath|MW: same stack, same crosses, no all-time-high filter. CLAUDE.md --
+    # "every ATH stack needs its unfiltered twin control or its score cannot be
+    # read". It is on the board for that structural reason and not because it
+    # scored or spanned; the maximin pass did not pick it.
+    "pair": "EMA · M/W · no ATH filter (control)",
+    "eath": f"EMA · M/W · within {ATH_BAND:.0%} of the high",
+    "dv": "Turtle channel 55-20 + weekly",
+    # "ema": "EMA · M/W/D" -- OFF THE BOARD 2026-09-17. It fired with pair|MD at
+    # phi = 0.843 and with e1|daily at 0.591, the second and fourth worst pairs
+    # measured; e1|daily is the same engine with no higher timeframe and was the
+    # one the maximin pass kept. Nothing re-measured ema on its merits -- it was
+    # duplicated, not beaten, the same verdict pass two gave qmw on 2026-09-11.
+    # "qmw" -- family removed 2026-09-11.  "hg" -- family removed 2026-09-11.
+    **{k: f"{name} · {what}" for k, what, name in ENTRY_FAMILIES},
 }
 
 # The variant each family shows wherever only one can be shown -- the per-stock
 # Detail view. Not "the best": the DEFAULT, chosen once so that a family is
-# compared by one stated setting rather than by its luckiest one. (It also fed
-# the breadth sweep until that went on 2026-09-03.)
+# compared by one stated setting rather than by its luckiest one.
+#
+# It is `own` for every family, and that is a CONVENTION rather than a result:
+# the entry bar's own low is the stop this project has published since it
+# started, so defaulting to it keeps the Detail view comparable with every
+# number written down before 2026-09-17. It is emphatically not a claim that
+# the tight arm is better -- board_span says the tight arm is the one that
+# COLLAPSES the exit axis, and which arm makes more money is what the rebuild
+# is being run to find out.
+PRIMARY = {k: "own" for k in FAMILY_LABELS}
+
 # Stack -> display label, DERIVED from the timeframes tables rather than
-# retyped, so a pair renamed there cannot leave a stale label here. MWD is in
-# VARIANTS; the rest are in PAIRS.
+# retyped, so a pair renamed there cannot leave a stale label here. Still read
+# by scripts/stop_sweep.py and by the eath row labels below.
 ATH_STACK_LABEL = {k: label for k, label, _ in
                    (*timeframes.VARIANTS, *timeframes.PAIRS)}
 
-# "eath" was "MWD" until 2026-09-11 and that stack is no longer registered. It
-# became "WD" -- the same stack "pair" defaulted to -- so the filtered and
-# unfiltered families are shown at the SAME setting and the Detail view compares
-# like with like. BOTH BECAME "MW" LATER THE SAME DAY, when the redundancy cut
-# took pair|WD and eath|WD off the board: a default has to name a row that is
-# registered, and MW is the only stack the two families still share. Picked for
-# that reason, not because MW ranked higher; a default chosen on rank is the
-# luckiest variant by another name.
-PRIMARY = {"ema": 0.0, "pair": "MW", "e1": "daily",
-           "eath": "MW", "dv": "20-10"}
+
+def setting_label(key: str, variant) -> str:
+    """What the page's Setting column shows for one row.
+
+    SINGLE SOURCE OF TRUTH, from 2026-09-17. The page used to hold its own
+    per-family chain of ternaries keyed on hardcoded family strings ("dv",
+    "pair", "e1", "eath"), which meant a family added here rendered its variant
+    raw and a family renamed here rendered the wrong text -- the same hand-kept
+    duplication this module's docstring was written to kill, one layer out in
+    the browser. scripts.dashboard_data publishes this map; the page reads it.
+    """
+    return STOP_LABEL.get(str(variant), str(variant))
 
 
-def _padded(key: str, band: float, ath_band: float | None = None):
+def _padded(key: str, band: float, ath_band: float | None = None,
+            stop_mult: float | None = None):
     """simulate_variant trades, plus the two fields portfolio.run needs.
 
     kitelab.timeframes emits neither same_session nor net_profit; every other
@@ -267,7 +394,8 @@ def _padded(key: str, band: float, ath_band: float | None = None):
     """
     def build(symbol):
         out = []
-        for t in simulate_variant(symbol, key, band=band, ath_band=ath_band):
+        for t in simulate_variant(symbol, key, band=band, ath_band=ath_band,
+                                  stop_mult=stop_mult):
             t = dict(t)
             t["same_session"] = (pd.Timestamp(t["entry_ts"]).date()
                                  == pd.Timestamp(t["exit_ts"]).date())
@@ -277,66 +405,103 @@ def _padded(key: str, band: float, ath_band: float | None = None):
     return build
 
 
+def _stem(base: str, arm: str) -> str:
+    """Cache stem for one stop arm.
+
+    The `own` arm keeps the historical stem unchanged, so every cache built
+    before the stop became an axis is reused rather than recomputed. The wide
+    arm gets a suffix. signals.producer_of matches by LONGEST prefix, so
+    "EMA_daily_only_atr3_all" resolves to the atr3 row and not to the own row
+    it happens to start with.
+    """
+    return base if arm == "own" else f"{base}_{arm}"
+
+
 def _build_registry() -> list[Strategy]:
+    """Ten families x two stop arms = twenty rows.
+
+    THE SHAPE CHANGED ON 2026-09-17 and the reason is worth stating once here
+    rather than only in the notes above. Until today a family's variant slot
+    held whatever that family happened to sweep -- a band for the EMA rows, a
+    window pair for Turtle, a stack for the pairs, a stop reading for Holy
+    Grail. Four families, four incomparable axes, and no question could be
+    asked ACROSS them. Now every family carries the same axis (the stop width)
+    and nothing else, so "does the stop change the answer?" is one column of
+    the board instead of four separate studies.
+
+    The entry configuration each family trades is fixed and named in
+    FAMILY_LABELS. Restoring a swept axis means adding rows here and widening
+    the variant tag, and the grid key would need a separator that is not "|".
+    """
     out: list[Strategy] = []
-    for band in BANDS:
-        # Band 2% keeps the historical cache names -- it is off the board as of
-        # 2026-09-05 (see BANDS), so this branch is currently dead, but it is
-        # what lets the old caches be reused unchanged if the sweep comes back.
-        stem = "" if band == 0.02 else f"_b{band*100:g}"
-        # "no band" rather than "0% band": the latter reads as a setting someone
-        # chose among others, and since 2026-09-05 there are no others. The
-        # variant itself stays a float, because tag() and the page depend on it.
-        note = f"{band:.0%} band" if band else "no band"
-        out.append(Strategy("ema", band, f"EMA · M/W/D · {note}",
-                            f"EMA{stem}", "backtest.py",
-                            lambda s, b=band: backtest.simulate(s, band=b)))
-        # THE qmw FAMILY IS GONE, 2026-09-11 -- see QMW_RETIRED above.
-    # NOTE THE CACHE NAMES. Darvas gained a weekly gate on 2026-09-01, so a
-    # trade list built before that is a different strategy under the same label.
-    # The old caches are UNSTAMPED and load() would hand them back without
-    # complaint; renaming is what forces the rebuild.
-    for gated in DARVAS_GATED:
-        for entry_len, exit_len in DARVAS_WINDOWS:
-            variant = f"{entry_len}-{exit_len}" + ("" if gated else " 1TF")
-            stem = (f"Turtle_w{darvas.WEEKLY_LEN}" if gated else "Turtle_1tf")
+    for arm, mult in STOPS.items():
+        # ---- the six returns-blind entries (kitelab/entries.py) ------------
+        # One module, six rules, because they share an exit (a 60-session limit
+        # plus the stop) and differ only in when they fire. That is the point:
+        # holding the exit fixed is what makes the entries comparable.
+        for key, what, _name in ENTRY_FAMILIES:
             out.append(Strategy(
-                "dv", variant,
-                f"Turtle {entry_len}-{exit_len}" + (" + weekly" if gated else " (1 TF)"),
-                f"{stem}_{entry_len}_{exit_len}", "darvas.py",
-                lambda s, a=entry_len, b=exit_len, g=gated:
-                    darvas.simulate(s, a, b, weekly=g)))
-    for pair_key, pair_label, _ in timeframes.PAIRS:
-        if pair_key not in PAIR_STACKS:
-            continue
-        out.append(Strategy("pair", pair_key, f"EMA · {pair_label}",
-                            f"EMA_{pair_key}", "timeframes.py",
-                            _padded(pair_key, SOLO_BAND)))
-    out.append(Strategy("e1", "daily", "EMA · daily only", "EMA_daily_only",
-                        "backtest.py",
-                        lambda s: backtest.simulate(s, band=SOLO_BAND, stack="daily")))
-    # The ATH family, one row per stack in ATH_STACKS. MWD goes through
-    # backtest.py (its own M/W/D implementation); the rest are timeframes.py
-    # pairs, where stack_signal grew an ath_band argument on 2026-09-05 that
-    # applies the filter to the BASE frame's own closes -- so a weekly-traded
-    # row compares a weekly close against the highest weekly close, matching
-    # pine/ema_ath_band.pine rather than diverging from it.
-    for stack in ATH_STACKS:
-        pct = f"{ATH_BAND:.0%}"
-        if stack == "MWD":
-            out.append(Strategy("eath", stack, f"EMA · M/W/D · within {pct} of the high",
-                                f"EMA_ath{ATH_BAND*100:g}_MWD", "backtest.py",
-                                lambda s: backtest.simulate(s, band=SOLO_BAND,
-                                                            ath_band=ATH_BAND)))
-        else:
-            out.append(Strategy("eath", stack,
-                                f"EMA · {ATH_STACK_LABEL[stack]} · within {pct} of the high",
-                                f"EMA_ath{ATH_BAND*100:g}_{stack}", "timeframes.py",
-                                _padded(stack, SOLO_BAND, ath_band=ATH_BAND)))
-    for hg_tag, hg_stop in HG_VARIANTS:
-        out.append(Strategy("hg", hg_tag, f"Holy Grail · {hg_tag} stop",
-                            f"HolyGrail_{hg_tag}", "holygrail.py",
-                            lambda s, st=hg_stop: holygrail.simulate(s, stop=st)))
+                key, arm, f"{what} · {STOP_LABEL[arm]}",
+                _stem(f"Entry_{key}", arm), "entries.py",
+                lambda s, e=key, m=mult: entries.simulate(s, e, stop_mult=m)))
+        # ---- the incumbents the span pass kept -----------------------------
+        out.append(Strategy(
+            "e1", arm, f"EMA · daily only · {STOP_LABEL[arm]}",
+            _stem("EMA_daily_only", arm), "backtest.py",
+            lambda s, m=mult: backtest.simulate(s, band=SOLO_BAND,
+                                                stack="daily", stop_mult=m)))
+        for entry_len, exit_len in DARVAS_WINDOWS:
+            for gated in DARVAS_GATED:
+                base = (f"Turtle_w{darvas.WEEKLY_LEN}" if gated else "Turtle_1tf")
+                out.append(Strategy(
+                    "dv", arm,
+                    f"Turtle {entry_len}-{exit_len}"
+                    + (" + weekly" if gated else " (1 TF)")
+                    + f" · {STOP_LABEL[arm]}",
+                    _stem(f"{base}_{entry_len}_{exit_len}", arm), "darvas.py",
+                    lambda s, a=entry_len, b=exit_len, g=gated, m=mult:
+                        darvas.simulate(s, a, b, weekly=g, stop_mult=m)))
+        for stack in PAIR_STACKS:
+            out.append(Strategy(
+                "pair", arm,
+                f"EMA · {ATH_STACK_LABEL[stack]} · {STOP_LABEL[arm]}",
+                _stem(f"EMA_{stack}", arm), "timeframes.py",
+                _padded(stack, SOLO_BAND, stop_mult=mult)))
+        # The ATH family, one row per stack in ATH_STACKS. MWD would go through
+        # backtest.py (its own M/W/D implementation); MW is a timeframes.py
+        # pair, where stack_signal applies the filter to the BASE frame's own
+        # closes -- so a weekly-traded row compares a weekly close against the
+        # highest weekly close, matching pine/ema_ath_band.pine.
+        for stack in ATH_STACKS:
+            pct = f"{ATH_BAND:.0%}"
+            if stack == "MWD":
+                out.append(Strategy(
+                    "eath", arm,
+                    f"EMA · M/W/D · within {pct} of the high · {STOP_LABEL[arm]}",
+                    _stem(f"EMA_ath{ATH_BAND*100:g}_MWD", arm), "backtest.py",
+                    lambda s, m=mult: backtest.simulate(s, band=SOLO_BAND,
+                                                        ath_band=ATH_BAND,
+                                                        stop_mult=m)))
+            else:
+                out.append(Strategy(
+                    "eath", arm,
+                    f"EMA · {ATH_STACK_LABEL[stack]} · within {pct} of the high"
+                    f" · {STOP_LABEL[arm]}",
+                    _stem(f"EMA_ath{ATH_BAND*100:g}_{stack}", arm),
+                    "timeframes.py",
+                    _padded(stack, SOLO_BAND, ath_band=ATH_BAND,
+                            stop_mult=mult)))
+        # HOLY GRAIL IS OFF THE BOARD (HG_VARIANTS is empty) and is registered
+        # on the `own` arm only, so that if a row ever comes back it does not
+        # silently appear twice with identical trades: holygrail.simulate has no
+        # stop_mult argument, so both arms would be the same backtest under two
+        # labels -- which is exactly the duplication the 2026-09-17 span pass
+        # cut four other rows for. Give it a stop_mult before giving it an arm.
+        if arm == "own":
+            for hg_tag, hg_stop in HG_VARIANTS:
+                out.append(Strategy("hg", arm, f"Holy Grail · {hg_tag} stop",
+                                    f"HolyGrail_{hg_tag}", "holygrail.py",
+                                    lambda s, st=hg_stop: holygrail.simulate(s, stop=st)))
     return [Strategy(s.key, s.variant, s.label, s.cache, s.module, s.build,
                      FAMILY_LABELS.get(s.key, s.key)) for s in out]
 
