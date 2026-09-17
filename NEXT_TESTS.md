@@ -255,7 +255,17 @@ timeframe per variant for 1,000 symbols).
 
 ## Open items, in priority order
 
-### NEXT SESSION, set by the user 2026-09-16
+### NEXT SESSION, set by the user 2026-09-17
+
+**Item 24 — add all eight queued entry families to the board — is the next
+kitelab session's whole job**, in a session dedicated to it. The user's words:
+*"all of these"*, then *"plan the additions for next session, this one has been
+too long"*. Read item 24 at the bottom of this file first; it carries the
+pre-registered queue, the pick order, the prerequisites, the rebuild cost and
+the multiple-testing consequence. The three items below it are older and stay
+queued behind it.
+
+### Set by the user 2026-09-16
 
 **"we will do 16,5,18 next session"** — in that order, and note they are three
 very different sizes:
@@ -2023,3 +2033,418 @@ has. If it does not, item 22 closes as another best-of-25 that was not there.
 Outputs: `output/measurements/xrank_breadth_2026-09-17.csv` (460 rows),
 `output/xrank_breadth_2026-09-17.json`, `output/xrank_breadth_2026-09-17.png`,
 `output/logs/xrank_breadth_run.log`.
+
+---
+
+## 23. `xrank` N=20 through the board's own gate — IT FAILS — RAN 2026-09-17
+
+`scripts/xrank_gate.py`, four legs, 1,656 cells, 4.0 min. This is the test item
+22 pre-registered as "the one that matters". The pre-registered instruction was
+**do not add it to the board on the +3.51**, and that instruction stands.
+
+### Verdict, decisive leg first
+
+**LEG 2, the daily rule-minus-hold test** — the board's fourth gate, all three
+priorities, 276 cells (`output/logs/xrank_gate_run.log:95-99`):
+
+    276 tested cells   median t -1.20   max t +2.51
+    p <= 0.05 uncorrected : 16 of 276   (~14 expected with no edge at all)
+    p <= 1.81e-04 Bonferroni: 0 of 276
+
+16 against 14 expected is not evidence. **0 of 276 corrected.** A median t of
+-1.20 says the typical cell is losing to hold, not winning.
+
+**LEG 2, the trade-level luck gate** (`validation.bootstrap_one`, t_gate =
+min(t_cluster, t_stat)) — clears the uncorrected 1.645 on two universes and
+nothing beyond it:
+
+    universe   trades   mean_r   drift_r   t_cluster   t_stat   t_gate   1.645  2.326  2.406  2.878
+    all         2,776   +0.6505   +0.3764      4.48      1.89     1.89    pass   fail   fail   fail
+    small       2,078   +0.6527   +0.3415      4.26      2.03     2.03    pass   fail   fail   fail
+    recent        198   +1.1204   +0.6512      3.40      1.43     1.43    fail   fail   fail   fail
+    large         165   +0.5866   +0.2890      2.20      1.12     1.12    fail   fail   fail   fail
+    mid           335   +0.3903   +0.2795      2.22      0.63     0.63    fail   fail   fail   fail
+
+`drift_r` is the killer on every row: random entries on the SAME stocks with the
+SAME wide stop already earn **49% to 72% of the rule's mean R** (lowest `large`,
+highest `mid`; `all` is 58%). That is what collapses t_cluster 4.48 to t_stat
+1.89 — the trades are mostly being paid by the stocks, not by the timing.
+
+**LEG 4, knife-edge.** Only 2 of 9 (N x lookback) cells are positive, and both
+sit on the 252-session row:
+
+    `all` median vs hold      N=15    N=20    N=25
+    lookback 126             -3.96   -2.37   -5.07
+    lookback 252             +5.94   +3.51   -1.36
+    lookback 504             -0.16   -2.71   -1.69
+
+There is a shoulder in N and **none in lookback** — 126d and 504d are negative
+at every breadth. Item 22's "peak with shoulders" consolation holds on one axis
+of two. Worse, **the peak moved when the grid got finer**: item 22 swept N in
+{5, 10, 20, 50, 100} and called 20 the peak; adding N=15 puts +5.94 there, above
+20's +3.51. A maximum that relocates when you look between the old gridpoints is
+what a noise surface does.
+
+**LEG 3, period.** The edge is strongest from 2018 (+5.38, 12/12 cells), not
+stranded pre-2017. That runs the OPPOSITE way to item 15, where the board's
+shortfall against hold SHRANK after 2017. Noted, not explained.
+
+### Leg 1b — the control I had to build twice
+
+**The first placebo was confounded and its result is void.** `placebo_signal`
+matched the real signal's per-session firing COUNT but not its PERSISTENCE.
+Momentum ranking is sticky — the same 20 names hold the top for weeks, and with
+one position per symbol the account only trades when membership changes — so
+the real rule made **2,776 trades where the count-matched control made ~31,400**.
+That control varied WHICH names and HOW OFTEN at once, and turnover is the one
+thing this project has repeatedly shown eats a real gross edge (item 12, the
+Pine ladder). It compared patient against frantic and called the gap alpha.
+
+`shuffled_signal` (`scripts/xrank_gate.py:109`) replaces it: permute the real
+panel's **column labels** within blocks of similar history length, keeping every
+firing RUN intact. Same sessions, same counts, same spell lengths, same distinct
+entries; identity is the only thing that changes. Trade counts confirm it —
+2,776 real against 2,930-2,983 shuffled, a 6-7% gap rather than 11x.
+
+    python3 -m scripts.xrank_gate --leg shuffle     # 1.2 min
+
+Re-run on 2026-09-17 against the rebuilt 20-row board
+(`wf_attach_hold_2026-09-17_c24636_9002ab.pkl`) and it reproduces to the digit:
+the CSV is byte-identical to the 07:16 run, only the `board` string in the JSON
+differs. The hold curves the comparison rests on are a property of the universe
+and the start years, not of which rows sit on the board, so this was the
+expected result — but it had not been checked.
+
+**What the corrected control says, on the `all` universe:**
+
+    arm          `all` median vs hold    cells beating hold
+    real                  +3.51                  12/20
+    shuffle 11            -7.11                   0/20
+    shuffle 22            -5.74                   4/20
+    shuffle 33            -5.97                   0/20
+    shuffle 44            -8.99                   0/20
+    shuffle 55            -6.71                   0/20
+
+**Pooled over all 92 cells per arm** (`mom_hi` only, 5 universes x 5 starts x
+2 risks x 2 capitals), which is the fairer reading because `all` was the cell
+the lead was cherry-picked from:
+
+    arm         cells   median excess   median daily t   max t   p<=0.05   beats hold
+    real           92        -7.21           -1.20        2.51      6          25
+    shuffled      460        -8.99           -1.80        1.09      0           5
+
+### What this settles, and it is not nothing
+
+**The momentum ranking is doing real work.** Against a twin with identical
+timing, identical turnover and identical firing runs, choosing the top 20 by
+252-session return is worth roughly **+1.8 CAGR points of median excess and
++0.60 of daily t**, and the real arm is the only one of six that produces a
+single cell at p <= 0.05. Five shuffles, 460 cells, zero. That is the cleanest
+"identity matters" result this project has produced, and the first placebo
+would have missed it entirely.
+
+**And it is still not enough.** The ranking lifts the rule from *clearly worse
+than hold* (shuffled, median t -1.80) to *still worse than hold* (real, median
+t -1.20). +3.51 on `all` is what that looks like in the one universe where the
+starting point was least bad. The gap between "beats its own shuffle" and
+"beats buy-and-hold" is the entire finding: a control tells you whether the
+idea has content, never whether the idea clears the bar.
+
+**Item 22 and item 23 both close. `xrank` does not go on the board.**
+
+### Faults this run cost, all mine
+
+1. A control that varied two things at once. The same lesson as the spread_of
+   ordering trap: check the trade COUNTS between arms before reading any
+   placebo gap. Written into `shuffled_signal`'s docstring so the next control
+   inherits it.
+2. Four pre-registered predictions, and (a) was WRONG in the useful direction —
+   I predicted the placebo would land within 2.0 points of the real +3.51, i.e.
+   that most of the number was portfolio shape. It landed ~10 points below.
+   (c) was WRONG too, and in the flattering direction: I predicted t_gate on
+   `all` would come in BELOW the uncorrected 1.645 bar. It came in at 1.89, so
+   the rule fails on multiple testing rather than before it. (b) was right —
+   0 corrected cells at the daily gate (276 built, not the 300 I wrote).
+   (d) was half right: shoulders in N, none in lookback.
+   So two of four wrong. Logging them before the run keeps earning its keep,
+   because both misses point the same way — I keep expecting this rule to be
+   emptier than it is, and it keeps having content that still does not clear
+   the bar.
+
+### Outputs
+
+    output/xrank_gate_2026-09-17.json                  legs 2-4, hurdles, knife
+    output/xrank_gate_2026-09-17.png
+    output/measurements/xrank_gate_2026-09-17.csv
+    output/xrank_gate_2026-09-17_shuffle.json          leg 1b
+    output/measurements/xrank_gate_2026-09-17_shuffle.csv   (552 rows x 16 cols)
+    output/logs/xrank_gate_run.log, output/logs/xrank_gate_shuffle.log
+
+## 24. Add the queued entry rules to the board — PLANNED 2026-09-17, NOT RUN
+
+**The user's instruction, verbatim: "all of these".** Given on 2026-09-17 in
+response to the twelve-candidate queue below. It was deferred in that session
+because the live-dashboard request came first and the session had already run
+long. **This is the next kitelab session's whole job**, and it should be a
+session dedicated to it — the rebuild alone is most of a working afternoon.
+
+### Where the queue came from
+
+`scripts/pine_span.py` (new 2026-09-17, in no stamp tier, so it cost nothing to
+run) measured every candidate's firing panel against the twenty board rows with
+`board_span.py`'s machinery. **No returns were read** — not CAGR, not R, not
+excess-vs-hold, nowhere in that file. 1,000 symbols, 0.6 min.
+
+`max |phi|` = the candidate's agreement with its *nearest* board row over LISTED
+cells only. Lower is a more distinct idea. The slate's own internal max is
+0.103; same-family pairs run 0.695 median.
+
+| candidate | firings | % of sessions | max phi | nearest board row |
+|---|---|---|---|---|
+| `cand:rand` (control) | 365,711 | 9.685 | 0.001 | `dv\|own` |
+| `new:gapdn` | 103,603 | 2.744 | 0.036 | `mr\|own` |
+| `new:rsi30` | 49,683 | 1.316 | 0.040 | `vol\|own` |
+| `cand:gap` | 161,875 | 4.287 | 0.043 | `vol\|own` |
+| `cand:mktrel` | 342,402 | 9.068 | 0.045 | `e1\|atr3` |
+| `new:dryup` | 498,636 | 13.205 | 0.070 | `vcon\|own` |
+| `pine:W-full+1` | 101,541 | 2.689 | 0.117 | `dv\|own` |
+| `pine:D-norsi` | 646,818 | 17.129 | 0.117 | `pair\|atr3` |
+| `pine:D-full` | 460,060 | 12.183 | 0.126 | `dv\|own` |
+| `new:low252` | 52,544 | 1.391 | 0.130 | `mr\|own` |
+| `pine:W-norsi` | 146,756 | 3.886 | 0.149 | `pair\|atr3` |
+| `new:inside` | 602,261 | 15.949 | 0.165 | `vcon\|own` |
+| `pine:W-full` | 102,772 | 2.722 | 0.174 | `pair\|atr3` |
+
+Maximin pick order (distance to the nearest already-chosen panel): 1 `gapdn`
+0.9639, 2 `rsi30` 0.9598, 3 `gap` 0.9566, 4 `mktrel` 0.9552, 5 `dryup` 0.9303,
+6 `pine:W-full+1` 0.8834, 7 `pine:D-norsi` 0.8828, 8 `low252` 0.8697,
+9 `pine:W-norsi` 0.8508, 10 `inside` 0.8354, **then it collapses**: 11
+`pine:D-full` 0.1807, 12 `pine:W-full` 0.1682.
+
+**Read that collapse correctly: the Pine contributes ONE idea, not five.** Once
+any Pine variant is chosen the rest are near-duplicates of it (the RSI-filtered
+rule is a subset of the no-RSI one). Adding more than one Pine row would inflate
+the board's label count without adding an idea — exactly the fault the 2026-09-11
+redundancy cut removed. **Pre-registered choice: take `pine:W-full+1` only**, the
+variant the maximin pass reached first.
+
+The five `new:` rules were written into `pine_span.py`'s docstring BEFORE the
+first run, deliberately, so the queue is pre-registered rather than chosen after
+seeing its own phi table.
+
+### What to add — eight new entry families
+
+`gapdn`, `rsi30`, `gap`, `mktrel`, `dryup`, `low252`, `inside`, `pine` (as
+`pine:W-full+1`). Each gets both stop widths, per `registry.STOPS =
+{"own": None, "atr3": 3.0}`, because the stop is a sizing input and the two arms
+are different strategies at the account level (Spearman 0.152 between the arms'
+family rankings — [[kitelab-stop-width-reshuffles-the-board]]).
+
+    10 families x 2 stops = 20 rows,  6,000 cells today
+    18 families x 2 stops = 36 rows, 10,800 cells after
+
+### Prerequisites, in order
+
+1. **Move the signal builders into `kitelab/entries.py`.** Strategy logic lives
+   in `kitelab/`, never in `scripts/` — CLAUDE.md. Today they are scattered:
+   `mktrel`/`gap` in `scripts/entry_exit_grid.build_signals`, the five `new:`
+   rules in `scripts/pine_span.extra_signals`, the Pine in `scripts/wf_pine.py`.
+2. **Register them in `kitelab/registry.py`**, both stop variants each.
+3. **Pine has two convention traps** and both must be settled before the run,
+   not after: weekly firings are stamped on `end_ts` (the DECISION session, per
+   `frames.NAMED_AGG`), and the `+1` shift is the variant that was picked — the
+   2026-09-16 run showed Pine findings *flip* with execution convention, so the
+   choice must be made once and written down.
+4. **Pre-register the expected outcome before running.** PBO on our own
+   criterion is 0.412 ([[kitelab-rank-cut-was-mostly-noise]]). Write what the
+   eight are expected to do — the honest prior from
+   [[kitelab-nine-are-worse-than-hold]] is that they all lose to hold — and then
+   read the result against that sentence, not against the leaderboard.
+5. `entries.py` is already in `NEXT_OPEN_ENGINES` (joined 2026-09-17), so arm B
+   covers these rows if they are built on it. Check that still holds.
+
+### Cost — state it and get approval before starting
+
+Editing `registry.py` (in `signals._SUPPORT`) invalidates **every** signal cache.
+The last comparable full pass was ~1h45m for the grid plus ~1h15m of
+diagnostics on a 20-row board. Thirty-six rows is 80% more partitions, so the
+honest statement is **"time a pilot first"** — `refresh --check` then
+`wf_attach --pilot 1` — and quote the measured number, never one derived from
+the architecture ([[kitelab-verify-estimates-before-stating]],
+[[kitelab-rebuild-speed-is-host-bound]]: 103 vs 146 min for identical work, the
+host and not the code). The grid checkpoints per (fill, strategy, variant), so an
+interrupted run resumes.
+
+### The consequence nobody asked for, which must be reported anyway
+
+**Adding rows makes every existing row harder to believe.** 6,000 cells → 10,800
+cells is 10,800 chances to be lucky; the ~276 cells expected to clear an
+uncorrected p ≤ 0.05 by chance alone becomes ~497, and the Benjamini-Hochberg
+bar tightens for the twenty rows already on the board. `diagnostics.median_mde_80`
+(13.94 pts/yr on the current board) is a property of the board and **must be
+re-read after the rebuild**, not carried over. Say this to the user with the
+result, not as a footnote.
+
+### Verification, after
+
+    python3 -m unittest discover -s tests -t .
+    python3 -m pyflakes kitelab scripts tests
+    python3 -m scripts.preflight
+    node scripts/check_dashboard.js          # run it; never infer from the source
+
+`tests/test_stamps.py` walks the build's import graph and fails on any reachable
+module left out of a stamp — expect it to complain until the new entries are
+registered properly.
+
+### Also still uncommitted from 2026-09-17 (offered, no answer given)
+
+`NEXT_TESTS.md`, `scripts/board_span.py`, `web/dashboard.html`,
+`scripts/check_dashboard.js`, `scripts/pine_span.py`. Ask before committing.
+
+### Outputs already on disk from the selection pass
+
+    output/measurements/pine_span_2026-09-17.csv   19 rows x 9 cols
+    output/pine_span_2026-09-17.json
+    output/pine_span_2026-09-17.png
+
+---
+
+## 25. Does a TRAILING stop help? — RAN 2026-09-17, ANSWER: NO. CLOSED.
+
+**The question, from the user:** *"one questio is the stoploss we are
+considering in kitelab trailing?"*, then *"we will check in this session"* and
+*"we should also test swing low also if we are checking trailing"*, then *"do a
+through analysis, find out if trailing helps in any meaningfull way"*.
+
+**The answer to the first part is no, the board has never trailed.** Every stop
+on the twenty rows is fixed at entry: `entries.py` sets `stop` once and checks
+`close[step] <= stop` unchanged (entries.py:257-288), `darvas.py` the same, and
+`backtest.py`'s `current_stop` moves only under `scale_out="half_be"`, which
+`registry.py` never passes. `kitelab/trailing.py` implements the taught
+swing-low trail and is called only by `strategies.py` and `holygrail.py`,
+neither of which is on the board. The trail was written, tested, and measured
+on nothing the dashboard shows.
+
+### How it was measured
+
+`scripts/wf_trail.py` — out of band, so no signal cache and no grid checkpoint
+was invalidated (`wf_attach.py`'s discipline). It calls `entries.signal()` for
+the entry and replicates only the holding loop, several ways on one pass of the
+data. **SELF-CHECK first**: the `fixed` arm must reproduce `entries.simulate`
+trade-for-trade before any number is written — 546 trades across 6 entries x 2
+symbols, exact on `entry_ts, exit_ts, shares, stop, exit_price, net_profit,
+exit_reason`.
+
+Exactly one thing varies. `sizing.position()` reads the INITIAL stop, so every
+arm buys the identical shares on the identical bar and only the exit differs —
+the failure mode the first xrank placebo had (2,776 trades against 31,400) is
+impossible here by construction.
+
+Seven arms:
+
+    fixed        the board's convention, stop never moves
+    atr          stop = max(stop, close - 3 x ATR14), recomputed each bar
+    swing        trailing.pivot_lows: raise to a 5-bar CONFIRMED pivot low,
+                 and only to one below the current bar's low
+    cap_atr      control: a time stop at the atr arm's own median hold
+    cap_swing    control: the same for swing
+    rnd_atr      control: each trade's hold DRAWN from the atr arm's own
+                 realised hold distribution, seeded
+    rnd_swing    control: the same for swing
+
+Three legs: (1) the sweep, 120 paired account cells per width (6 entries x 5
+universes x 2 risks x 2 capitals, start 2018, priority mom_hi, costs on);
+(2) the controls, because a trail's whole effect is exiting sooner and "it beat
+fixed" could be nothing but that; (3) a Newey-West HAC t on the PAIRED DAILY
+excess of the two accounts — the board's own day-by-day machinery — because a
+median over 120 correlated cells is a description and not a test.
+
+    python3 -m scripts.wf_trail --cells                 # 7.4 min
+    python3 -m scripts.wf_trail --cells --width own     # 8.3 min
+
+### The verdict
+
+**Leg 1 — trailing loses to the fixed stop at both widths.**
+
+    width   arm     median vs fixed   cells ahead   IQR
+    atr3    atr          -0.60          49/120      [-2.62, +1.12]
+    atr3    swing        -1.35          39/120      [-4.33, +0.72]
+    own     atr          -0.95          54/120      [-5.83, +3.12]
+    own     swing        -0.85          54/120      [-5.03, +4.55]
+
+Two families liked it at the atr3 width (`cal` +1.00/+2.95, `mr` +0.55/-0.05)
+and four did not (`vol` -2.80/-3.30, `pull` -1.55/-4.35).
+
+**Leg 3 — and the day-by-day test says none of that is signal.** Across both
+widths and both trail arms, **21 cells reach t <= -1.96 against 1 at
+t >= +1.96**, where ~6 of each were expected by chance. Median cell t is
+-0.20 (atr) and -0.50 (swing) at atr3, -0.12 and -0.10 at `own`. Best family:
+`cal`/swing at median t +0.57, best single cell 1.26. Nothing survives.
+
+**Leg 2 — the surprise, and it does not rescue the trail.** Both trails beat
+their own hold-matched placebo, so the exit timing carries real information.
+Decomposed on the atr3 width, medians over the same 120 cells:
+
+    arm      net vs fixed   timing (vs rnd_*)   cost of exiting that early
+    atr          -0.60           +0.90                    -1.25
+    swing        -1.35           +2.35                    -3.80
+
+The trail buys roughly +1 to +2.4 CAGR points of genuine timing and pays
+-1.3 to -3.8 for the turnover that timing forces. Day by day, `swing` beats
+`rnd_swing` in 24 of 120 cells at t >= +1.96 against 6 expected (median t
++0.73) — real, and far too small to matter. **Exactly the shape of item 23:
+beats its own placebo, still loses to the incumbent.** Keep the two sentences
+apart.
+
+**A control caveat worth carrying forward.** At the `own` width the control
+gaps look enormous (+23.5 and +28.1 pts) and they are an artefact: the median
+hold there is 3 sessions with a long tail, so a time stop at the MEDIAN cuts
+the MEAN hold from 13.6 sessions to 2.2. The control is crippled, not matched,
+and the gap mostly measures what cutting exposure 5x does to an account.
+**Median-matching a skewed distribution is not matching** — check the mean and
+the trade count before reading any placebo gap. The atr3 arms match within ~20%
+on mean hold (atr 36.4 vs rnd_atr 29.9, swing 21.8 vs rnd_swing 18.3) and are
+the ones quoted above.
+
+### The mechanism, which is large and was never in doubt
+
+Pooled over the whole universe at the atr3 width (`mr`, representative):
+
+    arm      trades    median hold   % ended by the stop   mean R
+    fixed    54,577        60               37.6           0.2235
+    atr      66,636        36               74.4           0.1631
+    swing    92,821        12               86.8           0.0847
+
+Trades +22% (atr) and +70% (swing); median hold 60 -> 36 -> 12 sessions; the
+share of trades the stop ends 37.6% -> 74.4% -> 86.8%; spread paid on `mr`
+291M -> 346M -> 499M. The board's stop already ends 60-93% of trades and the
+2026-09-17 exit measurement showed those exits cut WINNERS; a trail is a
+machine for cutting them earlier.
+
+### The pre-registration held
+
+Written into the script before the first run: *"Trailing will make things
+WORSE, not better, and the mechanism is turnover... If a trail arm WINS, that
+is the surprising result and it does not go on the board on this evidence."*
+The one-cell pilot briefly showed `swing` at +1.20 (4 of 6 families) and that
+was reported as noise at the time; the 120-cell sweep returned it to -1.35.
+A single favourable cell is worth almost nothing here — PBO on this project's
+own selection criterion is 0.412.
+
+### Consequence
+
+**Nothing changes on the board.** No trailing arm is added; `registry.STOPS`
+stays `{"own": None, "atr3": 3.0}`. The exit axis remains what item 21 found it
+to be: the stop is the constraint, and moving it up only tightens that
+constraint. Do not re-open this without a NEW mechanism (a trail that widens
+rather than tightens, a volatility-scaled hold limit) — re-running the same
+three arms on a different start year is not a new question.
+
+### Outputs on disk
+
+    output/measurements/wf_trail_2026-09-17_atr3.csv        840 rows
+    output/measurements/wf_trail_daily_2026-09-17_atr3.csv   720 HAC tests
+    output/measurements/wf_trail_2026-09-17_own.csv
+    output/measurements/wf_trail_daily_2026-09-17_own.csv
+    output/wf_trail_2026-09-17_{atr3,own}.json / .png
+    output/logs/wf_trail_legs_{atr3,own}.log
