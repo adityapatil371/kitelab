@@ -1825,6 +1825,33 @@ concentration**. Item 10's Finding 3 is the standing warning that the account
 layer takes back most of a trade-level gain. Nothing here is addable until it
 has been through `portfolio.run`.
 
+### Follow-up 2026-09-17 — the account layer REVERSES the trade-level stop finding
+
+Item 20's revision found that widening the stop took trade-level cells beating
+buy-and-hold from 2 to 13 of 72. I proposed from that: *"the rules were never
+bad, they were strangled."* **That is FALSIFIED for the board's nine rules.**
+Re-read from `output/measurements/stop_sweep_2026-09-16.csv` (no re-run):
+
+    stop     median excess   90th pct   cells > hold (of 828)
+    own          -7.96        +2.55            139
+    2xATR        -7.22        +1.13            103
+    3xATR        -7.19        +1.05            100
+    10% flat     -7.04        +0.87            110
+
+Both item 11's headline and this are true and they are not in conflict.
+Widening lifts the **middle** of the distribution (+1.55 median per-rule, which
+is the +1 to +1.6) while **collapsing the right tail** — 90th percentile +2.55
+→ +1.05, winners 139 → 100. A wider stop makes these rules more consistently
+mediocre, not better. **All 54 rule × stop medians remain negative; best
+anywhere is −2.02.** The loss of winners is worst at ₹1 crore (37 → 20), which
+is the concentration/cash signature of item 10's Finding 3.
+
+**The lesson is about the harness, not the stop.** Item 20 has no account
+layer. A trade-level improvement that ignores the cash constraint can point the
+opposite way from the same change priced through `portfolio.run`. Nothing from
+item 19/20 is addable until it has been through the account layer — including
+`xrank × stop`, today's best trade-level cell, which has NOT been.
+
 ### Outputs
 
     output/measurements/entry_exit_grid_2026-09-17.csv     72 cells
