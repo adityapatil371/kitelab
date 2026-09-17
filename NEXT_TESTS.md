@@ -1858,3 +1858,83 @@ item 19/20 is addable until it has been through the account layer — including
     output/measurements/entry_exit_attrib_2026-09-17.csv   the decomposition
     output/entry_exit_grid_2026-09-17.png
     output/logs/entry_exit_grid_run.log
+
+---
+
+## 21. `xrank` through the account layer — it does NOT survive — RAN 2026-09-17
+
+`scripts/xrank_account.py`, 52.7 s, no rebuild. Item 20's best of 216 cells,
+priced through `portfolio.run` on the board's own 92 live scenarios.
+
+**Verdict: the trade-level +4.52 bp/session becomes −4.84 CAGR points a year
+below buy-and-hold. The sign flips. `xrank` is not addable.**
+
+    stop   trade level      account level   beats hold   best cell   median taken
+    own    +2.21 bp/sess     -10.07 pts/yr     6 / 92      +9.38         719
+    2xATR  +4.19 bp/sess      -6.49 pts/yr     7 / 92      +5.17         542
+    3xATR  +4.52 bp/sess      -4.84 pts/yr    14 / 92      +5.14         463
+
+**Mirror check passed before anything was priced**: 23,956 / 10,290 / 8,158
+trades, matching `entry_exit_grid_2026-09-17.csv` exactly at all three stops.
+`panels`, `build_signals`, `exits_for_symbol` and `walk` are IMPORTED from
+`scripts.entry_exit_grid`, so the trade list cannot drift from the one that
+produced +4.52. The two numbers differ by the account layer and nothing else.
+
+### Finding 1 — the account can afford 3 to 7% of the signals
+
+    stop   capital        taken / available
+    own    Rs 2 lakh        624 / 23,956   =  2.6%
+    own    Rs 1 crore       996 / 23,956   =  4.2%
+    3xATR  Rs 2 lakh        371 /  8,158   =  4.5%
+    3xATR  Rs 1 crore       536 /  8,158   =  6.6%
+
+`xrank` fires on the top decile of 1,000 stocks — about 100 names on any given
+session. No account can hold 100 positions at a risk budget of 0.5-1%. So 93
+to 97% of the edge measured in item 20 is **unreachable**: the account takes
+whichever few the priority function ranks first and the rest never happen. A
+cross-sectional rule that fires on a *decile* is the worst possible shape for a
+cash-constrained book, and item 20 had no way to see that.
+
+### Finding 2 — the stop effect REVERSES sign between rule families
+
+This is what item 20's revision and item 11 were really disagreeing about, and
+both are right about their own rules:
+
+    widening own -> 3xATR       median excess      cells beating hold
+    the board's nine (item 11)   -7.96 -> -7.19      139 -> 100   (DOWN)
+    xrank (here)                -10.07 -> -4.84        6 ->  14   (UP)
+
+Widening helps a rule whose trades were being **cut short by the stop** and
+hurts a rule that **exits on its own signal** before the stop ever binds. At
+`own`, `xrank` held a median of 2 sessions — it was almost entirely stop-driven,
+so the stop was the rule. The board's EMA rules exit in a median 3 sessions on
+their own signal whatever the stop is set to (item 11 says this explicitly).
+**"Widen the stop" is not a general improvement. It is a fix for one failure
+mode, and it must be tested per rule.**
+
+### What this closes, and the claim I got wrong
+
+I read item 20's revision as *"the rules were never bad, they were strangled."*
+That is **half right and was stated far too broadly**. `xrank` genuinely was
+strangled — unstrangling it is worth +5.23 points — and it still loses by 4.84.
+Strangling was never the reason these rules trail buy-and-hold.
+
+`xrank` also does not beat what is already on the board: item 11's best row is
+`dv|55-20 + weekly` at 3xATR, −2.02, against `xrank`'s −4.84. Mid-pack among
+the nine, better than five and worse than four. **Item 19's nine entries are
+distinct (item 19) and the best of them still loses at account level. The
+entry was never the problem — item 20 said so and this confirms it in the
+one harness that prices the cash constraint.**
+
+### Where this points
+
+The binding constraint is **breadth vs capital**, not entry quality. A rule
+that fires 100 names a session into an account that can hold 10 is being
+graded on a portfolio it cannot own. The open question worth money is not
+"which entry", it is **"what does a rule that fires 5 names a session do"** —
+i.e. a sharper threshold, not a decile. Untested, and cheap: `XRANK_TOP` is one
+constant in `scripts/entry_zoo.py`.
+
+Outputs: `output/measurements/xrank_account_2026-09-17.csv` (276 rows),
+`output/xrank_account_2026-09-17.json`, `output/xrank_account_2026-09-17.png`,
+`output/logs/xrank_account_run.log`.
