@@ -1655,3 +1655,126 @@ to attribute which layer earns what — still under `scripts/`, still free. The
     output/measurements/entry_zoo_phi_2026-09-17.csv       the 18x18 matrix
     output/entry_zoo_2026-09-17.png
     output/logs/entry_zoo_run.log
+
+---
+
+## 20. Entry × exit grid — the EXIT does ~3.5× the work of the entry — RAN 2026-09-17
+
+Asked by the user 2026-09-17 ("do the entry x exit grid"), following item 19.
+`scripts/entry_exit_grid.py`, **18.4 s, no rebuild, nothing stamped touched.**
+
+72 cells: the nine entries from item 19 × eight exits. **Both axes carry a
+control** — `rand` entry (coin flip at a matched rate) and `rnd` exit (random
+holding period) — so the corner cell is the null every other cell is read
+against. 56 real cells feed the decomposition.
+
+Conventions taken from the project, not invented: entry at the signal's own
+close; **the stop is the entry candle's own low and is ON IN EVERY CELL**, so
+an "exit" here is the *additional* way out; a gap through the stop fills at the
+open; stop and target in one bar assume the stop; a gap through the target
+fills at the target, not the better open; one position per symbol; the spread
+charged on both fills from `kitelab.slippage`'s own ladder, vectorised and
+**checked against the scalar `half_spread` on 300 random cells (max difference
+0.00e+00)** before use.
+
+### Finding 1 — the exit explains ~66% of the spread, the entry ~19%
+
+Two-way decomposition over the 56 real cells, on two different metrics:
+
+| metric | entry | exit | interaction |
+|---|---:|---:|---:|
+| `ann_pct` (sum of trade returns per stock-year) | 23.7% | **64.8%** | 11.5% |
+| `vs_hold_bp` (per session held, minus drift) | 19.1% | **66.4%** | 14.5% |
+
+The two metrics measure very different things and agree to within 5 points,
+which is the reason to believe the split. `ann_pct` rewards an exit merely for
+trading more often; `vs_hold_bp` divides that out and asks the same question
+per session in the market. **The exit still wins.**
+
+This is the more striking because the entry menu is the more diverse of the
+two. Item 19 proved the eight entries are mutually distinct (max phi 0.091)
+and distinct from the whole board (max 0.157), whereas the seven exits are
+close to one dial — `corr(log trades per year, edge vs hold)` is **−0.834**
+across exits against **−0.467** across entries. The less varied axis dominates.
+
+### Finding 2 — the mechanism, MEASURED rather than asserted
+
+Median holding period is **1–2 sessions in every cell**, because the stop fires
+first: it ends **60–93%** of all trades, always at about **−3%**. So every exit
+rule handles losses identically and differs only in when it cuts a *winner*.
+
+Averaged over the eight entries, what the trade was worth when each rule bound:
+
+| exit | % ended by the stop | return when the STOP ended it | return when the RULE ended it |
+|---|---:|---:|---:|
+| `stop` (120-session cap only) | 92.6 | −3.32 | **+53.86** |
+| `t60` | 90.0 | −3.21 | +31.03 |
+| `t20` | 84.0 | −3.01 | +12.94 |
+| `t5` | 71.8 | −2.71 | +4.20 |
+| `r2` | 68.4 | −3.13 | +4.19 |
+| `ma20` | 60.2 | −2.62 | +0.12 |
+| `chan10` | 82.4 | −3.04 | −0.20 |
+
+Every exit rule binds on a trade that is **in profit** — the stop already took
+the losers. And the exit ranking is almost exactly this column's ordering. The
+exit axis is not "how you manage risk"; risk is the stop's job and it is the
+same in all 72 cells. **The exit axis is how much profit you hand back.**
+`ma20` and `chan10` are worst because they wait for price to fall back to the
+average or the channel, by which time the gain is gone and the spread is still
+due.
+
+This is consistent with item 10's "the stop, not the exit, sets the holding
+period", and gives the reason.
+
+### Finding 3 — 2 of 72 cells beat simply owning the stock, and both barely
+
+Benchmark: the same panel's equal-weighted mean return is **8.15 bp per
+session**. Deliberately not annualised — it is an *arithmetic* mean of daily
+returns and compounding it would sit far above the universe's real CAGR (the
+arithmetic mean exceeds the geometric by about half the variance, large in 631
+small caps). Every cell is measured the same way, so the *difference* is fair
+even though the level is not a return anyone earned.
+
+    xrank x stop   +2.21 bp/session   exposure 12.5%   23,956 trades
+    pull  x stop   +0.56 bp/session   exposure 25.5%   68,166 trades
+
+Both sit on the lowest-turnover exit. Neither is a result: at 12.5% exposure
+`xrank × stop` earns far less in total than holding, it is only better per unit
+of time at risk. **And there is no account here** — no cash constraint, no
+sizing, no priority, no cap on concurrent positions. Item 10 finding 3 found
+the account layer takes back most of a gross gain, so these are candidates for
+the grid, never results from it.
+
+### Finding 4 — a random entry beats six of the eight real ones on `stop`
+
+`rand × stop` scores `ann_pct` 6.04, above six real entries. That is not a
+scandal, it is a definition: hold-until-stopped with a 120-session cap is
+nearly buy-and-hold, and the universe drifted up. It is also why the entry
+control was built — without it the `stop` column would read as entry skill.
+
+Exposure-adjusted entry effects (bp/session): `pull` +11.27, `xrank` +9.77,
+`cal` +6.74, `vol` +6.64, `mktrel` +1.79, `vcon` −7.28, `gap` −11.73,
+`mr` −17.19. Mean reversion is the worst entry as well as the most distinct
+one — distinctness and quality are separate axes, as item 19 said.
+
+### What this does NOT say
+
+No account, no cash constraint, no sizing, no impact (only the spread).
+`ann_pct` is an arithmetic scaling, **not a CAGR**. The attribution is
+conditional on these two menus; a wider exit menu would move the share, though
+the direction of the asymmetry is if anything understated, since the entries
+are the more varied axis.
+
+### Where this points
+
+The entry axis is not where the money is. If the next thing built is a rule
+meant to beat hold, **it should vary the exit, and specifically the
+profit-give-back**, with entries treated as the cheap axis. `stop` and `t60`
+are the only two exits that clear the null.
+
+### Outputs
+
+    output/measurements/entry_exit_grid_2026-09-17.csv     72 cells
+    output/measurements/entry_exit_attrib_2026-09-17.csv   the decomposition
+    output/entry_exit_grid_2026-09-17.png
+    output/logs/entry_exit_grid_run.log
