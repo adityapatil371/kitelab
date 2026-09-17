@@ -1535,3 +1535,123 @@ Outputs (gitignored): `output/measurements/alpha_priority_2026-09-16.csv` and
 `..._mirror.csv` (1,976 rows each), `output/alpha_priority_2026-09-16.png` and
 `..._mirror.png`, `output/logs/alpha_priority_run.log` and
 `..._mirror_run.log`, checkpoint `output/alpha_ckpt_2026-09-16.pkl`.
+
+---
+
+## 19. Nine entry rules that are NOT what the board does — RAN 2026-09-17. VERDICT: ALL NINE ARE DISTINCT
+
+Set by the user, 2026-09-17: *"variance thats what im looking for, all the
+different ways we can enter, then we can narrow down the entry and exit rules
+whcih are legit useful"*, and when asked how wide the first pass should be,
+*"1. all nine"*.
+
+The board is nine labels carrying two ideas — five moving-average trend rules
+and four channel breakouts, `n_eff` 4.0 against `tried` 9. Every one of them
+waits for price to already be rising and then buys. This asks what else an
+entry could key on.
+
+`scripts/entry_zoo.py`, **15.0 s, no rebuild, nothing stamped touched.**
+
+### What was compared — signals, not equity curves
+
+For every rule, the boolean panel "did this want to be long this stock at this
+close", over 1,012 stocks × 5,107 sessions = **3,776,153 listed
+stock-sessions**. The board's own panels come from the entry stamps in its
+signal caches, which hold every trade each rule generated with no account in
+front of them (`scripts/entry_edge.py` leans on the same fact). Reported as
+**phi**, the correlation of two boolean panels, with Jaccard alongside because
+phi is bounded by the two firing rates.
+
+Two caveats, stated rather than implied: a rule cannot re-enter a stock it
+already holds, so a board panel *understates* how often that rule would fire;
+and these are signal correlations, not the return correlations that produced
+the 0.646 and 0.616 figures elsewhere in this file — indicative, not directly
+comparable.
+
+### The metric is calibrated at BOTH ends, and that is why the result is readable
+
+`rand` (Bernoulli at the median firing rate of the other eight) validates the
+low end. The board validates the high end — it is *known* to be redundant, so
+if board-vs-board also read ~0.1 the metric would be blind and every "distinct"
+below would be meaningless.
+
+| | max phi | mean phi | pairs > 0.30 |
+|---|---:|---:|---:|
+| board vs board | **0.958** | 0.123 | 6 of 36 |
+| candidate vs board | **0.157** | 0.005 | **0 of 81** |
+| candidate vs candidate | 0.091 | −0.005 | 0 of 28 |
+| placebo `rand` vs board | 0.000 | — | — |
+
+The metric finds duplication where the 2026-09-11 redundancy pass said it was,
+and finds none anywhere near the nine candidates.
+
+### Finding 1 — all nine candidates are distinct from the entire board
+
+Worst case across 81 candidate×board pairs is `vol` against `dv|20-10 1TF` at
+**0.157**. For scale the board's own `ema|0.0`/`pair|MD` is 0.843 on this same
+metric. The candidates are also distinct from *each other* (worst 0.091,
+`gap`/`vol`), so this is nine slots, not nine names for three ideas.
+
+| rule | what it keys on | fires on | nearest board rule | phi |
+|---|---|---:|---|---:|
+| `vol` | volume > 3× its 50-session median | 9.95% | `dv|20-10 1TF` | 0.157 |
+| `mktrel` | stock up 20d while the proxy is down 20d | 9.07% | `ema|0.0` | 0.049 |
+| `gap` | opens > 3% above the previous close | 4.29% | `dv|20-10 1TF` | 0.035 |
+| `xrank` | top decile of 252d return, cross-sectionally | 9.36% | `dv|20-10` | 0.025 |
+| `cal` | first session of the month (no price input) | 4.87% | `e1|daily` | 0.022 |
+| `pull` | close > SMA200 and close < SMA20 | 11.79% | `ema|0.0` | 0.005 |
+| `vcon` | narrowest high−low of the last 7 sessions | 16.54% | `eath|MW` | −0.004 |
+| `mr` | a new 20-session low | 11.58% | `eath|MW` | −0.016 |
+| `rand` | **placebo, not a candidate** | 9.68% | — | 0.000 |
+
+`mr` is negative against **all nine** board rules, which is structural rather
+than lucky: it buys weakness and every board rule buys strength.
+
+### Finding 2 — `dv|55-20`'s entries are a 99.98% SUBSET of `dv|20-10`'s
+
+Not a correlation — a direct set comparison of two different cache files
+(`Turtle_w20_55_20` vs `Turtle_w20_20_10`):
+
+    dv|20-10   11,715 unique (symbol, entry date)
+    dv|55-20   10,768
+    shared     10,766  = 100.0% of dv|55-20, jaccard 0.919
+
+**Every entry `dv|55-20` ever made bar two, `dv|20-10` also made.** Whatever
+separates them lives entirely in the exit. This matters because `CLAUDE.md`
+calls `dv|55-20` "the find — the one top-ranked rule that is not a near-copy of
+another", on the strength of a 0.080 loading on the common return factor. Both
+statements are true at once: the *returns* diverge because the channel exits
+differ, while the *entries* are the same rule. It is evidence for separating
+the two layers, not against the earlier finding.
+
+The contrast is inside the same family — the 1TF pair shares only jaccard
+0.176, so this is a property of those two rules, not of Darvas in general.
+
+### The market proxy, and its limit
+
+There is no index price history in `/data/clean/kitelab` (the instrument dump
+lists NIFTY 50 and carries no candles). `mktrel`'s proxy is the equal-weighted
+cross-sectional mean daily return of the universe itself. That universe is 631
+small caps of 1,000, so **it is a proxy for this universe and it is not NIFTY.**
+Say so wherever the number is quoted.
+
+### What this does NOT say
+
+Nothing here is a performance claim. Distinctness was the whole question, per
+the user 2026-09-16: *"the reason why i wanted pine is that its according to
+your own words different than existing rules, doesnt matter that none of thr
+rules beat buya and hold"*. A distinct rule that loses is still distinct.
+
+### Next, and the cost
+
+Everything above is free and repeatable in 15 s. The next step is the
+entry × exit grid — hold the exit fixed to isolate the entry axis, then vary it
+to attribute which layer earns what — still under `scripts/`, still free. The
+103–150 min rebuild gets paid **once, at the end, for survivors only.**
+
+### Outputs
+
+    output/measurements/entry_zoo_signals_2026-09-17.csv   firing rates
+    output/measurements/entry_zoo_phi_2026-09-17.csv       the 18x18 matrix
+    output/entry_zoo_2026-09-17.png
+    output/logs/entry_zoo_run.log
