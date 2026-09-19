@@ -852,9 +852,112 @@ function gateStrip(row) {
     : g.map(([, ok]) => ok == null ? "·" : ok ? "✓" : "✗").join(" ");
 }
 
+/* ---------------------------------------------------------------- PLAIN ----
+   WHY THIS EXISTS (2026-09-19, the user's words: "our dashboard is too numbers
+   heavy, as a stats person im fine but normal people cant use it").
+
+   Everything below FORMULA is precise and unreadable to anyone who does not
+   already know the vocabulary. Nothing there is wrong, so nothing there is
+   deleted -- it is DEMOTED. Every number on this page now leads with one
+   plain sentence, and the exact definition sits under a "the precise version"
+   toggle next to it. A reader who wants the Newey-West lag still gets it; a
+   reader who wants to know whether the rule made money no longer has to read
+   about the Newey-West lag to find out.
+
+   These strings live in the PAGE and not in the payload on purpose.
+   scripts/dashboard_data.py and kitelab/registry.py are both in the cache
+   stamp (signals._ACCOUNT and _SUPPORT), so adding a prose field to either
+   would cost a ~178-minute rebuild to publish text that changes no number.
+   The page costs nothing. The risk of holding registry keys here by hand is
+   the duplication registry.setting_label's docstring was written to kill --
+   so check_dashboard.js asserts every family in the payload has an entry here
+   and that no entry here is an orphan. Loud, not silent. */
+
+const PLAIN_FAMILY = {
+  mr:     "Buys a stock on the day it closes at its lowest price in 20 trading days. The bet: it has fallen further than the news deserves, and will bounce.",
+  vcon:   "Buys after a week in which the stock barely moved — its narrowest 7-day range. The bet: a quiet stock is coiling, and the next big move is up.",
+  vol:    "Buys on a day when three times the usual number of shares change hands. The bet: a crowd that size usually knows something.",
+  cal:    "Buys on the first trading day of every month, whatever the price is doing. This rule contains no market information at all — it is on the board deliberately, as a control, so you can see what a rule with nothing in it looks like.",
+  xrank:  "Every day, ranks every stock by its return over the past year and buys the top 10%. The bet: winners keep winning.",
+  pull:   "Buys a stock that is above its 200-day average (a long uptrend) but below its 20-day average (a short dip). The bet: buy the dip in something that is rising.",
+  gapdn:  "Buys a stock that opens 3% below where it closed yesterday. The bet: overnight panic overshoots, and the day recovers.",
+  rsi30:  "Buys when RSI climbs back above 30. RSI is a 0–100 gauge of recent gains against recent losses, and below 30 is the traditional “oversold” line — so this buys the moment a beaten-down stock stops falling.",
+  gap:    "Buys a stock that opens 3% above yesterday's close. The bet: good news keeps working — the exact opposite bet to Gap down, which is why both are on the board.",
+  mktrel: "Buys a stock that rose over the past month while the market as a whole fell. The bet: strength against the tide is real strength.",
+  dryup:  "Buys when trading volume falls to under half its normal level. The bet: when nobody is left who wants to sell, the price can only go up.",
+  low252: "Buys at the lowest price in a year (252 trading days is one trading year). The deepest version of the same bet Mean reversion makes.",
+  inside: "Buys when an entire day's price range fits inside the previous day's. The bet: a pause before the move continues.",
+  pine:   "Your own TradingView rule, on weekly bars: a Heikin-Ashi candle with no lower wick, a monthly moving-average trend filter, and an RSI check. Heikin-Ashi is a smoothed candle — each one averages the real prices around it, so a run of them looks cleaner than the actual price did.",
+  e1:     "Buys when the price crosses above its 20-day exponential moving average — a smoothed price line that leans on recent days more than old ones.",
+  pair:   "The same monthly and weekly moving-average crosses as “within 10% of the high”, but WITHOUT the near-the-high filter. This is not a proposal. It is the control, on the board only so the filtered version has something honest to be measured against.",
+  eath:   "Buys on monthly and weekly moving-average crosses, but only in stocks trading within 10% of their all-time high. The bet: buy strength, not bargains.",
+  dv:     "The classic Turtle breakout: buy when the price makes a 55-day high, sell when it makes a 20-day low, with a weekly confirmation. Named after a 1980s experiment that taught this exact rule to novices to see whether trading could be taught.",
+};
+
+/* One plain sentence per number. Keys match FORMULA's, so the page can show
+   the plain line and the precise one side by side without a second lookup. */
+const PLAIN = {
+  family:    "Which trading rule this row is. The rule decides WHEN to buy.",
+  setting:   "Where the stop-loss goes — the price at which a losing trade is abandoned. Every rule on the board is run twice, once with each stop, because the stop also decides how many shares are bought: a wider stop means a smaller position.",
+  gatesPassed: "Five pass/fail checks, shown left to right. ✓ passed, ✗ failed, · could not be tested. A rule has to pass all five to be believed, so one ✗ is enough.",
+  validated: "Did the rule pass all five checks? This is an AND, not a score — a rule that fails one check ranks below every rule that passes all five, however good its other numbers look.",
+  cagr:      "The rule's yearly return, compounded. 12 means the account grew about 12% a year on average.",
+  vsHold:    "THE NUMBER THAT MATTERS. How much better or worse the rule did, each year, than simply buying every stock in the list and never selling. Negative means you would have done better doing nothing at all.",
+  maxdd:     "The worst fall from a high point the account ever suffered. −40 means that at some point the account was worth 40% less than its best day. This is the number that decides whether a strategy is survivable in real life.",
+  mar:       "Yearly return divided by that worst fall — return per unit of pain. Higher is better.",
+  dailyT:    "Whether the rule beat buy-and-hold consistently, day by day, rather than on one lucky run. Bigger is stronger evidence; above about 2.6 counts here.",
+  fillDelta: "What the rule loses once you admit you cannot buy at a price you only knew at the end of the day. Shown, never used to pass or fail a rule.",
+  walkFrac:  "How many separate three-year stretches of history the rule beat buy-and-hold in. Useful for seeing WHEN a rule worked, but too weak to judge it on — a rule with no edge whatsoever passes this about half the time.",
+  tStat:     "Whether the rule's average trade is better than buying the same stocks on random days. It answers “is this skill or is this just a rising market?”",
+  taken:     "How many trades the account could actually afford. Compare it with the signals offered — the gap is running out of cash.",
+  capture:   "The share of the rule's signals the account could actually fund. 40% means three out of five signals were skipped for want of money.",
+  ulcer:     "Like the worst fall, but it also counts how LONG the account stayed underwater, not just how deep it went.",
+  sharpe:    "Return per unit of wobble. The standard way of asking whether the returns were worth the ride.",
+  sortino:   "Like Sharpe, but it only counts downward wobble as risk — going up sharply is not a problem anyone needs protecting from.",
+  exposure:  "The share of days the account had money in the market rather than sitting in cash.",
+  final:     "What the account was worth at the end.",
+};
+
+/* The five gates, in plain words. Same order as gateItems(), and
+   check_dashboard.js asserts the two lists stay the same length. */
+const PLAIN_GATE = [
+  "Did it make more money than just buying everything and waiting?",
+  "Could it be told apart from the same trades run on shuffled, meaningless prices?",
+  "Did it beat buy-and-hold steadily, day after day, instead of on one lucky run?",
+  "Does it still win after real trading costs are charged?",
+  "Is it far enough ahead of luck, given that 36 rules all had a go at this data?",
+];
+
+/* These strings are ours, not user input, but they contain "<=" and "&" and
+   they go through innerHTML, so they are escaped rather than trusted. */
+function esc(t) {
+  return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/* <details> so the precise wording is one click away and never in the way. */
+function precise(key) {
+  return FORMULA[key] ? `<details class="prec"><summary>the precise version</summary>
+    <div>${esc(FORMULA[key])}</div></details>` : "";
+}
+
+/* THE COMPARE TABLE IS FIVE COLUMNS (2026-09-19, the user's call: "the compare
+   table is too crowded we dont need that much info just name gates cagr vs
+   hold drawdown thats it"). It was fourteen, which is a spreadsheet and not a
+   verdict. Nothing is lost -- every key removed here is still rendered in
+   Detail, which this repo requires (CLAUDE.md: everything in the payload is
+   displayed). COLS stays whole because Detail, the export and the formula
+   table all read it; only what Compare DRAWS is filtered. */
+const COMPARE_KEYS = ["family", "setting", "gatesPassed", "vsHold", "maxdd"];
+
+/* COLS in COMPARE_KEYS order, so the column order is stated in one place
+   rather than implied by COLS's order plus a filter. */
+function shownCols() {
+  return COMPARE_KEYS.map(k => COLS.find(c => c[0] === k));
+}
+
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
-  ["setting", "Setting",  r => !r.noTrades ? r.setting
+  ["setting", "Stop-loss",  r => !r.noTrades ? r.setting
                                 : (r.setting === "—" ? emptyNote(r)
                                                      : `${r.setting} · ${emptyNote(r)}`), "l"],
   ["validated", "Validated", r => r.validated == null ? "—"
@@ -863,15 +966,15 @@ const COLS = [
   /* Sorted on r.gatesPassed, which is why the key is that and not "gates":
      sortedRows() reads r[S.sort], so clicking this header orders the board by
      how far each row got rather than alphabetically by its glyphs. */
-  ["gatesPassed", "Gates", gateStrip],
+  ["gatesPassed", "Five checks", gateStrip],
   ["cagr",    "CAGR",     r => r.r ? cagrText(r.r) : "—"],
   /* "Is it real", not just "how big" -- computed once per strategy, fixed
      scenario, see valFor()/FORMULA above. Missing (an em dash) below the
      30-trade floor kitelab.validation applies, same as an insufficient
      sample anywhere else on this page. */
-  ["vsHold",  "vs Hold",  r => r.vsHold == null ? "—"
+  ["vsHold",  "vs Buy & Hold",  r => r.vsHold == null ? "—"
                                : (r.vsHold > 0 ? "+" : "") + r.vsHold.toFixed(1)],
-  ["maxdd",   "Drawdown", r => pct(r.maxdd)],
+  ["maxdd",   "Worst fall", r => pct(r.maxdd)],
   ["mar",     "MAR",      r => num(r.mar)],
   ["dailyT",  "Daily edge", r => r.dailyT == null ? "—" : "t=" + r.dailyT.toFixed(1)],
   ["fillDelta","Next open", r => r.fillDelta == null ? "—"
@@ -909,7 +1012,7 @@ function renderCompare() {
   const t = $("cmp"); t.innerHTML = "";
   const hr = t.createTHead().insertRow();
   const rank = document.createElement("th"); rank.className = "l"; hr.appendChild(rank);
-  for (const [key, label, , cls] of COLS) {
+  for (const [key, label, , cls] of shownCols()) {
     const th = document.createElement("th");
     th.textContent = label; if (cls) th.className = cls;
     if (FORMULA[key]) th.title = FORMULA[key];
@@ -923,7 +1026,7 @@ function renderCompare() {
   const tb = t.createTBody();
   if (!list.length) {
     const td = tb.insertRow().insertCell();
-    td.colSpan = COLS.length + 1; td.className = "empty l";
+    td.colSpan = shownCols().length + 1; td.className = "empty l";
     /* An instrument whose lot exceeds the account is the commonest reason for
        an empty table now, and "try an earlier year" would send the reader
        looking in the wrong place entirely. */
@@ -944,7 +1047,7 @@ function renderCompare() {
       : "The account took no trade on this rule at this scenario -- "
       + "nothing affordable, or nothing signalled in the span. Every column is empty for want "
       + "of a value, not for want of a computation.";
-    for (const [key, , fmt, cls] of COLS) {
+    for (const [key, , fmt, cls] of shownCols()) {
       const td = tr.insertCell();
       td.textContent = fmt(r);
       td.className = cls || "num";

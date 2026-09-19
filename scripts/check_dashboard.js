@@ -130,12 +130,14 @@ global.fetch = async url => {
 const driver = `
   DATA = hydrate(JSON.parse(require("fs").readFileSync(process.env.KITELAB_DASHBOARD_JSON, "utf8")));
   init();
-  module.exports = { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS };
+  module.exports = { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS,
+                     COMPARE_KEYS, COLS, PLAIN_FAMILY, PLAIN, PLAIN_GATE, FORMULA, gateItems };
 `;
 process.env.KITELAB_DASHBOARD_JSON = jsonPath;
 const mod = { exports: {} };
 new Function("module", "require", js + driver)(mod, require);
-const { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS } = mod.exports;
+const { DATA, S, render, rows, sortedRows, variantsOf, settingLabel, keyFor, VIEWS,
+        COMPARE_KEYS, COLS, PLAIN_FAMILY, PLAIN, PLAIN_GATE, FORMULA, gateItems } = mod.exports;
 
 /* ── helpers ──────────────────────────────────────────────────────────── */
 const text = html => String(html || "").replace(/<[^>]+>/g, " ")
@@ -400,7 +402,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
         const note = sameAs ? `same as ${sameAs}` : "no trades";
         out.push({ key, family, setting: setting === "—" ? note : `${setting} · ${note}`,
                    noTrades: true, validated: null, gates: null, mar: null,
-                   cells: ["—", "—", "—", "—", "—", "—", "—", "—", "—", "—", "—"] });
+                   passed: null, cells: DATA_COLS.map(() => "—") });
         continue;
       }
       const fcu = val && val.fixed_checks_by_universe;
@@ -440,27 +442,40 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
         fg ? fg.breakeven_margin : null,
         (cred && cred.t_gate != null && VS.hurdle != null) ? cred.t_gate > VS.hurdle : null,
       ];
-      out.push({ key, family, setting, noTrades: false, validated, mar: cell.mar,
-        cells: [
-          validated == null ? "—" : (validated ? "✓" : "✗") + ` ${passed}/5`,
-          strip.every(g => g == null) ? "—"
+      /* KEYED, not positional (2026-09-19). Compare went from fourteen columns
+         to five that day, and a positional list would have had to be re-cut by
+         hand to match -- the kind of edit that silently compares the wrong
+         column against the wrong payload field. Built for every column COLS
+         knows about, then emitted in the page's own COMPARE_KEYS order. */
+      const byKey = {
+        validated: validated == null ? "—" : (validated ? "✓" : "✗") + ` ${passed}/5`,
+        gatesPassed: strip.every(g => g == null) ? "—"
             : strip.map(g => g == null ? "·" : g ? "✓" : "✗").join(" "),
-          cell.wiped ? "wiped" : fmt.pct1(cell.cagr),
-          fmt.signed1(vsHold),
-          fmt.pct1(cell.maxdd),
-          fmt.num2(cell.mar),
-          daily && daily.t_hac != null ? "t=" + daily.t_hac.toFixed(1) : "—",
-          fillDelta == null ? "—" : (fillDelta > 0 ? "+" : "") + fillDelta.toFixed(1),
-          wf ? `${wf.wins}/${wf.total_windows}` : "—",
-          cred && cred.t_stat != null ? "t=" + cred.t_stat.toFixed(1) : "—",
-          fmt.int(cell.taken),
-          cell.signals ? Math.round(100 * cell.taken / cell.signals) + "%" : "—",
-        ] });
+        cagr: cell.wiped ? "wiped" : fmt.pct1(cell.cagr),
+        vsHold: fmt.signed1(vsHold),
+        maxdd: fmt.pct1(cell.maxdd),
+        mar: fmt.num2(cell.mar),
+        dailyT: daily && daily.t_hac != null ? "t=" + daily.t_hac.toFixed(1) : "—",
+        fillDelta: fillDelta == null ? "—" : (fillDelta > 0 ? "+" : "") + fillDelta.toFixed(1),
+        walkFrac: wf ? `${wf.wins}/${wf.total_windows}` : "—",
+        tStat: cred && cred.t_stat != null ? "t=" + cred.t_stat.toFixed(1) : "—",
+        taken: fmt.int(cell.taken),
+        capture: cell.signals ? Math.round(100 * cell.taken / cell.signals) + "%" : "—",
+      };
+      out.push({ key, family, setting, noTrades: false, validated, passed, mar: cell.mar,
+        cells: DATA_COLS.map(k => byKey[k]) });
     }
   return out;
 }
-const HEAD = ["Strategy", "Setting", "Validated", "Gates", "CAGR", "vs Hold", "Drawdown", "MAR",
-              "Daily edge", "Next open", "Walk-fwd", "Credibility", "Trades", "Captured"];
+/* The five Compare columns, spelled as a reader sees them. DELIBERATELY
+   hand-written: every other list in this file is derived from the page so it
+   cannot drift, but a derived header list would agree with any rename however
+   wrong, and mislabelled columns are exactly what this file was written for
+   (see the "vs Hold" incident in the header comment). Change Compare's
+   headings and this line has to change with them, on purpose.
+   The columns past the two name columns, in page order, are DATA_COLS. */
+const HEAD = ["Strategy", "Stop-loss", "Five checks", "vs Buy & Hold", "Worst fall"];
+const DATA_COLS = COMPARE_KEYS.slice(2);
 
 function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
   S.view = "compare"; S.uni = uni; S.year = year; S.cap = capIdx; S.risk = riskIdx;
@@ -498,7 +513,11 @@ function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
       lastMar = m;
     }
   });
-  const tableValidated = got.filter(c => c[3].startsWith("✓")).length;
+  /* Validated came off Compare on 2026-09-19 (the table was too crowded to
+     read). The strip still carries the same verdict -- five ticks and nothing
+     else is a validated row -- so count that rather than a column that is gone. */
+  const iGateCell = DATA_COLS.indexOf("gatesPassed") + 3;
+  const tableValidated = got.filter(c => (c[iGateCell].match(/✓/g) || []).length === 5).length;
   if (tableValidated !== seenValidated)
     mismatches.push(`Validated count: table shows ${tableValidated}, payload implies ${seenValidated}`);
   mismatches.length
@@ -744,23 +763,42 @@ function smoke() {
   // only question left. The strip must agree with the count it sits beside --
   // two readings of the same row is worse than one.
   {
+    /* Pin BOTH money axes. They were left wherever the previous scenario put
+       them until 2026-09-19, which did not matter while the count being
+       compared came from the row's own neighbouring cell; it matters now that
+       the counterpart is a payload lookup, which has to be the same cell. */
     S.view = "compare"; S.uni = "all"; S.year = DATA.start_default;
+    S.cap = 0; S.risk = 1;
     S.prio = null; S.stop = "all"; S.sort = "rankKey"; S.desc = true; render();
-    const iVal = HEAD.indexOf("Validated") + 1, iGate = HEAD.indexOf("Gates") + 1;
+    /* REWRITTEN 2026-09-19. This used to read the N/5 count out of the
+       Validated column sitting beside the strip. That column is gone, so the
+       counterpart is now the payload's own count -- which is the stronger
+       test anyway: `gates` and `strip` are two independently written lists of
+       the same five checks inside expectedRows(), and this is what catches
+       them drifting apart. */
+    const iGate = DATA_COLS.indexOf("gatesPassed") + 3;
     const got = tableRows();
+    const want = new Map(expectedRows("all", DATA.start_default, prioDefault(), 0, 1)
+                           .map(e => [`${e.family}|${e.setting}`, e]));
     let disagree = 0, unscored = 0, ticksSeen = 0;
     for (const cells of got) {
-      const v = cells[iVal], g = cells[iGate];
-      if (v === "—") { if (g !== "—") disagree++; unscored++; continue; }
-      const want = +v.split(" ")[1].split("/")[0];
+      const e = want.get(`${cells[1]}|${cells[2]}`), g = cells[iGate];
+      /* A row with no trades, or one where not one of the five gates could be
+         scored, draws a single dash rather than five glyphs -- it is unscored,
+         not zero out of five. It must still have nothing the payload would
+         have ticked. */
+      if (!e || e.passed == null || g === "—") {
+        if (e && e.passed) disagree++;
+        unscored++; continue;
+      }
       const ticks = (g.match(/✓/g) || []).length;
       ticksSeen += ticks;
-      if (ticks !== want) disagree++;
+      if (ticks !== e.passed) disagree++;
       if (g.split(" ").length !== 5) disagree++;
     }
     disagree === 0
       ? ok(`strip and N/5 agree on all ${got.length} rows (${unscored} unscored)`)
-      : bad(`${disagree} row(s) where the Gates strip contradicts the Validated count`);
+      : bad(`${disagree} row(s) where the Five-checks strip contradicts the payload count`);
     // A board on which every gate passed everywhere would make the column
     // pointless and is also not this board -- catch a strip stuck on one glyph.
     const crosses = got.map(c => (c[iGate].match(/✗/g) || []).length)
@@ -790,6 +828,58 @@ function smoke() {
     const gtip = (hrow.children[iGate] || {}).title || "";
     gtip.includes("luck hurdle") && gtip.includes("fixed order")
       ? ok("Gates header carries the legend") : bad("no legend on the Gates header");
+  }
+
+  console.log("\n== every rule is explained in plain words ==");
+  /* ADDED 2026-09-19 with the plain-language layer. PLAIN_FAMILY, PLAIN and
+     PLAIN_GATE are hand-written prose that lives in the page, deliberately:
+     putting it in dashboard_data.py would cost a ~140-minute rebuild to
+     publish text that changes no number (CLAUDE.md, Traps).
+
+     The price of that choice is a second list to keep in step with the board,
+     which is the exact fault registry.setting_label was written to kill. So it
+     is not kept in step by hand -- it is asserted here, in BOTH directions.
+     A family added to the registry with no description fails; a description
+     left behind by a family that came off the board fails too, because a
+     stale explanation of a rule nobody runs is worse than none. */
+  {
+    const fams = Object.keys(DATA.strategies).sort();
+    const missing = fams.filter(f => !PLAIN_FAMILY[f]);
+    const orphan = Object.keys(PLAIN_FAMILY).filter(f => !fams.includes(f)).sort();
+    missing.length === 0
+      ? ok(`all ${fams.length} families on the board have a plain description`)
+      : bad(`no plain description for: ${missing.join(", ")}`);
+    orphan.length === 0
+      ? ok("no description left behind by a family that came off the board")
+      : bad(`PLAIN_FAMILY describes ${orphan.join(", ")} -- not on the board`);
+    // Every description must actually say something; a placeholder is worse
+    // than a gap because nothing will ever flag it again.
+    const thin = fams.filter(f => PLAIN_FAMILY[f] && PLAIN_FAMILY[f].length < 60);
+    thin.length === 0 ? ok("every description is a real sentence, not a stub")
+                      : bad(`too short to explain anything: ${thin.join(", ")}`);
+
+    // Same contract for the per-number sentences: every column the page can
+    // draw needs one, and FORMULA's precise wording needs a plain twin.
+    const noPlain = COLS.map(c => c[0]).filter(k => !PLAIN[k]);
+    noPlain.length === 0 ? ok(`all ${COLS.length} columns have a plain sentence`)
+                         : bad(`no plain sentence for column(s): ${noPlain.join(", ")}`);
+    /* PLAIN also captions numbers that were never Compare columns (ulcer,
+       sharpe, final and the rest live in Detail only), so the set it must not
+       exceed is COLS plus FORMULA -- everything the page has a number for. */
+    const known = new Set([...COLS.map(c => c[0]), ...Object.keys(FORMULA)]);
+    const plainOrphan = Object.keys(PLAIN).filter(k => !known.has(k));
+    plainOrphan.length === 0 ? ok("no plain sentence for a number the page does not show")
+                             : bad(`PLAIN explains ${plainOrphan.join(", ")} -- no such number`);
+    const noPlainF = Object.keys(FORMULA).filter(k => !PLAIN[k]);
+    noPlainF.length === 0 ? ok(`all ${Object.keys(FORMULA).length} formulas have a plain twin`)
+                          : bad(`precise wording but no plain one: ${noPlainF.join(", ")}`);
+
+    // The five gates are positional: PLAIN_GATE[i] captions gateItems()[i].
+    // Nothing but a length check can catch a shift, so at least catch that.
+    const n = gateItems(rows()[0]).length;
+    PLAIN_GATE.length === n
+      ? ok(`all ${n} gates have a plain question`)
+      : bad(`${n} gates but ${PLAIN_GATE.length} plain questions -- the captions have shifted`);
   }
 
   console.log("\n== the stop-width filter ==");
