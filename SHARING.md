@@ -32,6 +32,11 @@ that link and the passphrase to the group, **by different routes if you can** �
 the link in the group chat, the passphrase said out loud — because a link and
 its password in one message is one forwarded message away from neither.
 
+**Send the `/read` link, not the bare one.** `https://…trycloudflare.com/read`
+is the reading page; the bare hostname is the board. See *Which link to send*
+below — for anyone who has not sat with this data, it is the wrong question by
+a wide margin which of the two you paste.
+
 Stop it with Ctrl-C in each terminal. The link dies with the tunnel and a new
 one is minted next time; sessions live in memory, so stopping the server also
 logs everybody out.
@@ -48,7 +53,29 @@ changes the page for anyone else, because no request this server answers writes
 a byte. The payload is a snapshot computed before the server started.
 
 What they cannot do is rebuild it, change it, or reach anything else on your
-machine. There are five routes in total and all five are reads.
+machine. Every route this server answers is a read.
+
+## Which link to send
+
+There are two pages behind the one door, and they are for two different people.
+
+- **`/read` — the reading page (`web/article.html`).** One column, read top to
+  bottom once. It opens with the question (*did any of it beat buy & hold?*),
+  answers it, and then shows the answer at four widening scales: one rule, the
+  board, every setting of one rule, all 9,936 runs. Nothing to configure and
+  nothing to sort — a person who has never heard the word *backtest* can read
+  it on a laptop in five minutes and come away with the finding.
+- **`/` — the board (`web/dashboard.html`).** Thirty-six rows you sort and
+  filter, with a detail view per rule. It is an instrument: built to be read a
+  hundred times by someone who already knows what the columns mean.
+
+**Default to `/read`.** Send the board as well, to the one or two people who
+will actually turn the knobs, and say which is which. A stranger handed the
+board sorts by return, reads the top row as a recommendation, and leaves with
+the opposite of the finding — which is the whole reason the reading page exists.
+
+Both pages pull the same `/api/dashboard` payload behind the same passphrase,
+so sharing either shares all of it. There is no smaller door.
 
 ## Sizing, and who the numbers describe
 
@@ -63,6 +90,10 @@ and the rupee columns are how the comparison is scaled.
 
 This matters more than the setup does, so it is written here rather than left
 to the moment.
+
+This is about the board. The reading page now says most of it in its own
+words — that is what it is for — but the board still lands cold, and the
+sentence below is still the one to send with it.
 
 A sorted table with a row at the top reads as *"this one won"* to anyone who
 has not read the five checks. On this board **not one of the 36 rows beats

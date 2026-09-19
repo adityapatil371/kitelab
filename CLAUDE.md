@@ -264,7 +264,7 @@ hand.
 **The dashboard is read-only in a way livedesk is not**, and that difference is
 why this is smaller than livedesk's version: livedesk has a *book* people write
 to (stops, notes), so it asks for a name at the door and stamps it on every
-change. Nothing here is writable — all five routes are reads over a snapshot
+change. Nothing here is writable — every route is a read over a snapshot
 computed before the server started — so there is no change to stamp and the
 door asks for a passphrase only. What the passphrase protects is **disclosure**:
 `dashboard.json` names every stock in the universe and holds five years of
