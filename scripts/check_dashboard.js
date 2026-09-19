@@ -474,7 +474,7 @@ function expectedRows(uni, year, prio, capIdx, riskIdx) {
    (see the "vs Hold" incident in the header comment). Change Compare's
    headings and this line has to change with them, on purpose.
    The columns past the two name columns, in page order, are DATA_COLS. */
-const HEAD = ["Strategy", "Stop-loss", "Five checks", "vs Buy & Hold", "Worst fall"];
+const HEAD = ["Strategy", "When it sells", "Five checks", "Beat buy & hold by", "Worst fall"];
 const DATA_COLS = COMPARE_KEYS.slice(2);
 
 function checkScenario(label, uni, year, prio, capIdx = 0, riskIdx = 1) {
@@ -563,8 +563,14 @@ console.log("\n== multiple-testing banner ==");
   note.hidden === false ? ok("banner shown") : bad("banner hidden despite validation_summary");
   for (const k of ["tried", "hurdle", "cleared", "expected_best", "expected_by_chance", "n_eff", "avg_correlation", "best_key"])
     t.includes(String(VS[k])) ? ok(`banner quotes ${k} = ${VS[k]}`) : bad(`banner does not contain ${k} = ${VS[k]}: "${t.slice(0, 160)}..."`);
-  /^\s*\d+ of \d+ rules clear a family-wise \d+% bar/.test(t)
-    ? ok("banner opens with 'N of M rules clear a family-wise 95% bar'") : bad(`banner wording: "${t.slice(0, 120)}"`);
+  /* The banner leads in plain words since 2026-09-19 and keeps the precise
+     wording folded underneath it, so both are asserted: the lead, because a
+     reader without the vocabulary sees only that, and the old sentence,
+     because nothing was allowed to be deleted in the plain-language pass. */
+  new RegExp(`^\\s*${VS.tried} rules were tried on the same history`).test(t)
+    ? ok("banner opens in plain words") : bad(`banner wording: "${t.slice(0, 120)}"`);
+  /\d+ of \d+ rules clear a family-wise \d+% bar/.test(t)
+    ? ok("banner still carries the precise version") : bad("banner lost the family-wise sentence");
   /the \d+\b/.test(t.replace(new RegExp(`the ${VS.tried}\\b`), "")) && bad(`banner still has a literal count: "${t.match(/the \d+\b/)[0]}"`);
   const formulas = text((els["cmp-formulas"] || {}).innerHTML);
   // The account phrase is the one the gates actually run at: validation.cagr_of
@@ -611,8 +617,12 @@ async function checkDetail() {
   const stat = label => tiles.has(label) ? tiles.get(label) : null;
   const eq = (label, want) => { const g = stat(label);
     g === want ? ok(`${pick.id}: ${label} = ${want}`) : bad(`${pick.id}: ${label} shows "${g}", payload says "${want}"`); };
-  eq("Sharpe", cell.sharpe.toFixed(2));
-  eq("Sortino", cell.sortino.toFixed(2));
+  /* The Detail tiles lead with plain names since 2026-09-19 and carry each
+     statistic's own name in the caption underneath. These labels are typed out
+     by hand on purpose: a list derived from the page would agree with any
+     rename, however wrong. */
+  eq("Steadiness", cell.sharpe.toFixed(2));
+  eq("Steadiness, falls only", cell.sortino.toFixed(2));
   eq("Reward for the pain", fmt.num2(cell.mar));
   eq("Money at work", Math.round(cell.exposure) + "%");
   eq("Fully committed", Math.round(cell.full_pct) + "%");
@@ -624,21 +634,21 @@ async function checkDetail() {
   // credibility card
   const cred = (val.fixed_checks_by_universe && val.fixed_checks_by_universe.all) ? val.fixed_checks_by_universe.all.credibility : val.bootstrap;
   const f3 = v => v == null ? "—" : v.toFixed(3), f2 = v => v == null ? "—" : v.toFixed(2);
-  eq("n_clusters", fmt.int(cred.n_clusters));
-  eq("mean_r", f3(cred.mean_r));
-  eq("drift_r", f3(cred.drift_r));
-  eq("t_iid", f2(cred.t_iid));
-  eq("t_cluster", f2(cred.t_cluster));
-  eq("t_stat", f2(cred.t_stat));
-  eq("t_taken", f2(cell.t_taken));
+  eq("Separate bets", fmt.int(cred.n_clusters));
+  eq("The average trade", f3(cred.mean_r));
+  eq("A random buyer's trade", f3(cred.drift_r));
+  eq("Score, trades counted separately", f2(cred.t_iid));
+  eq("Score, one quarter one bet", f2(cred.t_cluster));
+  eq("Score, random buyer removed", f2(cred.t_stat));
+  eq("Score on this account's trades", f2(cell.t_taken));
   /5,000[- ]round|5,000 resample|block-resampled/i.test(t) ? bad("Detail still describes the 5,000-round block bootstrap") : ok("Detail describes the clustered, drift-adjusted t");
   t.includes("one quarter as one bet") || t.includes("one quarter, one bet") ? ok("credibility caption explains the clustering") : bad("credibility caption lacks the one-quarter-one-bet explanation");
   // walk-forward table
   const wf = (val.walk_forward_by_scenario || {})[`all|${prio}|${capital}`];
   if (!wf) bad(`no walk_forward_by_scenario for all|${prio}|${capital}`);
   else {
-    t.includes(`wins/total ${wf.wins}/${wf.total_windows}`) ? ok(`walk-forward header wins/total ${wf.wins}/${wf.total_windows}`)
-      : bad(`walk-forward header lacks wins/total ${wf.wins}/${wf.total_windows}`);
+    t.includes(`won ${wf.wins}/${wf.total_windows}`) ? ok(`walk-forward header won ${wf.wins}/${wf.total_windows}`)
+      : bad(`walk-forward header lacks won ${wf.wins}/${wf.total_windows}`);
     const rowsMissing = wf.windows.filter(w => {
       const want = `${w.from} ${w.to} ${fmt.signed1(w.cagr)} ${fmt.signed1(w.hold)} ${w.win == null ? "—" : w.win ? "✓" : "✗"}`
         + (w.partial ? " partial, not counted" : "");
@@ -650,7 +660,7 @@ async function checkDetail() {
   const perm = (val.fixed_checks_by_universe && val.fixed_checks_by_universe.all) ? val.fixed_checks_by_universe.all.permutation : val.permutation;
   t.includes(`p = ${perm.p == null ? "—" : perm.p.toFixed(3)} over ${perm.rounds} shuffles of a ${perm.pool}-stock pool, at ₹2L / 1% / strongest-12-month-first`)
     ? ok("shuffled-price note quotes p, rounds, pool and the fixed account settings") : bad("shuffled-price note lacks p/rounds/pool/settings");
-  t.includes("Breakeven cost") && t.includes("at ₹2L / 1% / strongest-12-month-first") ? ok("cost caption states the fixed account settings") : bad("cost caption lacks the fixed account settings");
+  t.includes("Cost it could bear") && t.includes("at ₹2L / 1% / strongest-12-month-first") ? ok("cost caption states the fixed account settings") : bad("cost caption lacks the fixed account settings");
   // trade quality: R first, rupees captioned with the payload's paper book
   const ts = (DATA.trade_stats || {})[pick.id];
   if (!ts) bad(`no trade_stats for ${pick.id}`);
@@ -659,13 +669,13 @@ async function checkDetail() {
     const inrChk = v => Math.abs(v) >= 1e7 ? "₹" + (v / 1e7).toFixed(2) + " cr" : Math.abs(v) >= 1e5 ? "₹" + (v / 1e5).toFixed(2) + " L" : "₹" + Math.round(v).toLocaleString("en-IN");
     const q = t.indexOf("Trade quality");
     const card = q < 0 ? "" : t.slice(q);
-    const rFirst = card.indexOf(`Expectancy ${R(ts.expectancy_r)} average net per trade, in R`);
+    const rFirst = card.indexOf(`Average profit per trade ${R(ts.expectancy_r)}`);
     rFirst >= 0 ? ok(`trade quality leads with expectancy ${R(ts.expectancy_r)}`) : bad("trade quality does not lead with expectancy in R");
-    card.includes(`Avg win / loss ${R(ts.avg_win_r)} / ${R(ts.avg_loss_r)}`) ? ok("average win/loss shown in R") : bad("average win/loss in R missing");
+    card.includes(`Typical win / typical loss ${R(ts.avg_win_r)} / ${R(ts.avg_loss_r)}`) ? ok("average win/loss shown in R") : bad("average win/loss in R missing");
     const paper = `on a ${inrChk(ts.paper_capital)} paper book at ${ts.paper_risk_pct}% risk, not this account`;
     const nPaper = card.split(paper).length - 1;
     nPaper >= 5 ? ok(`rupee figures captioned "${paper}" (${nPaper}×)`) : bad(`rupee figures captioned "${paper}" only ${nPaper}× -- wanted every rupee stat and the subtitle`);
-    const rupeeAt = card.indexOf(`Expectancy ${inrChk(ts.expectancy)}`);
+    const rupeeAt = card.indexOf(`Average profit per trade, in rupees ${inrChk(ts.expectancy)}`);
     rupeeAt > rFirst ? ok("rupee expectancy follows the R version") : bad("rupee expectancy precedes the R version");
     /₹1 ?L\b|₹1 lakh|1,00,000 paper/.test(card) && bad("trade quality carries a literal ₹1L paper book");
   }
@@ -734,7 +744,7 @@ function smoke() {
       else if (bh && bh.bh) ok(`${u.padEnd(8)} buy & hold ${bh.bh.cagr}%/yr`);
       else bad(`${u}: an assets row with no buy-and-hold benchmark`);
       const labels = Object.values(els).map(e => e.textContent || "").join(" ");
-      labels.includes("Signal priority") ? bad(`${u}: priority control still offered`) : ok(`${u.padEnd(8)} priority control hidden`);
+      labels.includes("Who gets the money first") ? bad(`${u}: priority control still offered`) : ok(`${u.padEnd(8)} priority control hidden`);
     }
   }
   S.uni = "all";
@@ -912,8 +922,8 @@ function smoke() {
     const deepText = e => [e.textContent || "",
                            ...(e.children || []).map(deepText)].join(" ");
     const bar = deepText(els["scenario"] || { children: [] });
-    bar.includes("Stop width") ? ok("Stop width control offered")
-      : bad("Stop width control missing from the scenario bar");
+    bar.includes("When it sells") ? ok("stop-width control offered")
+      : bad("stop-width control missing from the scenario bar");
     for (const arm of arms) {
       S.stop = arm; render();
       const got = rows();

@@ -334,18 +334,18 @@ function buildScenario() {
   const capKeep = DATA.capitals.map((v, i) => i);
   const riskKeep = DATA.risks.map((v, i) => i);
   const fields = [
-    add(segment("Universe", Object.entries(DATA.universes),
+    add(segment("Which stocks", Object.entries(DATA.universes),
                 () => S.uni, v => { S.uni = v; clampScenario();
                                     if (singleName()) S.prio = null;
                                     buildScenario(); })),
-    add(segment("Capital", capKeep.map(i => [i, inr(DATA.capitals[i])]),
+    add(segment("Starting money", capKeep.map(i => [i, inr(DATA.capitals[i])]),
                 () => S.cap, v => S.cap = +v)),
     add(segment("Risk per trade", riskKeep.map(i => [i, DATA.risks[i] + "%"]),
                 () => S.risk, v => S.risk = +v)),
     /* Hidden when the board carries a single stop: a one-choice segment beside
        a "Both" button asks the reader to pick between a thing and itself. */
     ...(stopTags().length > 1 ? [
-      add(segment("Stop width",
+      add(segment("When it sells",
                   [["all", "Both"]].concat(stopTags().map(v => [v, stopLabel(v)])),
                   () => S.stop, v => { S.stop = v; render(); }))] : []),
     /* WHICH SIGNAL WINS THE CASH. Scanning is free and the whole market is
@@ -373,7 +373,7 @@ function buildScenario() {
        there invites the reader to conclude the ordering does not matter, when
        what it really shows is that this universe cannot ask the question. */
     ...(singleName() ? [] : [
-      add(segment("Signal priority",
+      add(segment("Who gets the money first",
                   (DATA.priorities || [DATA.priority_default])
                     .map(k => [k, PRIO_LABEL[k] || k]),
                   () => S.prio || DATA.priority_default,
@@ -415,7 +415,23 @@ function buildScenario() {
    family, which is why one map can serve all of them. */
 const variantsOf = skey => (DATA.variant_tags || {})[skey] || [];
 
+/* PLAIN NAMES FOR THE STOP ARMS (2026-09-19). The payload's own labels are
+   "stop at the entry bar's own low" and "stop 3 x ATR(14) below entry" --
+   accurate, and unreadable to anyone who does not already know what a bar or
+   an ATR is. They cannot be renamed at the source without a rebuild
+   (registry.py is in the cache stamp), so the plain names live here, keyed by
+   the payload's own variant tag and falling back to the payload label for any
+   arm this map has not been told about. `full` is what the table and the
+   Detail heading show; `short` is the filter button. */
+const PLAIN_STOP = {
+  own:  { full: "Sells if it drops below the first day's low",
+          short: "Tight exit" },
+  atr3: { full: "Sells on a fall of about three average days",
+          short: "Loose exit" },
+};
+
 const settingLabel = (skey, v) =>
+  (PLAIN_STOP[v] || {}).full ||
   ((DATA.variant_labels || {})[skey] || {})[v] || String(v);
 
 /* THE STOP WIDTH IS A FILTER, NOT A SCENARIO AXIS (2026-09-17). Every one of
@@ -445,6 +461,7 @@ const stopTags = () => {
 };
 
 const stopLabel = v => {
+  if ((PLAIN_STOP[v] || {}).short) return PLAIN_STOP[v].short;
   for (const skey of Object.keys(DATA.strategies || {}))
     if (variantsOf(skey).includes(v)) {
       const t = settingLabel(skey, v)
@@ -957,9 +974,55 @@ const PLAIN = {
   capture:   "The share of the rule's signals the account could actually fund. 40% means three out of five signals were skipped for want of money.",
   ulcer:     "Like the worst fall, but it also counts how LONG the account stayed underwater, not just how deep it went.",
   sharpe:    "Return per unit of wobble. The standard way of asking whether the returns were worth the ride.",
-  sortino:   "Like Sharpe, but it only counts downward wobble as risk — going up sharply is not a problem anyone needs protecting from.",
+  sortino:   "The same idea as the steadiness score beside it, but it only counts downward wobble as risk — going up sharply is not a problem anyone needs protecting from.",
   exposure:  "The share of days the account had money in the market rather than sitting in cash.",
   final:     "What the account was worth at the end.",
+};
+
+/* One plain name and one plain sentence for each of the GLOSSARY keys --
+   the numbers that appear in Detail and the export but have no column. The
+   keys there are the statistics' own names (drift_r, t_cluster) and a reader
+   who needs a glossary to read the glossary has not been helped, so the plain
+   name leads and the statistic's own name is kept in the precise version
+   underneath it. */
+const PLAIN_GLOSS = {
+  "drift_r": ["What a random buyer earned",
+    "Buy the same stocks on random days, hold for the same length of time, use the same stop. This is what that made. A rising market pays anybody, so this is the part of the rule's profit that is not skill, and it is subtracted before the rule is judged."],
+  "t_iid": ["The flattering version of the skill score",
+    "The same score worked out as if every trade were a separate piece of evidence. It is not: hundreds of trades open in the same month on the same move. Shown only so you can see how much that correction cost."],
+  "t_cluster": ["Skill score, one quarter one bet",
+    "The score after every trade opened in the same three months is counted as a single bet rather than as many. Honest about the fact that trades taken together are one decision, not hundreds."],
+  "t_stat": ["Skill score after subtracting a random buyer",
+    "The same score again, with what a random buyer would have earned on the same stocks taken off the top first."],
+  "t_gate": ["The skill score that counts",
+    "The lower of the two above. To pass, a rule has to make money AND make more of it than buying the same stocks on random days -- clearing only one of those is not enough."],
+  "t_taken": ["Skill score on the trades this account actually took",
+    "The same measurement, but counting only the trades the money stretched to at the settings on screen. When it is far below the rule's own score, the shortage of cash chose the trades, not the rule."],
+  "n_clusters": ["Separate bets",
+    "How many different three-month stretches the rule entered a trade in. That, rather than the number of trades, is how many genuinely separate tries it had."],
+  "hurdle": ["The luck bar",
+    "How high one rule's score has to be before the whole board can be trusted, given how many rules were tried on the same history."],
+  "expected_best": ["What the luckiest worthless rule would score",
+    "Try this many rules that have no skill whatsoever and one of them still comes out on top. This is roughly how well that one would score. Shown for scale: beating it is the beginning of an argument, not the end of one."],
+  "Newey-West lag": ["Days of overlap allowed for",
+    "Positions stay open for weeks, so today's result is largely yesterday's result again. This is how many days back the test assumes that overlap runs, so it does not count the same evidence over and over."],
+  "Detectable edge": ["Smallest edge the test could see",
+    "An edge smaller than this can be real and still go unnoticed here. So a rule that fails is 'not shown to work', never 'shown not to work'."],
+  "Benjamini-Hochberg": ["Why the passing bar is not one in twenty",
+    "Test ten thousand versions of these rules at once and hundreds will look convincing by chance alone. The bar is therefore raised until, of the rules that pass, only about one in twenty would be noise."],
+  "Fully deployed": ["Days with no spare cash",
+    "The share of days the account had almost nothing left to spend. On those days a new signal had to be turned down however good it looked."],
+};
+
+/* The same treatment for the orderings that decide which signal gets the cash. */
+const PLAIN_PRIO = {
+  mom_hi: "Buy whichever of the competing stocks has risen the most over the past year. This is the setting the page opens on, and the only one measured to beat picking at random.",
+  nearhigh_hi: "Buy whichever is closest to its own highest price of the past year.",
+  liquidity: "Buy whichever is easiest to buy and sell in size.",
+  illiquid: "Buy whichever is hardest to trade. On the board as a control, not a suggestion -- if it does as well as its opposite, the ordering was never doing anything.",
+  wide: "Buy whichever has the most room between its price and its stop. That makes each position cheap, so the money stretches to more trades.",
+  tight: "Buy whichever has the least room between its price and its stop. The best-shaped trades, bought by tying up the most cash in each.",
+  time: "No ordering at all: take them as they come. Here as the do-nothing baseline.",
 };
 
 /* The five gates, in plain words. Same order as gateItems(), and
@@ -1055,8 +1118,8 @@ function scenarioPlain() {
       decides how many shares get bought.</dd>
     <dt>Start year</dt><dd>${S.year} &mdash; trading begins here and runs to the end
       of the data.</dd>
-    <dt>Costs</dt><dd>${fillName()} &mdash; brokerage, taxes and the price slippage of
-      putting a real order into a real market are all charged.</dd>
+    <dt>Costs</dt><dd>${fillName()} &mdash; brokerage, taxes and the way a real
+      order of real size pushes the price against itself are all charged.</dd>
   </dl></div>`;
 }
 
@@ -1077,33 +1140,33 @@ function shownCols() {
 
 const COLS = [
   ["family",  "Strategy", r => r.family, "l"],
-  ["setting", "Stop-loss",  r => !r.noTrades ? r.setting
+  ["setting", "When it sells",  r => !r.noTrades ? r.setting
                                 : (r.setting === "—" ? emptyNote(r)
                                                      : `${r.setting} · ${emptyNote(r)}`), "l"],
-  ["validated", "Validated", r => r.validated == null ? "—"
+  ["validated", "Passed all five", r => r.validated == null ? "—"
                                 : (r.validated ? "✓" : "✗")
                                   + (r.gatesTotal != null ? ` ${r.gatesPassed}/${r.gatesTotal}` : "")],
   /* Sorted on r.gatesPassed, which is why the key is that and not "gates":
      sortedRows() reads r[S.sort], so clicking this header orders the board by
      how far each row got rather than alphabetically by its glyphs. */
   ["gatesPassed", "Five checks", gateStrip],
-  ["cagr",    "CAGR",     r => r.r ? cagrText(r.r) : "—"],
+  ["cagr",    "Growth a year", r => r.r ? cagrText(r.r) : "—"],
   /* "Is it real", not just "how big" -- computed once per strategy, fixed
      scenario, see valFor()/FORMULA above. Missing (an em dash) below the
      30-trade floor kitelab.validation applies, same as an insufficient
      sample anywhere else on this page. */
-  ["vsHold",  "vs Buy & Hold",  r => r.vsHold == null ? "—"
+  ["vsHold",  "Beat buy & hold by",  r => r.vsHold == null ? "—"
                                : (r.vsHold > 0 ? "+" : "") + r.vsHold.toFixed(1)],
   ["maxdd",   "Worst fall", r => pct(r.maxdd)],
-  ["mar",     "MAR",      r => num(r.mar)],
-  ["dailyT",  "Daily edge", r => r.dailyT == null ? "—" : "t=" + r.dailyT.toFixed(1)],
-  ["fillDelta","Next open", r => r.fillDelta == null ? "—"
+  ["mar",     "Reward for the pain", r => num(r.mar)],
+  ["dailyT",  "Day-by-day skill score", r => r.dailyT == null ? "—" : r.dailyT.toFixed(1)],
+  ["fillDelta","Buying next morning instead", r => r.fillDelta == null ? "—"
                                : (r.fillDelta > 0 ? "+" : "") + r.fillDelta.toFixed(1)],
   /* Kept, demoted. Not a gate since 2026-09-10 -- see FORMULA.walkFrac. */
-  ["walkFrac","Walk-fwd", r => r.walkText || "—"],
-  ["tStat",   "Credibility", r => r.tStat == null ? "—" : "t=" + r.tStat.toFixed(1)],
+  ["walkFrac","Worked in every era", r => r.walkText || "—"],
+  ["tStat",   "Skill score", r => r.tStat == null ? "—" : r.tStat.toFixed(1)],
   ["taken",   "Trades",   r => r.taken == null ? "—" : r.taken.toLocaleString("en-IN")],
-  ["capture", "Captured", r => r.capture == null ? "—" : Math.round(r.capture) + "%"],
+  ["capture", "Signals taken", r => r.capture == null ? "—" : Math.round(r.capture) + "%"],
 ];
 
 /* Shared by the table and the export, so the file holds the rows in the order
@@ -1289,7 +1352,22 @@ function renderCompare() {
   else {
     mtNote.hidden = false;
     const confidence = Math.round(100 * (1 - (mt.alpha ?? 0.05)));
+    /* PLAIN FIRST (2026-09-19). The precise wording is four statistical terms
+       in two sentences -- family-wise, pairwise correlation, independent
+       rules, t. It is all still here, one click down; what sits on the page
+       is now the thing a reader without the vocabulary needs to know. */
     mtNote.innerHTML =
+      `<b>${mt.tried} rules were tried on the same history, so a few are bound to ` +
+      `look good by luck alone.</b> ${mt.cleared} of ${mt.tried} are far enough ahead ` +
+      `of luck to be worth another look &mdash; but about <b>${mt.expected_by_chance}</b> ` +
+      `would get that far by chance even if every rule on this board were worthless. ` +
+      `And many of these rules are near-copies of each other, so trying all ${mt.tried} ` +
+      `is really more like trying <b>${mt.n_eff}</b> genuinely different ideas. ` +
+      `${mt.clears_hurdle
+        ? "The best of them is ahead of that bar, which is a reason to keep testing it, not a reason to trade it."
+        : "Not one of them is ahead of that bar, so nothing here can yet be told apart from the luckiest of a set of coin flips."} ` +
+      `Getting past this is one of the five checks, not the verdict.` +
+      `<details class="prec"><summary>the precise version</summary><div>` +
       `<b>${mt.cleared} of ${mt.tried}</b> rules clear a family-wise ${confidence}% bar ` +
       `(t &gt; <b>${mt.hurdle}</b>; about <b>${mt.expected_by_chance}</b> would by chance). ` +
       `Average pairwise correlation <b>${mt.avg_correlation}</b> makes the ${mt.tried} ` +
@@ -1301,7 +1379,7 @@ function renderCompare() {
         : "&mdash; it does not clear the hurdle, so nothing on this board is yet " +
           "distinguishable from the best of a menu of coin flips"}. See Validated on ` +
       `each row for the full picture -- clearing this hurdle is one of five checks, not ` +
-      `the whole verdict.`;
+      `the whole verdict.</div></details>`;
   }
   /* THE DAILY TEST'S OWN BAR, and the honest count of what clears it.
      Written here rather than in the payload's prose because the numbers are
@@ -1319,16 +1397,32 @@ function renderCompare() {
     dNote.hidden = true;
     dWarn.classList.add("on");
     dWarn.innerHTML =
-      `<b>Falling back to the seven-window gate.</b> This payload carries no ` +
-      `day-by-day test, so <b>Validated</b>'s fourth check is walk-forward ` +
-      `majority &mdash; which scripts.wf_power measured as a 49.8% coin flip on ` +
-      `rules with no edge. Run <code>python3 -m scripts.wf_attach</code> then ` +
-      `<code>python3 -m scripts.attach_diagnostics</code> to restore the daily test.`;
+      `<b>The day-by-day check is missing from this build.</b> Its place among the ` +
+      `five checks has been taken by the old test that counts three-year stretches ` +
+      `&mdash; and that one is close to a coin toss: a rule with no skill at all passes ` +
+      `it about half the time. Read the verdicts loosely until the daily check is back. ` +
+      `To restore it, run <code>python3 -m scripts.wf_attach</code> then ` +
+      `<code>python3 -m scripts.attach_diagnostics</code>.`;
   } else {
     dWarn.classList.remove("on"); dWarn.innerHTML = "";
     dNote.hidden = false;
     const provisional = (dg.arm_b_provisional || []).length;
     dNote.innerHTML =
+      `<b>Every rule is also judged one day at a time.</b> On each day the account ` +
+      `was trading, did it do better than simply owning everything? That is about ` +
+      `<b>${(dg.median_days || 5000).toLocaleString("en-IN")} days</b> of evidence ` +
+      `rather than seven three-year stretches, so it can spot an edge of about ` +
+      `<b>${dg.median_mde_80} percentage points a year</b> where the older test needed ` +
+      `${dg.walk_forward_mde_80}. The catch: ` +
+      `<b>${dg.n_tested.toLocaleString("en-IN")}</b> versions of these rules were tested ` +
+      `at once, and about <b>${dg.expected_by_chance}</b> of them would look convincing ` +
+      `by pure chance. So the bar is raised to allow for that, and ` +
+      `<b>${dg.n_bh === 0 ? "not one" : dg.n_bh}</b> clear${dg.n_bh === 1 ? "s" : ""} the raised bar. ` +
+      `Click any row to see what it would have done if you bought the morning ` +
+      `after the signal instead of at the price that produced it &mdash; which is the ` +
+      `only thing you could really have done. That is shown, never used to pass or fail ` +
+      `a rule.` +
+      `<details class="prec"><summary>the precise version</summary><div>` +
       `<b>Daily edge</b> tests each cell's ~${(dg.median_days || 5000).toLocaleString("en-IN")} ` +
       `daily rule-minus-hold returns instead of seven win/lose ` +
       `windows, so it can see an edge of about <b>${dg.median_mde_80} CAGR points a year</b> ` +
@@ -1343,31 +1437,49 @@ function renderCompare() {
       `difference. It is shown, never gated: its next-open branch is verified for ` +
       `<b>${(dg.arm_b_verified || []).join(", ") || "no"}</b> engine` +
       `${(dg.arm_b_verified || []).length === 1 ? "" : "s"} and provisional for ` +
-      `<b>${provisional}</b> rule${provisional === 1 ? "" : "s"}.`;
+      `<b>${provisional}</b> rule${provisional === 1 ? "" : "s"}.</div></details>`;
   }
 
   /* Every formula, in full, under the table. Hover gives the same text on each
      column header; this is here so it can be read without hunting for it. */
+  /* PLAIN SENTENCE OUT, FORMULA FOLDED UNDERNEATH (2026-09-19). This block
+     used to print FORMULA raw, which made the one place on the page that
+     promises to explain the columns the densest thing on it. Nothing is
+     dropped -- every definition is still here, one click down, and
+     check_dashboard.js still asserts the words it always did. */
   $("cmp-formulas").innerHTML = Object.entries(FORMULA)
     .filter(([k]) => COLS.some(c => c[0] === k))
     .map(([k, text]) => {
       const col = COLS.find(c => c[0] === k);
-      return `<div><b>${col[1]}</b> &mdash; ${text}</div>`;
+      return `<div><b>${col[1]}</b> &mdash; ${PLAIN[k] || text}${PLAIN[k] ? precise(k) : ""}</div>`;
     }).join("")
-    + `<div style="margin-top:12px"><b>Signal priority</b> &mdash; which signal
-       wins the cash when the account cannot fund them all. Not part of any
-       strategy; on these settings it decides about half the trades.</div>`
+    + `<div style="margin-top:12px"><b>Who gets the money first</b> &mdash; when the
+       account sees more signals in one day than it can pay for, something has to
+       decide which ones it takes. That choice is not part of any rule, and on these
+       settings it decides about half the trades.</div>`
     + Object.entries(PRIO_FORMULA)
-        .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${PRIO_LABEL[k]}</b> &mdash; ${t}</div>`)
+        .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${PRIO_LABEL[k]}</b> &mdash; ${PLAIN_PRIO[k] || t}` +
+            (PLAIN_PRIO[k] ? `<details class="prec"><summary>the precise version</summary>
+               <div>${esc(t)}</div></details>` : "") + `</div>`)
         .join("")
     + `<div style="margin-top:12px"><b>Elsewhere on the page</b> &mdash; numbers shown in
        Detail and the export that have no column here.</div>`
     + Object.entries(GLOSSARY)
-        .map(([k, t]) => `<div>&nbsp;&nbsp;<b>${k}</b> &mdash; ${t}</div>`)
+        .map(([k, t]) => {
+          const p = PLAIN_GLOSS[k];
+          return `<div>&nbsp;&nbsp;<b>${p ? p[0] : k}</b> &mdash; ${p ? p[1] : t}` +
+            (p ? `<details class="prec"><summary>the precise version</summary>
+               <div>${esc(k)} &mdash; ${esc(t)}</div></details>` : "") + `</div>`;
+        })
         .join("");
 }
 
-const fillName = () =>
+/* The payload's own label for the cost model is "Realistic fills (costs +
+   cap)" -- three pieces of jargon in four words. It cannot be renamed at the
+   source without a rebuild (scripts/dashboard_data.py is in the cache stamp),
+   so the plain name lives here, keyed by the payload's own key. */
+const PLAIN_FILL = { "1": "real trading costs charged" };
+const fillName = () => PLAIN_FILL[S.fill] ||
   (DATA.fills.find(([k]) => k === S.fill) || [null, "Realistic fills"])[1];
 
 /* Which signal wins the cash. Named in the subtitle because on a starved
@@ -1438,24 +1550,24 @@ function waterfallBlock(skey, v) {
   const wf = (DATA.waterfall || {})[
     `${skey}|${v}|${S.uni}|${DATA.risks[S.risk]}|${DATA.capitals[S.cap]}`];
   if (!wf) return "";
-  const steps = [["Rule on paper", wf.perfect, "var(--ink-3)"],
+  const steps = [["The rule on paper", wf.perfect, "var(--ink-3)"],
                  ["Trading costs", wf.costs, "var(--down)"],
-                 ["Size cap", wf.cap, wf.cap >= 0 ? "var(--up)" : "var(--down)"],
-                 ["Their interaction", wf.interaction,
+                 ["Order size limit", wf.cap, wf.cap >= 0 ? "var(--up)" : "var(--down)"],
+                 ["The two together", wf.interaction,
                   (wf.interaction ?? 0) >= 0 ? "var(--up)" : "var(--down)"],
                  ["What you keep", wf.net, "var(--accent)"]];
   const span = Math.max(...steps.map(s => Math.abs(s[1] ?? 0)), 1);
   return `<div class="card"><h3>Where the return goes</h3>
-    <p class="sub">CAGR points, perfect fills down to tradeable</p><div class="wf">` +
+    <p class="sub">percentage points a year, from a frictionless account down to one that could really have been run</p><div class="wf">` +
     steps.map(([k, val, col]) => `<div class="wf-row"><span>${k}</span>
       <div class="wf-bar"><div class="wf-fill" style="background:${col};
         left:${val < 0 ? 50 - 50 * Math.abs(val) / span : 50}%;
         width:${50 * Math.abs(val ?? 0) / span}%"></div></div>
       <span class="num" style="text-align:right;font-family:var(--mono)">${val == null ? "—" : (val > 0 ? "+" : "") + val.toFixed(1)}</span></div>`).join("") +
-    `</div><p class="note">The two middle steps do not add up to the last: a size cap changes
-     which signals you can afford, so it interacts with costs instead of stacking on them.
-     A positive size-cap bar means the limit <em>helped</em> — it forced the account to
-     spread across more names.</p></div>`;
+    `</div><p class="note">The two middle steps do not simply add up: the size limit changes
+     which signals you can afford, so it tangles with the costs instead of stacking on top of
+     them. A positive size-limit bar means the limit <em>helped</em> — it forced the account to
+     spread its money across more stocks.</p></div>`;
 }
 
 /* Bootstrap resamples a rule's OWN trades sequentially, one continuous
@@ -1511,30 +1623,49 @@ function credibilityCard(row, boot, credLive) {
   const tone = v => v == null || hurdle == null ? "" : v > hurdle ? "up" : "down";
   const stat = (k, v, d, cls = "") => `<div class="stat"><div class="k">${k}</div>
     <div class="v ${cls}" style="font-size:19px">${v}</div><div class="d">${d}</div></div>`;
-  return `<h3 style="margin-top:var(--gap)">Credibility
-      <span class="pill">${credLive ? `live for ${DATA.universes[S.uni]}` : "All stocks -- no test of its own here"}</span></h3>
-    <p class="sub">mean R per trade, minus what random entries on the same stocks would earn, over a
+  /* PLAIN LABELS, THE STATISTICS' NAMES UNDERNEATH (2026-09-19). These nine
+     tiles were labelled n, n_clusters, mean_r, drift_r and five different
+     t's -- the densest thing on the page, and unreadable to anyone who did
+     not already have the vocabulary. Every name is still on screen, in the
+     caption under its own number, so the tiles and the glossary still meet. */
+  return `<h3 style="margin-top:var(--gap)">Is it skill, or just a rising market?
+      <span class="pill">${credLive ? `worked out for ${DATA.universes[S.uni]}` : "All stocks -- no test of its own here"}</span></h3>
+    <p class="sub">Take what the average trade made. Subtract what buying the same stocks on
+      random days would have made. Then ask how sure we can be of what is left, counting every
+      trade opened in the same three months as one bet rather than as many. A score above
+      ${hurdle ?? "—"} would be convincing here; the banner on the Compare page explains why
+      the bar is that high.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      mean R per trade, minus what random entries on the same stocks would earn, over a
       standard error that treats every trade entered in one quarter as one bet &mdash; against a
-      luck hurdle of t = ${hurdle ?? "—"} (the banner atop Compare says how that is set)</p>
+      luck hurdle of t = ${hurdle ?? "—"} (the banner atop Compare says how that is set)
+    </div></details>
     <div class="stats">
-      ${stat("n", boot.n.toLocaleString("en-IN"), "trades in the rule's own list, overlaps in one stock dropped")}
-      ${stat("n_clusters", boot.n_clusters == null ? "—" : boot.n_clusters.toLocaleString("en-IN"),
-             "distinct entry quarters: the number of bets the standard error counts")}
-      ${stat("mean_r", t(boot.mean_r, 3), "average net profit per trade, in multiples of the rupees risked")}
-      ${stat("drift_r", t(boot.drift_r, 3), boot.drift_r == null
-             ? "what random entries earn -- not computable here" : "what random entries on the same stocks earn, same holding and stop")}
-      ${stat("t_iid", t(boot.t_iid), "mean_r over a plain standard error: every trade an independent draw", tone(boot.t_iid))}
-      ${stat("t_cluster", t(boot.t_cluster), "mean_r over the clustered standard error: one quarter, one bet", tone(boot.t_cluster))}
-      ${stat("t_stat", t(boot.t_stat), "(mean_r − drift_r) over the clustered standard error: the drift-adjusted t", tone(boot.t_stat))}
-      ${stat("t_gate", t(boot.t_gate), "the smaller of t_cluster and t_stat: beat zero AND beat random timing -- THE gate", tone(boot.t_gate))}
-      ${stat("t_taken", t(row.tTaken), "the same t on the trades this account took at this scenario", tone(row.tTaken))}
+      ${stat("Trades counted", boot.n.toLocaleString("en-IN"), "trades in the rule's own record; a fresh signal in a stock it already holds is not counted twice (n)")}
+      ${stat("Separate bets", boot.n_clusters == null ? "—" : boot.n_clusters.toLocaleString("en-IN"),
+             "different three-month stretches the rule bought in -- that, not the trade count, is how many separate tries it really had (n_clusters)")}
+      ${stat("The average trade", t(boot.mean_r, 3), "profit per trade, as a multiple of the money put at risk on it (mean_r)")}
+      ${stat("A random buyer's trade", t(boot.drift_r, 3), boot.drift_r == null
+             ? "what buying on random days earns -- cannot be worked out here (drift_r)"
+             : "what buying the same stocks on random days earns, held the same length of time with the same stop (drift_r)")}
+      ${stat("Score, trades counted separately", t(boot.t_iid), "the flattering version: every trade treated as its own piece of evidence, which overstates the case (t_iid)", tone(boot.t_iid))}
+      ${stat("Score, one quarter one bet", t(boot.t_cluster), "the same score with every trade opened in one quarter counted as a single bet (t_cluster)", tone(boot.t_cluster))}
+      ${stat("Score, random buyer removed", t(boot.t_stat), "one quarter one bet, and with what a random buyer earns taken off the top first (t_stat)", tone(boot.t_stat))}
+      ${stat("The score that counts", t(boot.t_gate), "the lower of the two above: the rule has to make money AND beat buying on random days -- one of the two is not enough (t_gate)", tone(boot.t_gate))}
+      ${stat("Score on this account's trades", t(row.tTaken), "the same score on the trades this account could afford at these settings (t_taken)", tone(row.tTaken))}
     </div>
-    <p class="note">Resampling whole calendar quarters rather than single trades, the mean net R stays positive in
+    <p class="note">Shuffle whole quarters of this rule's history around and run it again a few
+      hundred times: the average trade still makes money in
+      ${boot.p_neg == null ? "—" : (100 - boot.p_neg * 100).toFixed(0)}% of those reshuffles
+      (a bad one ${t(boot.p05_mean_r, 3)}, a middling one ${t(boot.p50_mean_r, 3)}, a good one
+      ${t(boot.p95_mean_r, 3)}, all as multiples of the money put at risk).</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      Resampling whole calendar quarters rather than single trades, the mean net R stays positive in
       ${boot.p_neg == null ? "—" : (100 - boot.p_neg * 100).toFixed(0)}% of resamples (5th/50th/95th percentile
       ${t(boot.p05_mean_r, 3)} / ${t(boot.p50_mean_r, 3)} / ${t(boot.p95_mean_r, 3)} R).
       For reference only, the same resampling COMPOUNDED sequentially -- not the credibility figure, and not
       comparable to the account-level CAGR elsewhere on this page: 5th/50th/95th percentile CAGR
-      ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)}.</p>`;
+      ${bigPct(boot.p05)} / ${bigPct(boot.p50)} / ${bigPct(boot.p95)}.</div></details>`;
 }
 
 /* DETAIL: the day-by-day test and the fill-timing arm, taken apart.
@@ -1542,29 +1673,36 @@ function credibilityCard(row, boot, credLive) {
    grid key -- so nothing here recomputes a verdict the table disagreed with. */
 function dailyCard(row) {
   const d = row.daily, dg = DATA.diagnostics;
-  if (!dg) return `<h3 style="margin-top:var(--gap)">Beats hold day by day</h3>
-    <p class="empty">This payload was built without the daily test, so Validated
-    fell back to the seven-window gate. Run <code>python3 -m scripts.wf_attach</code>
-    then <code>python3 -m scripts.attach_diagnostics</code>.</p>`;
-  if (!d) return `<h3 style="margin-top:var(--gap)">Beats hold day by day</h3>
-    <p class="empty">no daily test for this cell -- the account never traded it,
-    or it ran for fewer than 250 days, below which a HAC standard error on
-    overlapping returns is not worth reporting.</p>`;
+  if (!dg) return `<h3 style="margin-top:var(--gap)">Did it win day after day, or on one lucky run?</h3>
+    <p class="empty">This build was made without the day-by-day check, so the older
+    three-year-stretch test stood in for it. Run <code>python3 -m scripts.wf_attach</code>
+    then <code>python3 -m scripts.attach_diagnostics</code> to put it back.</p>`;
+  if (!d) return `<h3 style="margin-top:var(--gap)">Did it win day after day, or on one lucky run?</h3>
+    <p class="empty">Not tested at these settings: either the account never traded
+    this rule here, or it ran for fewer than 250 days &mdash; too short a stretch for
+    the answer to mean anything, because positions stay open for weeks and the same
+    few moves would be counted again and again.</p>`;
   const ok = row.dailyExcess;
   const stat = (k, v, dd, cls = "") => `<div class="stat"><div class="k">${k}</div>
     <div class="v ${cls}" style="font-size:19px">${v}</div><div class="d">${dd}</div></div>`;
   const seen = d.excess_pts != null && d.mde_80 != null
     && Math.abs(d.excess_pts) < d.mde_80;
-  return `<h3 style="margin-top:var(--gap)">Beats hold day by day
+  return `<h3 style="margin-top:var(--gap)">Did it win day after day, or on one lucky run?
       <span class="pill" style="color:${ok ? "var(--up)" : "var(--down)"}">
-      ${ok == null ? "—" : ok ? "✓ passes" : "✗ fails"} the gate</span></h3>
-    <p class="sub">every day this account ran, its return minus the same day's
-      equal-weight hold of ${DATA.universes[S.uni]} &mdash; ~${d.days.toLocaleString("en-IN")}
-      differences instead of the seven win/lose windows below</p>
+      ${ok == null ? "—" : ok ? "✓ passes" : "✗ fails"} this check</span></h3>
+    <p class="sub">Every single day this account was running, we ask: did it do better or
+      worse than simply owning ${DATA.universes[S.uni]} that day? That is
+      ~${d.days.toLocaleString("en-IN")} head-to-head days, a far harder test to fool than the
+      seven win-or-lose stretches further down.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      every day this account ran, its return minus the same day's equal-weight hold of
+      ${DATA.universes[S.uni]} &mdash; ~${d.days.toLocaleString("en-IN")} differences instead of
+      the seven win/lose windows below
+    </div></details>
     <div class="stats" style="margin-bottom:var(--gap)">
-      ${stat("t (HAC)", d.t_hac == null ? "—" : d.t_hac.toFixed(2),
-             "mean daily excess over a Newey-West standard error", ok == null ? "" : ok ? "up" : "down")}
-      ${stat("p", d.p == null ? "—" : d.p < 1e-4 ? d.p.toExponential(1) : d.p.toFixed(4),
+      ${stat("Skill score, day by day", d.t_hac == null ? "—" : d.t_hac.toFixed(2),
+             "how big the average daily lead is next to how much it wobbles, allowing for good and bad runs clumping together (t, Newey-West)", ok == null ? "" : ok ? "up" : "down")}
+      ${stat("Chance it is a fluke", d.p == null ? "—" : d.p < 1e-4 ? d.p.toExponential(1) : d.p.toFixed(4),
              dg.bh_threshold > 0
                ? `How likely a result this good would be if the rule had no edge at all.
                   It has to come in under ${dg.bh_threshold} to pass &mdash; a bar set low
@@ -1573,16 +1711,16 @@ function dailyCard(row) {
                : `How likely a result this good would be if the rule had no edge at all.
                   Lower is better. The passing bar on this board is <b>zero</b>: once the
                   ${(dg.n_tested || 0).toLocaleString("en-IN")} simultaneous tests are
-                  corrected for, not one cell was convincing enough to clear it, so
+                  corrected for, not one of the rules was convincing enough to clear it, so
                   nothing can pass here.`)}
-      ${stat("Excess", d.excess_pts == null ? "—"
+      ${stat("Beat buy & hold by", d.excess_pts == null ? "—"
              : (d.excess_pts > 0 ? "+" : "") + d.excess_pts.toFixed(1),
-             "CAGR points a year over the hold", d.excess_pts == null ? ""
+             "percentage points a year ahead of just owning the stocks", d.excess_pts == null ? ""
              : d.excess_pts > 0 ? "up" : "down")}
-      ${stat("Detectable", d.mde_80 == null ? "—" : d.mde_80.toFixed(1),
-             "smallest edge this cell would spot 80% of the time")}
-      ${stat("Days", d.days.toLocaleString("en-IN"), "daily differences tested")}
-      ${stat("NW lag", d.nw_lag, "days of self-correlation allowed for")}
+      ${stat("Smallest edge visible", d.mde_80 == null ? "—" : d.mde_80.toFixed(1),
+             "a lead smaller than this many points a year would slip past unnoticed most of the time, however real it was")}
+      ${stat("Days compared", d.days.toLocaleString("en-IN"), "days where the rule and plain ownership were put side by side")}
+      ${stat("Streaks allowed for", d.nw_lag, "how many days in a row the test assumes a good or bad patch can run (Newey-West lag)")}
     </div>
     <p class="note">${seen
       ? `<b>This cell is inside its own blind spot.</b> The measured excess
@@ -1592,11 +1730,18 @@ function dailyCard(row) {
       : `The excess is larger than this test's detection floor
          (${d.mde_80 == null ? "—" : d.mde_80.toFixed(1)} pts/yr), so the verdict is
          about the evidence rather than about the sample size.`}
+      The bar it has to clear is set for the whole board at once, not for this
+      one rule on its own: ${dg.n_tested.toLocaleString("en-IN")} settings were tested,
+      which is ${dg.n_tested.toLocaleString("en-IN")} chances to get lucky, and roughly
+      ${dg.expected_by_chance} of them would sail past the usual textbook bar with no
+      skill at all.</p>
+    <details class="prec"><summary>the precise version</summary><div>
       The bar is a Benjamini-Hochberg false-discovery-rate threshold across all
       ${dg.n_tested.toLocaleString("en-IN")} tested cells, not a nominal 0.05:
       testing the whole board at once is ${dg.n_tested.toLocaleString("en-IN")} chances
       to be lucky, and about ${dg.expected_by_chance} cells would clear 0.05 with no
-      edge whatsoever.</p>`;
+      edge whatsoever.
+    </div></details>`;
 }
 
 function fillCard(row) {
@@ -1606,52 +1751,58 @@ function fillCard(row) {
   const d = row.fillDelta;
   const stat = (k, v, dd, cls = "") => `<div class="stat"><div class="k">${k}</div>
     <div class="v ${cls}" style="font-size:19px">${v}</div><div class="d">${dd}</div></div>`;
-  return `<h3 style="margin-top:var(--gap)">If you could not trade the close
-      <span class="pill">shown, not gated</span></h3>
-    <p class="sub">the identical account, refilled at the NEXT session's open
-      instead of the close that produced each signal</p>
+  return `<h3 style="margin-top:var(--gap)">What if you could not buy at the closing price?
+      <span class="pill">shown here, but never used to pass or fail a rule</span></h3>
+    <p class="sub">The board buys and sells at the closing price of the very day a signal
+      appears. Nobody can see a day's closing price and still trade at it. So here is the
+      same account run again, doing everything one session later, at the next morning's
+      opening price.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      the identical account, refilled at the NEXT session's open instead of the close that
+      produced each signal
+    </div></details>
     <div class="stats" style="margin-bottom:var(--gap)">
-      ${stat("CAGR at next open", f.wiped ? "wiped" : f.cagr == null ? "—" : f.cagr.toFixed(1) + "%",
-             "same rule, same costs, one bar later")}
-      ${stat("Difference", d == null ? "—" : (d > 0 ? "+" : "") + d.toFixed(1),
-             "CAGR points the close fill was worth", d == null ? "" : d >= 0 ? "up" : "down")}
+      ${stat("Yearly return, buying next morning", f.wiped ? "wiped out" : f.cagr == null ? "—" : f.cagr.toFixed(1) + "%",
+             "same rule, same costs, every trade one session later")}
+      ${stat("What the impossible price was worth", d == null ? "—" : (d > 0 ? "+" : "") + d.toFixed(1),
+             "percentage points a year, closing price against next morning's open", d == null ? "" : d >= 0 ? "up" : "down")}
       ${stat("Trades", f.taken == null ? "—" : f.taken.toLocaleString("en-IN"),
              "against " + (row.taken == null ? "—" : row.taken.toLocaleString("en-IN")) + " at the close")}
-      ${stat("Still beats hold", f.beats_hold == null ? "—" : f.beats_hold ? "✓" : "✗",
-             "against the same benchmark as the vs Hold column",
+      ${stat("Still ahead of plain ownership", f.beats_hold == null ? "—" : f.beats_hold ? "✓" : "✗",
+             "against the same yardstick as the Beat buy & hold by column",
              f.beats_hold == null ? "" : f.beats_hold ? "up" : "down")}
     </div>
-    <p class="note">The board fills at the close of the bar that produced the
-      signal. You cannot see a day's close and also trade at it, so this is the
-      honest version. ${d == null ? "" : d < -0.5
-        ? `<b>This rule loses ${Math.abs(d).toFixed(1)} CAGR points a year to a fill it could
-           never have got</b> &mdash; read its headline number with that subtracted.`
+    <p class="note">${d == null ? "" : d < -0.5
+        ? `<b>${Math.abs(d).toFixed(1)} percentage points a year of this rule's result come from a
+           price nobody could have got</b> &mdash; read its headline number with that taken off.`
         : d > 0.5
-        ? `<b>This rule is HURT by the close fill</b>, not helped: waiting a bar earned
-           ${d.toFixed(1)} points more. That is a real result, not an error &mdash; a stop
-           triggered on a close and filled at the next open is usually worse, but an
-           entry signal can be better.`
-        : `The difference is under half a CAGR point, so this rule's number does
-           not depend on the impossible fill.`}
-      ${prov ? `<b>PROVISIONAL.</b> The next-open branch of this rule's engine has
-        not been independently verified &mdash; only ${(dg.arm_b_verified || []).join(", ")}
-        has. Treat the number as indicative and check the engine before quoting it.`
-        : `The next-open branch of this rule's engine is verified.`}</p>`;
+        ? `<b>The closing price actually hurt this rule</b>, rather than flattering it:
+           waiting until the next morning earned ${d.toFixed(1)} points more a year. That is a
+           real result, not a mistake &mdash; selling out of a falling stock a session late
+           usually costs money, but buying into one a session late can save it.`
+        : `The gap is under half a percentage point a year, so this rule's headline
+           number does not lean on the price nobody could have got.`}
+      ${prov ? `<b>Treat this panel as a rough sketch.</b> The next-morning version of this
+        rule's code has never been checked line by line against a hand-worked example &mdash;
+        only ${(dg.arm_b_verified || []).join(", ")} has. Do not quote these four numbers
+        without checking the code first.`
+        : `The next-morning version of this rule's code has been checked against a
+           hand-worked example, so these four numbers can be quoted as they stand.`}</p>`;
 }
 
 function validationBlock(row) {
   const val = row.val;
   if (!val) return `<div class="card"><h3>Does it hold up?</h3>
-    <p class="empty">Fewer than 30 trades on this rule's own record -- too
-    few to bootstrap or test against buy &amp; hold.</p></div>`;
+    <p class="empty">This rule made fewer than 30 trades, which is too thin a record
+    to test against anything. Nothing here would mean much.</p></div>`;
   const fc = fixedChecksFor(val);
   const boot = fc.credibility, perm = fc.permutation, be = fc.breakeven;
   const prio = S.prio || DATA.priority_default;
   const capital = DATA.capitals[S.cap];
   const liveWf = (val.walk_forward_by_scenario || {})[scenarioKey(S.uni, prio, capital)];
   const windows = liveWf ? liveWf.windows : [];
-  const beText = !be ? "—" : be.status === "negative" ? "already negative before any extra cost"
-    : be.status === "robust" ? "survives 200bp+ a side" : `${be.bp.toFixed(1)} bp/side`;
+  const beText = !be ? "—" : be.status === "negative" ? "loses money before any extra cost"
+    : be.status === "robust" ? "more than 2% a side" : `${(be.bp / 100).toFixed(2)}% a side`;
   const permText = !perm ? "not enough trades in the shuffled pool" :
     `${perm.observed.toFixed(1)}% real vs ${perm.shuffled_median.toFixed(1)}% median of shuffled ` +
     `prices (${perm.beat_by >= 0 ? "+" : ""}${perm.beat_by.toFixed(1)}pp; p = ${perm.p == null ? "—" : perm.p.toFixed(3)} ` +
@@ -1667,14 +1818,22 @@ function validationBlock(row) {
       <td class="l">${w.partial ? "partial, not counted" : w.win == null ? "under 20 trades, not counted" : ""}</td></tr>`).join("");
   const wfTable = !windows.length ? `<p class="empty">no walk-forward windows for this scenario</p>` :
     `<div class="tablewrap"><table>
-      <thead><tr><th class="l">From</th><th class="l">To</th><th>Rule CAGR</th><th>Hold CAGR</th>
-        <th>Win</th><th class="l"></th></tr></thead><tbody>${wfRows}</tbody></table></div>`;
+      <thead><tr><th class="l">From</th><th class="l">To</th><th>The rule</th><th>Just owning</th>
+        <th>Ahead?</th><th class="l"></th></tr></thead><tbody>${wfRows}</tbody></table></div>`;
   const corr = val.most_correlated;
   const credLive = fixedChecksLive();
   return `<div class="card"><h3>Does it hold up?
       <span class="pill" style="color:${row.validated ? 'var(--up)' : 'var(--down)'}">
         ${row.validated == null ? "— not enough data" : row.validated ? "✓ Validated" : "✗ Not validated"}</span></h3>
-    <p class="sub">Beats buy &amp; hold is for ${DATA.universes[S.uni]} from ${S.year}; walk-forward for
+    <p class="sub">Five checks, and a rule has to pass all five. Two of them follow the settings
+      you picked on the left: whether it beat plain ownership of ${DATA.universes[S.uni]} from
+      ${S.year}, and how it did era by era with ${prioName()} going first and ${inr(capital)} to
+      trade with. The other three &mdash; shuffled prices, room for costs, and the skill score
+      &mdash; always run on one fixed account of ₹2 lakh risking 1% a trade${credLive ? "" :
+        ", and on all stocks rather than this one instrument, which is too narrow to " +
+        "shuffle or resample on its own"}, whatever is on screen. Every check charges real trading costs.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      Beats buy &amp; hold is for ${DATA.universes[S.uni]} from ${S.year}; walk-forward for
       ${DATA.universes[S.uni]} / ${prioName()} first / ${inr(capital)}. The three trade-level checks
       (shuffled prices, cost margin, credibility) are for ${DATA.universes[S.uni]}${credLive ? "" :
         " -- falling back to All stocks, since a single instrument has no shuffled-price test or " +
@@ -1682,40 +1841,64 @@ function validationBlock(row) {
       screen: they use the rule's trade list before any account simulation. All five run on the
       same "Realistic fills" trades (costs, spread, market impact, size cap) the CAGR column does --
       including the day-by-day test, which is computed out of band by scripts.wf_attach against
-      that same trade list rather than a re-simulation of its own.</p>
+      that same trade list rather than a re-simulation of its own.
+    </div></details>
     ${gateChecklist(row)}
-    <p class="note">Validated means every one of the five checks above passed -- gated, not
-      averaged: one bad check is not offset by the others scoring well, on the same reasoning
-      the Compare page's banner explains.${DATA.diagnostics ? " The fourth check reads DAYS, " +
-      "not windows, since 2026-09-10: the walk-forward table below is still here and still " +
-      "worth reading, it simply no longer decides the verdict on seven bits of evidence." : ""}</p>
+    <p class="note">A rule counts as checked out only if it passed every one of the five. They
+      are not averaged: scoring brilliantly on four does not buy a pass on the fifth, for the
+      reason the banner on the Compare page gives.${DATA.diagnostics ? " The fourth check now " +
+      "compares single days rather than seven long stretches. The table of stretches below is " +
+      "still worth reading, it just no longer decides the verdict on seven pieces of evidence." : ""}</p>
     ${dailyCard(row)}
     ${fillCard(row)}
-    <h3 style="margin-top:var(--gap)">Walk-forward <span class="pill">wins/total ${row.walkText || "—"}</span></h3>
-    <p class="sub">fixed 3-year calendar windows, each against its own equal-weight hold of ${DATA.universes[S.uni]}</p>
+    <h3 style="margin-top:var(--gap)">Did it work in every era?
+      <span class="pill">won ${row.walkText || "—"}</span></h3>
+    <p class="sub">The history is cut into three-year stretches. In each one the rule starts
+      fresh and is judged only against owning ${DATA.universes[S.uni]} over those same three
+      years. A rule that worked once and then stopped shows up here and nowhere else.</p>
     ${wfTable}
-    <p class="note">${DATA.diagnostics ? "NO LONGER A GATE -- the day-by-day test above took its " +
-      "place on 2026-09-10, because seven windows is seven bits of evidence and scripts.wf_power " +
-      "measured a rule with NO edge passing this majority 49.8% of the time. It stays because it " +
-      "answers WHEN, which the daily test cannot: a rule that stopped working in 2015 can still " +
-      "pass a whole-sample daily test, and this table is where that shows. " : ""}Wins a strict
-      majority of fixed 3-year calendar windows against that window's own
-      equal-weight hold: <b>${row.walkText || "—"}</b> here, and a majority needs wins × 2 &gt; total.
-      A partial trailing window (under two years of data) is shown, not counted; so is a window with
-      under 20 trades. These windows do not overlap, unlike the cumulative start-year control above.</p>
+    <p class="note">${DATA.diagnostics ? "<b>This table no longer decides anything.</b> Seven " +
+      "stretches is only seven pieces of evidence, and a rule with no skill at all wins most of " +
+      "them almost exactly half the time &mdash; a coin toss. The day-by-day test above replaced " +
+      "it. The table stays because it answers a question the daily test cannot: WHEN. A rule that " +
+      "stopped working in 2015 can still look fine over the whole history, and this is where that " +
+      "would show. " : ""}The rule won <b>${row.walkText || "—"}</b> of these stretches; to count as
+      working in every era it would need to win more than half of them. A last stretch with under
+      two years of data is shown but not counted, and so is one with fewer than 20 trades. These
+      stretches do not overlap each other, unlike the start-year control above.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      ${DATA.diagnostics ? "NO LONGER A GATE -- the day-by-day test above took its place on " +
+      "2026-09-10, because seven windows is seven bits of evidence and scripts.wf_power measured " +
+      "a rule with NO edge passing this majority 49.8% of the time. " : ""}Wins a strict
+      majority of fixed 3-year calendar windows against that window's own equal-weight hold:
+      <b>${row.walkText || "—"}</b> here, and a majority needs wins × 2 &gt; total. A partial
+      trailing window (under two years of data) is shown, not counted; so is a window with under
+      20 trades. These windows do not overlap, unlike the cumulative start-year control above.
+    </div></details>
     <div class="stats" style="margin-top:var(--gap)">
-      <div class="stat"><div class="k">Best trades removed</div>
+      <div class="stat"><div class="k">Take away its best trades</div>
         <div class="v" style="font-size:${'15px'}">${[1, 5, 10, 25].map(n =>
           `${val.top_n[n] == null ? "—" : val.top_n[n].toFixed(1)}%`).join(" · ")}</div>
-        <div class="d">CAGR with the top 1 · 5 · 10 · 25 trades deleted (fixed baseline)</div></div>
-      <div class="stat"><div class="k">Breakeven cost</div>
+        <div class="d">yearly return with its single best trade deleted, then its best 5, 10 and 25. If the first number collapses, one lucky trade was the whole story.</div></div>
+      <div class="stat"><div class="k">Cost it could bear</div>
         <div class="v">${beText}</div>
-        <div class="d">at ₹2L / 1% / strongest-12-month-first; Zerodha + modelled spread run ~15&ndash;40 bp/side and the gate needs &gt;40bp margin over that</div></div>
-      <div class="stat"><div class="k">Most correlated with</div>
+        <div class="d">how expensive trading would have to get before this rule made nothing. Broker fees and the spread come to roughly 0.15&ndash;0.40% a side in real life, and to pass, a rule needs at least another 0.40% of room on top of that (measured on the fixed ₹2 lakh account).</div></div>
+      <div class="stat"><div class="k">Most similar rule</div>
         <div class="v" style="font-size:15px">${corr ? corr.key : "—"}</div>
-        <div class="d">${corr ? `r = ${corr.r.toFixed(2)}` : "no strong match"}</div></div>
+        <div class="d">${corr ? `${corr.r.toFixed(2)} out of 1.00 &mdash; ${corr.r >= 0.9 ? "all but the same rule wearing a different name" : corr.r >= 0.7 ? "much the same idea" : "only loosely related"}` : "nothing on the board resembles it"}</div></div>
     </div>
-    <p class="note" style="margin-top:var(--gap)"><b>Shuffled-price test</b> (the sharpest of the five gates, live for ${DATA.universes[S.uni]}) &mdash; ${permText}.</p>
+    <p class="note" style="margin-top:var(--gap)"><b>Does it still work on fake prices?</b>
+      Scramble the real price history into nonsense that keeps the same statistical shape, then
+      run the rule on it, hundreds of times over. A rule with a genuine edge should do clearly
+      worse on the fakes. This one earned ${!perm ? "&mdash;" : perm.observed.toFixed(1) + "% a year"}
+      on the real prices against ${!perm ? "&mdash;" : perm.shuffled_median.toFixed(1) + "%"} on a
+      typical fake &mdash; ${!perm ? "there were not enough trades in the shuffled pool to say" :
+      perm.distinguishable ? "<b>a real difference</b>" :
+      "<b>no real difference</b>, meaning it earns as much on made-up prices as on the ones that actually happened"}.
+      (Run on ${DATA.universes[S.uni]}.)</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      <b>Shuffled-price test</b> (the sharpest of the five gates, live for ${DATA.universes[S.uni]}) &mdash; ${permText}.
+    </div></details>
     ${boot ? credibilityCard(row, boot, credLive) : ""}
     </div>`;
 }
@@ -1737,18 +1920,25 @@ function tradeStatsBlock(row) {
     + (t.paper_risk_pct == null ? "" : ` at ${t.paper_risk_pct}% risk`);
   const paper = `on ${book}, not this account`;
   return `<div class="card"><h3>Trade quality</h3>
-    <p class="sub">One position at a time per symbol -- overlapping signals in the same stock are not
+    <p class="sub">Only one position at a time in any one stock, so a fresh signal in something
+      the rule already holds is not counted twice. The figures marked <b>R</b> are profit measured
+      against the money put at risk on that trade &mdash; risk ₹500 and make ₹250 and that is
+      +0.50 R &mdash; which means they read the same whether you trade with ₹2 lakh or ₹2 crore.
+      The rupee figures below them are ${paper}.</p>
+    <details class="prec"><summary>the precise version</summary><div>
+      One position at a time per symbol -- overlapping signals in the same stock are not
       double-counted. R = net profit ÷ rupees risked at entry, the same at any account size; the
-      rupee figures are ${paper}.</p>
+      rupee figures are ${paper}.
+    </div></details>
     <div class="stats">
-      ${stat("Expectancy", R(t.expectancy_r), "average net per trade, in R")}
-      ${stat("Avg win / loss", R(t.avg_win_r) + " / " + R(t.avg_loss_r), t.rr == null ? "" : "R:R " + t.rr)}
-      ${stat("Win rate", (t.win_rate * 100).toFixed(0) + "%", t.wins + " of " + t.trades)}
-      ${stat("Profit factor", t.pf == null ? "no losses" : t.pf.toFixed(2), "gross win ÷ gross loss")}
-      ${stat("Expectancy", inr(t.expectancy), "average net per trade, " + paper)}
-      ${stat("Avg win / loss", inr(t.avg_win) + " / " + inr(t.avg_loss), paper)}
-      ${stat("Best / worst trade", inr(t.best) + " / " + inr(t.worst), "single trade, net, " + paper)}
-      ${stat("Worst losing streak", inr(t.worst_run), "peak-to-trough on the trade P&amp;L line, " + paper)}
+      ${stat("Average profit per trade", R(t.expectancy_r), "what one trade makes on average, after costs, for every rupee it put at risk")}
+      ${stat("Typical win / typical loss", R(t.avg_win_r) + " / " + R(t.avg_loss_r), t.rr == null ? "" : "so a win is " + t.rr + " times the size of a loss")}
+      ${stat("How often it wins", (t.win_rate * 100).toFixed(0) + "%", t.wins + " winning trades out of " + t.trades)}
+      ${stat("Made per rupee lost", t.pf == null ? "never lost" : t.pf.toFixed(2), "everything the winning trades made, divided by everything the losing ones cost")}
+      ${stat("Average profit per trade, in rupees", inr(t.expectancy), "the same average trade in money, " + paper)}
+      ${stat("Typical win / typical loss, in rupees", inr(t.avg_win) + " / " + inr(t.avg_loss), paper)}
+      ${stat("Best / worst single trade", inr(t.best) + " / " + inr(t.worst), "one trade, after costs, " + paper)}
+      ${stat("Worst run of losses", inr(t.worst_run), "the deepest the running total of trade profits ever sank below an earlier high, " + paper)}
     </div></div>`;
 }
 
@@ -1827,7 +2017,7 @@ function renderDetail() {
     ${scenarioPlain()}
     <h3 style="margin-bottom:9px">How the account did</h3>
     <div class="stats">
-      ${stat("vs Buy & Hold", row.vsHold == null ? "—"
+      ${stat("Beat buy & hold by", row.vsHold == null ? "—"
                : (row.vsHold > 0 ? "+" : "") + row.vsHold.toFixed(1) + " pts",
              "", row.vsHold == null ? "" : row.vsHold > 0 ? "up" : "down", true, "vsHold")}
       ${stat("Growth a year", cagrText(r), "",
@@ -1844,11 +2034,11 @@ function renderDetail() {
              "Share of days with almost no spare cash left. On those days a new " +
              "signal had to be turned down however good it looked.")}
       ${stat("Time under water", num(r.ulcer, 1), "", "", false, "ulcer")}
-      ${stat("Sharpe", num(r.sharpe, 2), "", "", false, "sharpe")}
-      ${stat("Sortino", num(r.sortino, 2), "", "", false, "sortino")}
-      ${stat("Credibility here", r.t_taken == null ? "—" : "t=" + r.t_taken.toFixed(2),
-             "The same luck test as below, but run only on the trades THIS " +
-             "account actually managed to take at this scenario.")}
+      ${stat("Steadiness", num(r.sharpe, 2), "", "", false, "sharpe")}
+      ${stat("Steadiness, falls only", num(r.sortino, 2), "", "", false, "sortino")}
+      ${stat("Skill score on these trades", r.t_taken == null ? "—" : r.t_taken.toFixed(2),
+             "The same skill test as further down the page, but run only on the " +
+             "trades this account actually managed to afford at these settings.")}
     </div>
     <div class="explain"><h4>Why the rule did not take every signal it found</h4>
       <p>The rule pointed at ${n0(r.signals)} buying opportunities and the account managed
@@ -1868,9 +2058,9 @@ function renderDetail() {
     </details>
     <div class="grid2">
       <div class="card">
-        <h3>The account</h3><p class="sub">equity, and how much of it was spare</p>
+        <h3>The account</h3><p class="sub">what it was worth, and how much of that was still spare cash</p>
         <div class="legend">
-          <span><i class="swatch" style="background:var(--equity)"></i>equity</span>
+          <span><i class="swatch" style="background:var(--equity)"></i>account value</span>
           <span><i class="swatch" style="background:var(--cash)"></i>cash in hand</span>
         </div>
         <div id="chart-eq"><div class="empty">loading…</div></div>

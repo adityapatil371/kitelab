@@ -473,7 +473,7 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 - `dashboard_server.serve()` binds `127.0.0.1` by default, so a server inside
   the dev container is unreachable from the host browser and `-p 8765:8765`
   does not help. `curl` in-container proves only liveness. `--host 0.0.0.0`
-  fixes it and **requires a passphrase** — see Sharing below.
+  fixes it and **requires a passphrase** — see "Sharing it with a group" above.
 - **The Mac views the dashboard over HTTPS, not `./run_dashboard.sh`.** Safari
   enforces HTTPS-Only there and refuses a plain-http navigation outright. The
   fix is a trusted self-signed cert, NOT an http allowlist — so the browser is
