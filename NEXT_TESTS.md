@@ -2309,6 +2309,164 @@ registered properly.
 
 ---
 
+### BUILT 2026-09-19 — the code, before the rebuild
+
+Prerequisites 1, 2, 3 and 5 are done; the board is 36 rows in `registry.py` and
+nothing has been rebuilt yet.
+
+- **`kitelab/pine.py` is new.** The Pine's SIGNAL half moved out of
+  `scripts/wf_pine.py` verbatim — bars, Heikin-Ashi, the higher-timeframe EMA
+  filter, RSI, ATR, the three entry legs. The trade half (ATR stop, 3xATR
+  target, the five (stop, fill) variants, the walk-forward harness) stayed in
+  the script, which now imports from the module. **Parity proved before the
+  move was kept**: the pre-move file and the module were run side by side over
+  40 symbols x 2 timeframes — 180,647 bars, 1,755 column-instances, and
+  `entry_mask` with and without its RSI leg — **0 mismatches**.
+- **`kitelab/entries.py` holds fourteen rules**, the six of 2026-09-17 plus
+  `gapdn rsi30 gap mktrel dryup low252 inside pine`. `mktrel` is the second
+  cross-sectional rule and shares `xrank`'s panel, scope and weak-reference
+  discipline; the market proxy is derived in the same pass, so the two rules
+  cost one ~40s panel build between them rather than two.
+- **One Pine row, `pine:W-full+1`**, per the pre-registered choice. Its two
+  conventions — stamped on `end_ts`, shifted +1 session — are now written down
+  in `kitelab/pine.py` rather than living in a script's argument list.
+- **A stamp hole was found and closed on the way.** `signals._code_files(None)`
+  — the WHOLE-BOARD digest, which is what `stamp(account=True)` uses for
+  `dashboard.json` — was the bare list of DECLARED producers unioned with
+  `_SUPPORT`, walking nothing. Every producer's closure had happened to land
+  inside that set until `kitelab/pine.py`, which only `entries.py` imports.
+  An edit to the Pine would have left `refresh` reporting "already current"
+  over a superseded validation record: the 2026-09-02 holygrail.py failure one
+  layer up. `tests/test_stamps.PerProducerNarrowing` caught it the same hour.
+  The branch now derives the union of the producers' closures. It gained
+  exactly one file (`pine.py`) and lost none.
+- 450 tests pass; pyflakes clean but for the known `scripts/refresh.py:69`.
+
+### The caveat the smoke test turned up, stated before the run
+
+`entries.py` reads each rule on the symbol's OWN bars with
+`min_periods == the window`; `scripts/pine_span.py` measured the same rules on
+the panel, where a non-trading gap inside the window disqualifies the window
+entirely. So the board trades a rule that fires slightly MORE often than the one
+whose phi was measured, and the gap grows with the window because a long window
+is likelier to contain a gap. Measured on 250 symbols, 927,298 listed cells:
+
+| rule | panel % | own % | ratio |
+|---|---|---|---|
+| `vcon` (7) | 16.471 | 16.711 | 1.01 |
+| `mr` (20) | 11.720 | 12.378 | 1.06 |
+| `vol` (50) | 10.173 | 11.635 | 1.14 |
+| `dryup` (50) | 13.655 | 15.799 | 1.16 |
+| `low252` (252) | 1.456 | 2.621 | **1.80** |
+
+This is PRE-EXISTING — three of those five rules have been on the board since
+2026-09-17 — and the per-symbol reading is the correct one ("a 252-day low"
+means 252 of the stock's own bars). What it costs is narrower: `low252`'s
+measured phi of 0.130 describes a panel rule firing 1.8x less often than the one
+the board will trade, so that one row's distinctness is the least well evidenced
+of the eight. It was 8th of 10 in the maximin order in any case. Not re-measured
+— re-running the span pass is a separate job, and doing it now would be choosing
+a rule after seeing a number about it.
+
+`rsi30` also differs from its measured panel by design: `indicators.rsi` uses
+`ewm(adjust=False)` and emits from the second bar, so `entries.py` guards the
+first RSI_LEN sessions. That can only REMOVE firings.
+
+### PRE-REGISTRATION — written 2026-09-19 BEFORE the rebuild
+
+Prerequisite 4. The honest prior is [[kitelab-nine-are-worse-than-hold]] and
+[[kitelab-oos-generalises-but-weakens]]: entries do not rescue this board, and
+PBO 0.412 says whatever ranks top after the run is not evidence. Read the result
+against these sentences, not against the leaderboard.
+
+1. **All sixteen new rows lose to buy-and-hold on their median cell.** Not one
+   positive. If any row comes out positive, the first suspicion is a bug, not a
+   discovery — `pine` most of all, because it is the only row whose rule the
+   user trades and therefore the only one I would want to be true.
+2. **0 of ~10,800 cells pass the day-by-day gate at BH 5%**, as 0 of 5,520 did
+   on 2026-09-17 and 0 of 10,151 did on 2026-09-10.
+3. **At or below ~497 cells clear an uncorrected p <= 0.05**, the number
+   expected by chance. The 2026-09-17 board produced 59 against an expected 276
+   — fewer than chance — and I expect that shape again.
+4. **`n_eff` rises**, and this is the one number that should IMPROVE. 7.7 of 20
+   today. If the eight are as distinct as their phi says, 36 labels should carry
+   appreciably more than 7.7 ideas. **If n_eff does not rise, the selection
+   criterion failed on its own terms** and that is the finding, independent of
+   any return.
+5. **`median_mde_80` moves and its direction is NOT predicted.** 13.94 pts/yr
+   today. More cells tighten the BH bar, but MDE is per-cell power and the new
+   rows have their own trade counts; I am not going to pretend to know which
+   way it lands. It must be RE-READ after the rebuild and never carried over.
+6. **The stop axis reshuffles the new rows too.** Spearman between the arms'
+   family rankings was 0.152 over ten families; over eighteen I expect it to
+   stay low (< 0.4) rather than to rise.
+
+**The consequence that must be reported with the result, not as a footnote:**
+adding rows makes every existing row harder to believe. 6,000 -> 10,800 cells
+is 10,800 chances to be lucky, the ~276 expected false positives become ~497,
+and the Benjamini-Hochberg bar tightens for all twenty incumbents.
+
+### THE FIRST ATTEMPT WAS OOM-KILLED — 2026-09-19, and what it cost
+
+The rebuild was started and died after ~50 minutes with `exit -9`, confirmed
+as the kernel's OOM killer by `oom_kill 1` in the cgroup counter. It was
+part-way through **validation row 15 of 36**, `EMA_daily_only|own`, the longest
+trade list on the board. Rows 1-14 had completed, which is every one of the
+eight new families at full universe scale — **the kill is not a fault in the
+new rules.**
+
+Measured afterwards, not inferred:
+
+| resident in `scripts/dashboard_data.py` | GB |
+|---|---|
+| `base` — 36 lists, 2,349,726 trades | 3.93 |
+| `base` + `slipped`, a second full copy | 6.72 |
+| the container's RAM | 7.9 |
+
+That left ~1.2 GB for the frames cache, the entry panels and four ~0.5 GB
+spawned permutation workers. A trade is 34 flat scalar fields with no nested
+arrays, ~1.7 KB resident, so there is nothing to trim per trade. Twenty rows
+fitted and thirty-six do not: it is arithmetic, not bad luck, and it is a
+direct cost of item 24 that the plan did not anticipate.
+
+**The fix.** `slipped` is now built by consuming `base` key by key rather than
+by a comprehension that holds both, guarded by `keep_base` — which is the cost
+waterfall's own condition, `any(not FILL_SPEC[f][0] for f in GRID_FILLS) or
+len(GRID_FILLS) >= len(FILL_MODES)`, because that `else` branch is the only
+reader of `sets["0"]`'s VALUES and is unreachable while `GRID_FILLS == ["1"]`.
+Written as the condition itself and not a proxy, so the two cannot drift.
+
+Peak fell **6.72 -> 4.73 GB**, verified by re-running the exact row that died
+with all 36 lists, all 1,000 frames and a real 4-worker pool resident.
+
+**The part that makes this expensive:** the validation record is cached
+all-or-nothing — `signals.save(_VALIDATION_CACHE, ...)` runs at the END of
+`build_validation` — so an OOM at row 15 discards all 14 finished rows and the
+next attempt restarts at row 1. The GRID checkpoints per partition; validation
+does not. Memory is therefore a gate on how many rows the board may hold, and
+the next session must measure resident trade bytes BEFORE adding more rows.
+
+### Measured timings for this board, 2026-09-19
+
+Quoted from real runs, never derived from the architecture
+([[kitelab-verify-estimates-before-stating]]):
+
+| stage | measured |
+|---|---|
+| all 36 signal caches | 2.38 min |
+| `scripts.preflight` (36 rows over 3 symbols) | 1.9 min |
+| one `validation_summary`, 7,185 trades | 0.61 min |
+| one `validation_summary`, 238,054 trades | 0.94 min |
+| validation stage in the real build, incl. `walk_forward_grid` | ~2.1 min/row |
+| one grid partition, 60 cells on `all`, 7,185 trades | 0.15 min |
+| one grid partition, 60 cells on `all`, 238,054 trades | 1.07 min |
+
+`validation_summary` is almost all fixed cost (0.60 min/row + 1.4 us/trade —
+the permutation pool works over the 1,000-symbol universe, not the trade list);
+the grid is the opposite (0.12 min/partition + 4.0 us/trade), so it scales with
+the board. The pilot's per-row figure UNDERSTATES the stage by ~3x because the
+real loop adds `walk_forward_grid` after the print.
+
 ## 25. Does a TRAILING stop help? — RAN 2026-09-17, ANSWER: NO. CLOSED.
 
 **The question, from the user:** *"one questio is the stoploss we are

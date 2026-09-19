@@ -959,10 +959,36 @@ def main() -> None:
     # The spread is charged onto the cached trades rather than re-simulated:
     # nothing in the simulation depends on the fill price, so this is exact and
     # it keeps the whole toggle affordable (see slippage.apply_spread).
+    #
+    # THE PEAK OF THE BUILD, and on 2026-09-19 the thing that killed it. The
+    # comprehension above built `slipped` as a SECOND full copy of every trade
+    # and the process held both. Measured on the 36-row board: `base` alone is
+    # 3.93 GB of trade dicts, the pair 6.72 GB, on a box with 7.9 GB -- before
+    # the frames cache, the panels, or the four spawned permutation workers at
+    # ~0.5 GB each. The rebuild was OOM-killed (exit -9) part-way through
+    # validation row 15, EMA_daily_only|own, the longest list on the board. It
+    # is arithmetic, not bad luck: 20 rows fitted and 36 do not.
+    #
+    # The un-spread copy is only ever READ when a fill mode that does not
+    # charge costs is gridded -- see the cost waterfall below, whose `else`
+    # branch is the only consumer of sets["0"] and is unreachable while
+    # GRID_FILLS is one realistic mode. So keep it only when it is genuinely
+    # needed, and otherwise consume `base` row by row, letting each original
+    # list go as its spread copy is made. Peak falls to one copy plus the row
+    # in flight. `keep_base` is the waterfall's own condition, not a proxy for
+    # it, so the two can never disagree.
+    keep_base = (any(not FILL_SPEC[f][0] for f in GRID_FILLS)
+                 or len(GRID_FILLS) >= len(FILL_MODES))
     execution(True, True)
-    slipped = {key: [slippage.apply_spread(t) for t in trades]
-               for key, trades in base.items()}
-    print("  spread applied to the cached signal lists", flush=True)
+    if keep_base:
+        slipped = {key: [slippage.apply_spread(t) for t in trades]
+                   for key, trades in base.items()}
+    else:
+        slipped = {}
+        for key in list(base):
+            slipped[key] = [slippage.apply_spread(t) for t in base.pop(key)]
+    print("  spread applied to the cached signal lists"
+          + ("" if keep_base else " (un-spread copy released)"), flush=True)
     # The spread is a COST, so it rides with the costs half of the key.
     sets = {fkey: (slipped if costs else base) for fkey, (costs, _) in FILL_SPEC.items()}
 

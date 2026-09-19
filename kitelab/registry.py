@@ -321,6 +321,24 @@ ENTRY_FAMILIES = [
     ("cal", "first session of the month", "Calendar"),
     ("xrank", "top decile 252-day return", "Cross-sectional momentum"),
     ("pull", "above the 200-day, below the 20-day", "Pullback in an uptrend"),
+    # ---- EIGHT MORE, 2026-09-19 (NEXT_TESTS item 24) ----------------------
+    # Same criterion, same machinery, a queue written down before it was
+    # measured: scripts/pine_span.py ran the maximin pass over eighteen
+    # candidates on firing panels alone and the user's answer to the table was
+    # "all of these". Listed in that pass's own pick order. The Pine
+    # contributes ONE row and not five -- the order collapses from 0.85 to 0.18
+    # once any Pine variant is chosen, because its variants are near-subsets of
+    # each other, and five labels holding one idea is the fault the 2026-09-11
+    # cut removed. See kitelab/entries.py for the definitions and
+    # kitelab/pine.py for the two conventions the Pine row carries.
+    ("gapdn", "opens 3% below the previous close", "Gap down"),
+    ("rsi30", "RSI(14) closes back above 30", "Oscillator"),
+    ("gap", "opens 3% above the previous close", "Gap up"),
+    ("mktrel", "up over 20 days while the market is down", "Relative strength"),
+    ("dryup", "volume below half its 50-day median", "Volume dry-up"),
+    ("low252", "252-day low", "One-year low"),
+    ("inside", "inside the previous bar's range", "Inside bar"),
+    ("pine", "Heikin-Ashi no-wick + monthly EMA + RSI", "Pine · weekly"),
 ]
 
 
@@ -418,7 +436,15 @@ def _stem(base: str, arm: str) -> str:
 
 
 def _build_registry() -> list[Strategy]:
-    """Ten families x two stop arms = twenty rows.
+    """Eighteen families x two stop arms = thirty-six rows.
+
+    TEN FAMILIES UNTIL 2026-09-19, when the eight at the bottom of
+    ENTRY_FAMILIES joined and the board went 20 rows -> 36, 6,000 cells ->
+    10,800. That is not free for the rows already here: 10,800 cells is 10,800
+    chances to be lucky, the ~276 cells expected to clear an uncorrected
+    p <= 0.05 by chance alone becomes ~497, and the Benjamini-Hochberg bar
+    tightens for every incumbent. diagnostics.median_mde_80 is a property of the
+    BOARD and must be re-read after a rebuild, never carried across one.
 
     THE SHAPE CHANGED ON 2026-09-17 and the reason is worth stating once here
     rather than only in the notes above. Until today a family's variant slot
@@ -435,10 +461,14 @@ def _build_registry() -> list[Strategy]:
     """
     out: list[Strategy] = []
     for arm, mult in STOPS.items():
-        # ---- the six returns-blind entries (kitelab/entries.py) ------------
-        # One module, six rules, because they share an exit (a 60-session limit
-        # plus the stop) and differ only in when they fire. That is the point:
-        # holding the exit fixed is what makes the entries comparable.
+        # ---- the fourteen returns-blind entries (kitelab/entries.py) -------
+        # One module, fourteen rules, because they share an exit (a 60-session
+        # limit plus the stop) and differ only in when they fire. That is the
+        # point: holding the exit fixed is what makes the entries comparable,
+        # and it is also why the Pine row here is NOT the rule its author
+        # trades -- scripts/wf_pine.py measures that one, with its own ATR stop
+        # and target, and rejected it on 2026-09-16. This row asks the narrower
+        # question the board can actually answer: is its ENTRY worth anything?
         for key, what, _name in ENTRY_FAMILIES:
             out.append(Strategy(
                 key, arm, f"{what} · {STOP_LABEL[arm]}",

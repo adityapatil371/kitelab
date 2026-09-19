@@ -1,4 +1,4 @@
-"""Six entry rules chosen for COVERAGE, each tradable at two stop widths.
+"""Fourteen entry rules chosen for COVERAGE, each tradable at two stop widths.
 
 WHY THIS EXISTS, 2026-09-17. The board carried nine labels holding about four
 ideas: `dv|20-10`/`dv|55-20` overlap at phi 0.958 and `ema|0.0`/`pair|MD` at
@@ -26,6 +26,39 @@ every stock in cfg.merged against every other, so _rank_panel() builds the
 whole close panel once per process and caches it. That is ~40s and ~41MB, paid
 on the first xrank symbol and never again. The universe is already inside the
 cache stamp, so the hidden input is not hidden from signals.stamp().
+
+EIGHT MORE, ADDED 2026-09-19 (NEXT_TESTS item 24), by the same criterion and
+from a queue written down BEFORE it was measured. scripts/pine_span.py ran the
+maximin pass again over eighteen candidates -- the six above, the nine
+`entry_exit_grid` conditions, five rules pre-registered in that file's docstring
+and five readings of the user's Pine -- reading firing panels only, never a
+return. The user's instruction on seeing the table was "all of these".
+
+    gapdn   open <= previous close x 0.97        gap down
+    rsi30   RSI(14) closes back above 30         oscillator
+    gap     open >  previous close x 1.03        gap up
+    mktrel  up over 20 days while the MARKET is  relative strength
+            down over 20 days
+    dryup   volume below half its 50-day median  volume dry-up
+    low252  today's close is the lowest of 252   one-year low
+    inside  high < previous high AND low >       containment
+            previous low
+    pine    the user's Heikin-Ashi rule, weekly  the hand-traded rule
+
+ONE PINE ROW, NOT FIVE, and this is the load-bearing decision of that pass. The
+maximin order collapses after ten picks: once ANY Pine variant is on the slate
+the other four sit at distance 0.18 and 0.17 from it, because the RSI-filtered
+rule is a near-subset of the unfiltered one. Five Pine rows would have put five
+labels on the board holding one idea -- exactly the fault the 2026-09-11
+redundancy cut removed. `pine:W-full+1` is taken because it is the variant the
+maximin pass reached first, not because it measured best; see kitelab/pine.py
+for the two execution conventions it carries and why they were settled first.
+
+`mktrel` IS THE SECOND CROSS-SECTIONAL RULE. Like `xrank` it is not a fact about
+the symbol alone -- "the market is down" is a statement about every other stock
+-- so it reads the same panel, under the same scope and same weak-reference
+discipline, and for the same reason: a shuffled control that kept the REAL
+market's direction would be testing nothing.
 
 TWO STOP WIDTHS, and this is the point of the change. The board's uniform stop
 -- the entry candle's own low -- ends 54.6% of trades on DAY ONE and leaves a
@@ -64,18 +97,28 @@ import weakref
 import numpy as np
 import pandas as pd
 
-from . import backtest, config, frames, indicators, sizing, slippage
+from . import backtest, config, frames, indicators, pine, sizing, slippage
 from .backtest import charges
 
 # entry name -> what it means, for labels. Order is the maximin selection order
 # from scripts/board_span.py, which is why `mr` is first and `xrank` sixth.
 ENTRIES = {
+    # The six of 2026-09-17, in the maximin selection order of that pass.
     "mr": "20-day low",
     "vcon": "narrowest 7-day range",
     "vol": "volume 3x its 50-day median",
     "cal": "first session of the month",
     "xrank": "top decile 252-day return",
     "pull": "above the 200-day, below the 20-day",
+    # The eight of 2026-09-19, likewise in their own maximin order.
+    "gapdn": "opens 3% below the previous close",
+    "rsi30": "RSI(14) closes back above 30",
+    "gap": "opens 3% above the previous close",
+    "mktrel": "up over 20 days while the market is down",
+    "dryup": "volume below half its 50-day median",
+    "low252": "252-day low",
+    "inside": "inside the previous bar's range",
+    "pine": "Heikin-Ashi no-wick + monthly EMA + RSI, weekly",
 }
 
 # variant -> ATR multiple. None means the board's historical convention, the
@@ -87,7 +130,33 @@ ATR_LEN = 14       # the standard Wilder window, same as scripts/xrank_account.p
 MOM_LOOKBACK = 252  # Jegadeesh-Titman, fixed externally and not swept here
 XRANK_TOP = 0.90   # top decile, matching scripts/entry_exit_grid.build_signals
 
+# The eight of 2026-09-19. Every one of these numbers is copied from the panel
+# definition the maximin pass actually measured (scripts/pine_span.extra_signals
+# and scripts/entry_exit_grid.build_signals), NOT re-chosen here -- if a
+# threshold moved, the phi table that justified the rule would no longer
+# describe the rule.
+GAP_UP, GAP_DOWN = 1.03, 0.97    # of the previous close
+RSI_LEN, RSI_FLOOR = 14, 30.0    # the oscillator leg: a close back above 30
+DRYUP_MULT = 0.5                 # of the 50-day median volume
+VOL_MEDIAN_LEN = 50
+LOW_LOOKBACK = 252               # one year, against `mr`'s twenty sessions
+REL_LOOKBACK = 20                # both legs of mktrel read the same window
+
+# The Pine fires on WEEKLY bars; +1 puts the firing on the session after the
+# one that decided it, because the rule fills at the next open. Settled on
+# 2026-09-17 before any return was read -- see kitelab/pine.py.
+PINE_TF = "W"
+PINE_SHIFT = 1
+
 _PANEL: pd.DataFrame | None = None
+
+# The market's own 20-session direction, for `mktrel` (2026-09-19). A boolean
+# Series over sessions, True where the market is DOWN. It is derived from the
+# same close panel as _PANEL and cached beside it, so the two cross-sectional
+# rules cost one panel build between them rather than two -- that build is ~40s
+# and ~41MB, and doubling it was the difference that OOM-killed a rebuild once
+# already (see _PANEL_SCOPE below).
+_WEAK: pd.Series | None = None
 
 # The price source `_PANEL` was built from, held WEAKLY (2026-09-17).
 #
@@ -142,18 +211,21 @@ def panel_scope(symbols):
         _PANEL_SCOPE = saved
 
 
-def _rank_panel() -> pd.DataFrame:
-    """Cross-sectional momentum-decile membership for the whole universe.
+def _build_panels() -> None:
+    """Build BOTH cross-sectional artefacts from one pass over the universe.
 
-    Built once per process PER PRICE SOURCE and cached. Columns are symbols,
-    rows sessions,
-    values True where that stock's 252-session return sits in the market's top
-    decile THAT DAY. Point-in-time by construction: the rank on session t uses
-    only closes at t and t-252.
+    `_PANEL`  columns are symbols, rows sessions, values True where that stock's
+              252-session return sits in the market's top decile THAT DAY.
+    `_WEAK`   one value per session, True where the market itself is down over
+              REL_LOOKBACK sessions.
+
+    Both are point-in-time by construction: the value on session t uses only
+    closes at t and earlier. Built once per process PER PRICE SOURCE AND SCOPE
+    and cached; the close panel they are derived from is deliberately NOT kept,
+    because a third ~41MB object per worker is what the 2026-09-17 OOM was made
+    of.
     """
-    global _PANEL, _PANEL_SRC, _PANEL_KEY
-    if _PANEL is not None and _panel_is_current() and _PANEL_KEY == _PANEL_SCOPE:
-        return _PANEL
+    global _PANEL, _WEAK, _PANEL_SRC, _PANEL_KEY
     members = (list(_PANEL_SCOPE) if _PANEL_SCOPE is not None
                else sorted(config.load().merged))
     closes = {}
@@ -172,19 +244,77 @@ def _rank_panel() -> pd.DataFrame:
     panel = pd.DataFrame(closes).sort_index()
     ret = panel / panel.shift(MOM_LOOKBACK) - 1.0
     _PANEL = ret.rank(axis=1, pct=True).gt(XRANK_TOP) & panel.notna()
+
+    # The market proxy: an equal-weighted index of whatever was listed each
+    # session, compounded. Copied in behaviour from
+    # scripts/entry_exit_grid.build_signals, which is the definition the
+    # firing-overlap pass measured `mktrel` with.
+    proxy = (1.0 + panel.pct_change(fill_method=None)
+             .mean(axis=1, skipna=True).fillna(0.0)).cumprod()
+    _WEAK = (proxy / proxy.shift(REL_LOOKBACK) - 1.0).lt(0.0)
+
     _PANEL_SRC = weakref.ref(frames.daily)
     _PANEL_KEY = _PANEL_SCOPE
     print(f"    xrank panel: {_PANEL.shape[0]:,} sessions x {_PANEL.shape[1]:,} "
           f"symbols, {int(_PANEL.to_numpy().sum()):,} firings", flush=True)
+    print(f"    market proxy: down over {REL_LOOKBACK} sessions on "
+          f"{int(_WEAK.to_numpy().sum()):,} of {len(_WEAK):,} sessions",
+          flush=True)
+
+
+def _panels_are_fresh() -> bool:
+    return (_PANEL is not None and _panel_is_current()
+            and _PANEL_KEY == _PANEL_SCOPE)
+
+
+def _rank_panel() -> pd.DataFrame:
+    """Cross-sectional momentum-decile membership for the whole universe."""
+    if not _panels_are_fresh():
+        _build_panels()
     return _PANEL
 
 
+def _weak_market() -> pd.Series:
+    """True on sessions where the market is down over REL_LOOKBACK sessions."""
+    if not _panels_are_fresh():
+        _build_panels()
+    return _WEAK
+
+
 def clear_caches() -> None:
-    """Drop the cross-sectional panel. Mirrors frames.clear_caches()."""
-    global _PANEL, _PANEL_SRC, _PANEL_KEY
+    """Drop the cross-sectional panels. Mirrors frames.clear_caches()."""
+    global _PANEL, _WEAK, _PANEL_SRC, _PANEL_KEY
     _PANEL = None
+    _WEAK = None
     _PANEL_SRC = None
     _PANEL_KEY = None
+
+
+def _pine_fires(symbol: str, day: pd.DataFrame) -> pd.Series:
+    """The Pine's weekly entries, placed on this symbol's daily sessions.
+
+    Two conventions, both settled on 2026-09-17 and documented in
+    kitelab/pine.py: the firing is dated to `end_ts` (the session the weekly bar
+    CLOSED, which is when the decision could first be taken -- NOT the Monday
+    frames.weekly dates the bar to), and it is then shifted PINE_SHIFT sessions
+    forward because the rule fills at the next open.
+
+    A firing whose shifted session falls past the end of the symbol's history is
+    dropped rather than clamped onto the last bar, which would invent a trade on
+    a date the rule never reached.
+    """
+    fires = pd.Series(False, index=range(len(day)))
+    sig = pine.signals(symbol, PINE_TF)
+    if sig.empty:
+        return fires
+    stamp = sig["end_ts"] if "end_ts" in sig.columns else sig["ts"]
+    decided = pd.DatetimeIndex(stamp[pine.entry_mask(sig, "long")]).normalize()
+    sessions = pd.DatetimeIndex(day["ts"]).normalize()
+    found = sessions.get_indexer(decided)      # -1 where the session is absent
+    at = found[found >= 0] + PINE_SHIFT
+    at = at[at < len(day)]
+    fires.iloc[at] = True
+    return fires
 
 
 def signal(symbol: str, entry: str, day: pd.DataFrame) -> np.ndarray:
@@ -219,6 +349,42 @@ def signal(symbol: str, entry: str, day: pd.DataFrame) -> np.ndarray:
             return np.zeros(len(day), dtype=bool)
         aligned = panel[symbol].reindex(pd.DatetimeIndex(day["ts"]))
         out = aligned.fillna(False).astype(bool).reset_index(drop=True)
+    # ---- the eight of 2026-09-19 ------------------------------------------
+    elif entry == "gapdn":
+        out = pd.Series(day["open"].to_numpy(float)).le(c.shift(1) * GAP_DOWN)
+    elif entry == "gap":
+        out = pd.Series(day["open"].to_numpy(float)).gt(c.shift(1) * GAP_UP)
+    elif entry == "inside":
+        out = h.lt(h.shift(1)) & low.gt(low.shift(1))
+    elif entry == "rsi30":
+        r = indicators.rsi(c, RSI_LEN)
+        # The warm-up guard is NOT in scripts/pine_span.extra_signals, which is
+        # where this rule's phi was measured. indicators.rsi uses
+        # ewm(adjust=False) and so emits a number from the second bar, and a
+        # 14-period Wilder average seeded one bar ago is not a 14-bar
+        # oscillator. Guarding it here costs the first RSI_LEN sessions of each
+        # symbol's history and honours this module's stated rule -- a rule is
+        # silent until it has the history it claims to need. It can only REMOVE
+        # firings, so the measured distinctness is not flattered by it.
+        warm = pd.Series(np.arange(len(day)) >= RSI_LEN)
+        out = r.gt(RSI_FLOOR) & r.shift(1).le(RSI_FLOOR) & warm
+    elif entry == "low252":
+        out = c.le(c.rolling(LOW_LOOKBACK, min_periods=LOW_LOOKBACK).min())
+    elif entry == "dryup":
+        vmed = v.rolling(VOL_MEDIAN_LEN, min_periods=VOL_MEDIAN_LEN).median()
+        out = v.lt(DRYUP_MULT * vmed) & vmed.gt(0)
+    elif entry == "mktrel":
+        # The stock's own window is counted in ITS sessions, the market's in
+        # the panel's -- which differ for a thinly traded name. That is the
+        # right way round: "has this stock risen over twenty of its own bars"
+        # is a fact about the stock, and "is the market down" is a fact about
+        # the market, read off the calendar on the day the stock traded.
+        weak = _weak_market().reindex(pd.DatetimeIndex(day["ts"]))
+        weak = weak.fillna(False).astype(bool).reset_index(drop=True)
+        own_up = (c / c.shift(REL_LOOKBACK) - 1.0).gt(0.0)
+        out = own_up & weak
+    elif entry == "pine":
+        out = _pine_fires(symbol, day)
     else:
         raise ValueError(f"unknown entry {entry!r}; known: {sorted(ENTRIES)}")
     return out.fillna(False).to_numpy(dtype=bool)

@@ -174,20 +174,39 @@ def reachable_from(script: Path) -> set[str]:
 def _code_files(producer: str | None = None) -> list[str]:
     """The modules a cache's `code` digest covers.
 
-    `producer=None`  every producer on the board, plus _SUPPORT. The whole-board
-                     digest, unchanged since 2026-09-02.
+    `producer=None`  the CLOSURE of every producer on the board, plus _SUPPORT.
+                     The whole-board digest.
     `producer=X.py`  X's own transitive import closure, plus _SUPPORT. See the
                      block above for why _SUPPORT is unioned in rather than
                      derived, and what the narrowing is worth.
+
+    THE WHOLE-BOARD BRANCH WALKED NOTHING UNTIL 2026-09-19. It was the bare list
+    of DECLARED producer modules unioned with _SUPPORT -- so a module that only
+    a producer imports was in the narrow stamps and in no wide one. That held
+    for two and a half weeks because every producer's closure happened to land
+    inside {producers} u _SUPPORT; kitelab/pine.py, added that day and reached
+    only through entries.py, was the first module to fall through, and
+    tests/test_stamps.PerProducerNarrowing caught it the same hour.
+
+    What it would have cost: the whole-board digest is what stamp(account=True)
+    uses -- _narrow() never narrows an account stamp -- so dashboard.json's
+    validation record was stamped against a digest that could not see
+    kitelab/pine.py. An edit to the Pine would have left `refresh` reporting
+    "already current" over a superseded record. That is the 2026-09-02
+    holygrail.py failure exactly, one layer up, and the fix is the same one:
+    DERIVE the list from the import statements instead of keeping it by hand.
 
     Imported inside the function, not at module scope: registry imports the
     strategy modules, several of which import this one, and a module-level
     import here would close that loop.
     """
     from . import registry
-    if producer is None:
-        return sorted(set(registry.modules()) | set(_SUPPORT))
     here = Path(__file__).resolve().parent
+    if producer is None:
+        closure = set(_SUPPORT)
+        for m in registry.modules():
+            closure |= {f"{x}.py" for x in reachable_from(here / m)} | {m}
+        return sorted(closure)
     path = here / producer
     if not path.exists():
         raise ValueError(f"no such producer module: {producer}")
