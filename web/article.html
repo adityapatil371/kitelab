@@ -101,7 +101,14 @@ h1 {
   font: 600 2.6rem/1.15 var(--sans);
   letter-spacing: -.02em; margin: 0 0 1rem;
 }
-.lede { font-size: 1.22rem; color: var(--ink-2); margin: 0 0 .6rem; }
+.lede { font-size: 1.22rem; color: var(--ink-2); margin: 0 0 1rem; }
+/* The article's question, standing on its own between the introduction and
+   the answer. Sans and large, because it is the one line a reader who reads
+   nothing else should still come away having been asked. */
+.question {
+  font: 600 1.95rem/1.28 var(--sans); letter-spacing: -.02em;
+  color: var(--ink); margin: 2.4rem 0 0;
+}
 .dateline {
   font: .8rem/1.5 var(--sans); color: var(--ink-3);
   letter-spacing: .04em; text-transform: uppercase;
@@ -216,11 +223,21 @@ a { color: var(--above); }
 </style>
 
 <article>
-  <h1>Did any of it beat just holding?</h1>
-  <p class="lede">We wrote three dozen trading rules, ran each one hundreds of
-  ways across a decade of Indian stock prices, and asked a single question:
-  would you have done better than buying the whole list and leaving it
-  alone?</p>
+  <h1>Stock Analysis</h1>
+
+  <p class="lede">This workbench tests <strong>rules-based swing trading</strong>
+  on roughly a thousand Indian stocks — buy this, sell that, decided in advance
+  by a written rule and followed without judgement, holding positions for days
+  or weeks rather than for minutes or for years. We wrote three dozen such rules
+  and ran each one hundreds of ways, simulated day by day against real prices
+  reaching back two decades, with brokerage, taxes and the cost of moving the
+  market itself all charged against every trade.</p>
+
+  <p class="lede">Every rule is measured against the laziest strategy there is:
+  buy every stock in the list on the first day, never sell, and do nothing at
+  all thereafter. This page calls that <strong>buy &amp; hold</strong>.</p>
+
+  <p class="question">So — did any of it beat buy &amp; hold?</p>
   <p class="dateline" id="dateline">&nbsp;</p>
 
   <div id="body"><p class="loading">Reading the results…</p></div>
@@ -698,9 +715,9 @@ function render(f) {
     The <em>stop</em> is the price at which a losing trade is abandoned; it also
     decides position size, because the further away it sits the fewer shares are
     bought.</span>
-    Over ${years} years it compounded at ${fmt1(f.best.cagr)}% a year. Buying every
-    stock in the list on day one and never selling — what this page calls
-    <strong>buy &amp; hold</strong> — compounded at ${fmt1(f.hold)}%.</p>
+    Over ${years} years it compounded at ${fmt1(f.best.cagr)}% a year. Buy &amp;
+    hold, over the same stocks and the same years, compounded at
+    ${fmt1(f.hold)}%.</p>
 
     <div class="hero">
       <div><div class="big win">${fmt1(f.best.cagr)}%</div>
