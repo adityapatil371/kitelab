@@ -267,8 +267,12 @@ to (stops, notes), so it asks for a name at the door and stamps it on every
 change. Nothing here is writable — every route is a read over a snapshot
 computed before the server started — so there is no change to stamp and the
 door asks for a passphrase only. What the passphrase protects is **disclosure**:
-`dashboard.json` names every stock in the universe and holds five years of
-curves.
+`dashboard.json` is the whole research programme — which rules were tried over
+which buckets and start years, five years of curves, every account-level
+result. It **names no stock**: 0 of 1,122 symbols on disk appear anywhere in
+the 8.2 MB payload (checked 2026-09-19; the only uppercase tokens in it are
+`ATH`, `ATR`, `EMA`, `IST`, `RSI`). An earlier version of this line claimed the
+opposite. The watchlist lives in `kitelab/config.py`, not in the payload.
 
 Two interlocks, neither with an off switch, both pinned by
 `tests/test_dashboard_door.py`:

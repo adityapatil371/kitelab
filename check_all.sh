@@ -90,6 +90,15 @@ if command -v node >/dev/null; then
     # The reading page checks itself the same way, against the same payload.
     echo "  article.html:"
     node scripts/check_article.js | grep -E "all checks passed|FAILURE" | sed "s/^/    /"
+    # The single-file build, if one has been made. It is a generated artifact
+    # under output/, so its absence is not a failure -- but a STALE one is
+    # worse than none, and this is the line that says so.
+    if [ -f output/stock-analysis.html ]; then
+        echo "  stock-analysis.html (single file):"
+        node scripts/check_standalone.js | grep -E "all checks passed|FAILURE" | sed "s/^/    /"
+    else
+        echo "  stock-analysis.html (single file): not built -- python3 -m scripts.build_standalone"
+    fi
 else
     echo "  (node not installed -- skipped)"
 fi

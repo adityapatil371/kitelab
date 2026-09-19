@@ -37,6 +37,10 @@ is the reading page; the bare hostname is the board. See *Which link to send*
 below — for anyone who has not sat with this data, it is the wrong question by
 a wide margin which of the two you paste.
 
+**If you would rather not leave the laptop open**, skip the tunnel entirely and
+send the reading page as a single file: `python3 -m scripts.build_standalone`.
+See *Sending a file instead of a link*.
+
 Stop it with Ctrl-C in each terminal. The link dies with the tunnel and a new
 one is minted next time; sessions live in memory, so stopping the server also
 logs everybody out.
@@ -76,6 +80,46 @@ the opposite of the finding — which is the whole reason the reading page exist
 
 Both pages pull the same `/api/dashboard` payload behind the same passphrase,
 so sharing either shares all of it. There is no smaller door.
+
+## Sending a file instead of a link
+
+The tunnel has one condition the rest of this file cannot argue away: **your
+laptop has to be awake, with two terminals running.** Close the lid and every
+link you sent goes dead. For a reading page that is a bad trade — people open a
+link hours later, on a train, on a phone.
+
+So the reading page can also be baked into **one self-contained HTML file**:
+
+```bash
+python3 -m scripts.build_standalone      # writes output/stock-analysis.html
+```
+
+About 914 KB. No server, no tunnel, no passphrase, no network of any kind — it
+fetches nothing, and it renders the same page on a laptop or a phone (the
+charts are drawn twice, to two different geometries, and the page picks one at
+700 px). Mail it, AirDrop it, put it in the group chat. It opens by
+double-clicking.
+
+**What travels with it.** The builder does not strip the payload down — it
+copies across an allowlist, ten top-level keys and four fields per grid cell,
+so a field added upstream next month cannot leak into a file built after it.
+The 8,049 KB `dashboard.json` goes in and 852 KB of
+payload comes out. The curves, the per-day excess series, the
+fill-timing arm, the calendars and the trade statistics all stay behind; what
+goes is exactly what the reading page puts on screen. `scripts/check_standalone.js`
+proves the trim is lossless the only way worth trusting — it renders the page
+from the trimmed payload and from the full `dashboard.json`, at 1440 px and at
+380 px, and requires the HTML to come out byte-identical.
+
+**A file is not a door.** Whoever has it can forward it, there is no passphrase
+in front of it, and you cannot take it back. That is the whole trade for it
+working with the laptop shut. The tunnel is still the right answer when you
+want to know who is reading and be able to stop them; the file is the right
+answer when you want the thing read at all.
+
+`./check_all.sh` section 5 checks a built file if one exists, and tells you to
+build one if not — a **stale** single file is the failure mode to watch for,
+since unlike the tunnel it does not die when the data moves.
 
 ## Sizing, and who the numbers describe
 
@@ -118,8 +162,19 @@ check is a safety check one flag away from being off.
 refuses a passphrase under 10 characters (`access.MIN_PASSPHRASE`). What is at
 stake here is disclosure rather than damage — nobody can break anything, there
 is nothing to write — but `dashboard.json` is a complete account of which rules
-were tried over which stocks, naming all ~1,000 of them, with five years of
-equity curves. That is your research, and a link is not a secret.
+were tried, over which liquidity buckets and start years, with five years of
+equity curves and every account-level result behind them. That is your
+research, and a link is not a secret.
+
+**It does not, however, name a single stock.** An earlier version of this line
+said it named all ~1,000 of them; that was wrong, and it was wrong in the
+direction that makes you more cautious rather than less, which is why it
+survived. Checked 2026-09-19 by intersecting every symbol on disk against
+every uppercase token in the 8.2 MB file: **0 of 1,122 match**, and the only
+five uppercase tokens in the whole payload are `ATH`, `ATR`, `EMA`, `IST` and
+`RSI`. The payload is aggregate all the way down — rows, buckets, curves — so
+what leaks is the research programme, never the watchlist. (The stock list is
+in `kitelab/config.py`, which is a separate disclosure with a separate door.)
 
 **2. The handler returns 403 to any request carrying proxy headers when no
 passphrase is set.** This is the one that catches a tunnel. `cloudflared` runs

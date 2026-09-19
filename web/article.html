@@ -48,6 +48,16 @@
   the single-number sections rather than introducing a second hue -- an earlier
   draft highlighted in orange and `validate_palette.js` failed it at
   normal-vision dE 7.1 against the red. Two hues, never three.
+
+  PHONES. The board is laptop-only by the user's decision and stays that way.
+  This page is not: it is the one that gets SENT to people, and a link sent to
+  people is opened on a phone. So every chart here has TWO geometries, chosen
+  by setView() from the window width -- not one drawing scaled down, which
+  would render an 11px label at 4px and call it responsive. On a narrow screen
+  the diverging bar puts each rule's name on its own line above its bar (there
+  is no gutter to be had at 360px), the histogram widens its bins so they do
+  not become a comb, and the tooltip answers a TAP as well as a hover, because
+  a phone has no pointer to hover with.
 -->
 
 <style>
@@ -86,6 +96,9 @@
 
 /* ──────────────────────────────────────────────────── page furniture ──── */
 * { box-sizing: border-box; }
+/* Safari on iOS enlarges the text of any block it decides is too narrow,
+   which silently undoes the measure this whole page is built around. */
+html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--surface); color: var(--ink);
   font: 1.05rem/1.62 var(--serif);
@@ -195,6 +208,10 @@ details.tbl summary {
   padding: .35rem 0;
 }
 details.tbl summary:hover { color: var(--ink); }
+/* A five-column table does not fit a phone. It scrolls inside its own box
+   rather than pushing the article sideways -- the body must never scroll
+   horizontally. */
+.scroll { overflow-x: auto; }
 table { border-collapse: collapse; font: .82rem/1.45 var(--sans); margin-top: .6rem; }
 th, td { text-align: right; padding: .28rem .7rem .28rem 0; border-bottom: 1px solid var(--grid); }
 th:first-child, td:first-child { text-align: left; }
@@ -204,7 +221,7 @@ td.num { font-variant-numeric: tabular-nums; }
 /* ─────────────────────────────────────────────────────────── tooltip ──── */
 #tip {
   position: fixed; z-index: 10; pointer-events: none; opacity: 0;
-  transition: opacity .09s; max-width: 20rem;
+  transition: opacity .09s; max-width: min(20rem, calc(100vw - 1.6rem));
   background: var(--ink); color: var(--surface);
   font: .78rem/1.45 var(--sans); padding: .45rem .6rem; border-radius: 4px;
 }
@@ -220,6 +237,28 @@ td.num { font-variant-numeric: tabular-nums; }
 .loading { color: var(--ink-3); font: 1rem/1.6 var(--sans); }
 .err { color: var(--below); font: .95rem/1.6 var(--sans); }
 a { color: var(--above); }
+
+/* ─────────────────────────────────────────────────────────────── phone ──── */
+/* Not a second layout -- the column was always one column. What changes is
+   that display type stops being display-sized, the margin note has already
+   dropped inline (above, at 1050px), and the charts redraw narrow rather
+   than shrink. */
+@media (max-width: 700px) {
+  body { font-size: 1rem; }
+  article { padding: 2.1rem 1.1rem 4rem; }
+  h1 { font-size: 2rem; }
+  h2 { font-size: 1.24rem; padding-top: 1.3rem; }
+  section { margin-top: 3.2rem; }
+  .lede { font-size: 1.08rem; }
+  .question { font-size: 1.5rem; }
+  .takeaway { font-size: 1.06rem; }
+  .dateline { font-size: .74rem; }
+  .hero { gap: 1.6rem 2rem; margin: 1.6rem 0 1.2rem; }
+  .hero .big { font-size: 2.9rem; }
+  .hero .lab { max-width: 9.5rem; }
+  figcaption { font-size: .8rem; }
+  .note { font-size: .86rem; }
+}
 </style>
 
 <article>
@@ -365,7 +404,7 @@ function facts() {
     const [s, v] = key.split("|");
     const id = `${s}|${v}`;
     if (!perRow.has(id)) perRow.set(id, []);
-    perRow.get(id).push({ x, key, final: cell.final });
+    perRow.get(id).push({ x, key });
   }
   const bestRowCells = perRow.get(`${best.skey}|${best.v}`) || [];
   const rowMedians = [...perRow.entries()]
@@ -445,7 +484,26 @@ function rupees(x) {
    CHARTS. Inline SVG, no library. Three forms, each picked from the FT
    Visual Vocabulary by the relationship it expresses -- see the comment at
    the top of this file.
+
+   Each of them draws at ONE of TWO widths. An SVG with a 980-unit viewBox
+   scaled into a 360px phone renders its 11-unit labels at four pixels, which
+   is not a chart, so the narrow case is a different drawing at a viewBox that
+   is roughly 1:1 with the screen: the gutter goes away, labels move, and the
+   density changes. setView() picks; boot() and the resize handler redraw when
+   the answer changes.
    ═══════════════════════════════════════════════════════════════════════ */
+const NARROW_AT = 700;         /* matches the CSS breakpoint, deliberately */
+let VW = 980;                  /* the viewBox width every chart draws into */
+let NARROW = false;
+function setView() {
+  const w = (typeof window !== "undefined" && window.innerWidth) || 1440;
+  NARROW = w <= NARROW_AT;
+  VW = NARROW ? 360 : 980;
+  return NARROW;
+}
+
+/* Keep a centred label from hanging off the edge of a narrow canvas. */
+const clampX = (x, pad, half) => Math.max(pad + half, Math.min(x, VW - pad - half));
 
 /* Hairline axis and grid: solid, one shade off the surface. Never dashed --
    a dashed rule reads as "threshold" or "projection" when it is just a grid. */
@@ -459,7 +517,13 @@ function gridLine(x1, y1, x2, y2, color) {
    rule -- never a hue at the middle. Bars are thin, with the data-end
    rounded and the baseline end square, so the eye lands on the zero line. */
 function divergingBar(rows, opts) {
-  const W = 980, padL = 272, padR = 78, rowH = 21, barH = 12, padT = 26, padB = 34;
+  /* Wide: the rule name lives in a left gutter, the classic small-multiple
+     row. Narrow: there is no gutter to be had, so the name takes its own
+     line above its bar and the row gets taller to pay for it. */
+  const W = VW;
+  const padL = NARROW ? 6 : 272, padR = NARROW ? 10 : 78;
+  const rowH = NARROW ? 34 : 21, barH = NARROW ? 11 : 12;
+  const padT = 26, padB = 34;
   const H = padT + rows.length * rowH + padB;
   const vals = rows.map(r => r.vsHold).filter(v => v != null);
   const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
@@ -469,7 +533,7 @@ function divergingBar(rows, opts) {
 
   let g = "";
   /* Ticks every 10 points, the unit the reader is being asked to think in. */
-  const step = 10;
+  const step = NARROW ? 20 : 10;
   for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
     if (t === 0) continue;
     g += gridLine(x(t), padT - 8, x(t), H - padB + 2, "var(--grid)");
@@ -479,12 +543,15 @@ function divergingBar(rows, opts) {
 
   rows.forEach((r, i) => {
     const y = padT + i * rowH;
-    const yb = y + (rowH - barH) / 2;
+    const yb = NARROW ? y + 18 : y + (rowH - barH) / 2;
     const v = r.vsHold;
-    g += `<text x="${padL - 12}" y="${y + rowH / 2 + 4}" text-anchor="end" font-size="11.5"
+    g += NARROW
+      ? `<text x="${padL}" y="${y + 11}" font-size="11.5"
+            fill="var(--ink-2)" font-family="var(--sans)">${esc(r.name)}</text>`
+      : `<text x="${padL - 12}" y="${y + rowH / 2 + 4}" text-anchor="end" font-size="11.5"
             fill="var(--ink-2)" font-family="var(--sans)">${esc(r.name)}</text>`;
     if (v == null) {
-      g += `<text x="${zero + 6}" y="${y + rowH / 2 + 4}" font-size="11"
+      g += `<text x="${zero + 6}" y="${yb + barH - 1}" font-size="11"
               fill="var(--ink-3)" font-family="var(--sans)">no score</text>`;
       return;
     }
@@ -504,10 +571,16 @@ function divergingBar(rows, opts) {
        number goes INSIDE the bar in the surface colour instead. */
     if (i === 0 || i === rows.length - 1) {
       const lab = signed(v), wLab = lab.length * 6.4;
-      const outside = pos || (bx - 6 - wLab > padL);
-      const lx = pos ? bx + bw + 6 : (outside ? bx - 6 : bx + 6);
+      /* Outside the bar is the better place -- ink on the surface. But the two
+         extreme bars are the ones that reach the edge of the canvas, and on a
+         phone there is no margin left to write in at either end, so when there
+         is no room the number goes INSIDE the bar in the surface colour. */
+      const outside = pos ? (bx + bw + 6 + wLab < W - 2)
+                          : (bx - 6 - wLab > padL);
+      const lx = pos ? (outside ? bx + bw + 6 : bx + bw - 6)
+                     : (outside ? bx - 6 : bx + 6);
       g += `<text x="${lx}" y="${yb + barH - 2}"
-              text-anchor="${pos || !outside ? "start" : "end"}" font-size="11" font-weight="600"
+              text-anchor="${(pos === outside) ? "start" : "end"}" font-size="11" font-weight="600"
               fill="${outside ? "var(--ink)" : "var(--surface)"}" font-family="var(--sans)">${lab}</text>`;
     }
   });
@@ -527,7 +600,9 @@ function divergingBar(rows, opts) {
    grey -- because the story is one number's place in a crowd, not eight
    identities. */
 function dotStrip(values, opts) {
-  const W = 980, padL = 40, padR = 40, padT = opts.padT || 34, H = opts.height || 150;
+  const W = VW, padL = NARROW ? 16 : 40, padR = NARROW ? 16 : 40;
+  const padT = opts.padT || 34;
+  const H = (NARROW && opts.heightNarrow) || opts.height || 150;
   const plotH = H - padT - 40;
   /* The domain must cover the threshold too, or a rule drawn beyond the data
      lands off the canvas and the comparison silently disappears. */
@@ -538,7 +613,9 @@ function dotStrip(values, opts) {
   const zero = x(0);
 
   let g = "";
-  const step = opts.step || 10;
+  /* Twice the tick spacing on a narrow canvas -- the same ticks would print
+     on top of one another. */
+  const step = NARROW ? (opts.stepNarrow || (opts.step || 10) * 2) : (opts.step || 10);
   for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
     if (t === 0) continue;
     g += gridLine(x(t), padT, x(t), padT + plotH, "var(--grid)");
@@ -552,7 +629,7 @@ function dotStrip(values, opts) {
     const s = Math.sin(i * 12.9898) * 43758.5453;
     return (s - Math.floor(s)) * (plotH - 14) + 7;
   };
-  const r0 = opts.r || 3.4;
+  const r0 = NARROW ? (opts.rNarrow || (opts.r || 3.4) * 0.8) : (opts.r || 3.4);
   values.forEach((v, i) => {
     const hl = opts.highlight && opts.highlight(v);
     /* A 2px surface ring on the emphasised mark, so it reads as sitting on top
@@ -567,10 +644,11 @@ function dotStrip(values, opts) {
      because clearing it is what would count as good news. */
   if (opts.threshold != null) {
     const tx = x(opts.threshold);
+    const tl = (NARROW && opts.thresholdLabelNarrow) || opts.thresholdLabel || "";
     g += `<line x1="${tx}" y1="${padT - 8}" x2="${tx}" y2="${padT + plotH + 4}"
             stroke="var(--above)" stroke-width="2.5"/>`;
     g += `<text x="${tx}" y="${padT - 13}" text-anchor="end" font-size="11" font-weight="600"
-            fill="var(--above)" font-family="var(--sans)">${esc(opts.thresholdLabel || "")} &#8594;</text>`;
+            fill="var(--above)" font-family="var(--sans)">${esc(tl)} &#8594;</text>`;
   }
 
   /* The median, the one summary the reader is asked to carry away. */
@@ -578,8 +656,8 @@ function dotStrip(values, opts) {
     const mx = x(opts.median);
     g += `<line x1="${mx}" y1="${padT - 8}" x2="${mx}" y2="${padT + plotH + 4}"
             stroke="var(--ink)" stroke-width="2"/>`;
-    g += `<text x="${mx}" y="${padT - 13}" text-anchor="middle" font-size="11" font-weight="600"
-            fill="var(--ink)" font-family="var(--sans)">typical setting ${signed(opts.median)}</text>`;
+    g += `<text x="${clampX(mx, padL, 56)}" y="${padT - 13}" text-anchor="middle" font-size="11"
+            font-weight="600" fill="var(--ink)" font-family="var(--sans)">typical setting ${signed(opts.median)}</text>`;
   }
   g += `<line x1="${zero}" y1="${padT - 8}" x2="${zero}" y2="${padT + plotH + 4}"
           stroke="var(--ink-3)" stroke-width="1.5"/>`;
@@ -594,10 +672,12 @@ function dotStrip(values, opts) {
    seeing -- how thin the right-hand tail is. Bin edges are anchored on zero so
    no bar can straddle the benchmark, which would make its colour a lie. */
 function histogram(values, opts) {
-  const W = 980, padL = 44, padR = 44, padT = 34, padB = 40;
-  const H = opts.height || 240, plotH = H - padT - padB;
+  const W = VW, padL = NARROW ? 22 : 44, padR = NARROW ? 22 : 44, padT = 34, padB = 40;
+  const H = (NARROW && opts.heightNarrow) || opts.height || 240, plotH = H - padT - padB;
   const lo = Math.min(...values), hi = Math.max(...values);
-  const bw = opts.binWidth || 2;
+  /* Wider bins on a phone. Seventy bins across 316 units leaves 2.5 units of
+     bar either side of the 2-unit gap, which is a comb, not a distribution. */
+  const bw = (NARROW && opts.binWidthNarrow) || opts.binWidth || 2;
   const first = Math.floor(lo / bw) * bw, last = Math.ceil(hi / bw) * bw;
   const nBins = Math.max(Math.round((last - first) / bw), 1);
   const counts = new Array(nBins).fill(0);
@@ -613,7 +693,7 @@ function histogram(values, opts) {
   const zero = x(0);
 
   let g = "";
-  const step = opts.step || 20;
+  const step = NARROW ? (opts.stepNarrow || (opts.step || 20) * 2) : (opts.step || 20);
   for (let t = Math.ceil(first / step) * step; t <= last; t += step) {
     if (t === 0) continue;
     g += gridLine(x(t), padT, x(t), padT + plotH, "var(--grid)");
@@ -635,8 +715,8 @@ function histogram(values, opts) {
     const mx = x(opts.median);
     g += `<line x1="${mx}" y1="${padT - 8}" x2="${mx}" y2="${padT + plotH}"
             stroke="var(--ink)" stroke-width="2"/>`;
-    g += `<text x="${mx}" y="${padT - 13}" text-anchor="middle" font-size="11" font-weight="600"
-            fill="var(--ink)" font-family="var(--sans)">typical run ${signed(opts.median)}</text>`;
+    g += `<text x="${clampX(mx, padL, 46)}" y="${padT - 13}" text-anchor="middle" font-size="11"
+            font-weight="600" fill="var(--ink)" font-family="var(--sans)">typical run ${signed(opts.median)}</text>`;
   }
   g += `<line x1="${zero}" y1="${padT - 8}" x2="${zero}" y2="${padT + plotH}"
           stroke="var(--ink-3)" stroke-width="1.5"/>`;
@@ -652,19 +732,32 @@ function histogram(values, opts) {
    measurement do against the context of a target". A bar for what we found,
    a rule for what the target is, on one axis. */
 function bullet(items, opts) {
-  const W = 980, padL = 250, padR = 120, rowH = 52, padT = 12;
+  /* Same two-geometry rule as the others: wide keeps the label in a gutter,
+     narrow stacks label over bar and buys the height back in the row. */
+  const W = VW;
+  const padL = NARROW ? 8 : 250, padR = NARROW ? 10 : 120;
+  const rowH = NARROW ? 96 : 52, padT = 12;
   const H = padT + items.length * rowH + 14;
   const hi = Math.max(...items.map(i => Math.max(i.value, i.target))) * 1.08 || 1;
   const x = v => padL + (v / hi) * (W - padL - padR);
 
   let g = "";
   items.forEach((it, i) => {
-    const y = padT + i * rowH, mid = y + rowH / 2;
-    g += `<text x="${padL - 14}" y="${mid - 4}" text-anchor="end" font-size="12.5"
-            fill="var(--ink)" font-family="var(--sans)" font-weight="600">${esc(it.label)}</text>`;
-    if (it.sub) {
-      g += `<text x="${padL - 14}" y="${mid + 12}" text-anchor="end" font-size="11"
-              fill="var(--ink-3)" font-family="var(--sans)">${esc(it.sub)}</text>`;
+    const y = padT + i * rowH, mid = NARROW ? y + 66 : y + rowH / 2;
+    if (NARROW) {
+      g += `<text x="${padL}" y="${y + 16}" font-size="12.5"
+              fill="var(--ink)" font-family="var(--sans)" font-weight="600">${esc(it.label)}</text>`;
+      if (it.sub) {
+        g += `<text x="${padL}" y="${y + 32}" font-size="11"
+                fill="var(--ink-3)" font-family="var(--sans)">${esc(it.sub)}</text>`;
+      }
+    } else {
+      g += `<text x="${padL - 14}" y="${mid - 4}" text-anchor="end" font-size="12.5"
+              fill="var(--ink)" font-family="var(--sans)" font-weight="600">${esc(it.label)}</text>`;
+      if (it.sub) {
+        g += `<text x="${padL - 14}" y="${mid + 12}" text-anchor="end" font-size="11"
+                fill="var(--ink-3)" font-family="var(--sans)">${esc(it.sub)}</text>`;
+      }
     }
     /* The qualitative range behind the bar: the neutral midpoint token, so
        it reads as context rather than as a third series. */
@@ -676,11 +769,25 @@ function bullet(items, opts) {
             fill="${it.color || "var(--below)"}" class="mark"
             data-tip="${esc(it.tip || "")}"/>`;
     /* The target as a rule across the bar -- the bullet chart's whole point. */
-    g += `<line x1="${x(it.target)}" y1="${mid - 13}" x2="${x(it.target)}" y2="${mid + 13}"
+    const tx = x(it.target);
+    g += `<line x1="${tx}" y1="${mid - 13}" x2="${tx}" y2="${mid + 13}"
             stroke="var(--ink)" stroke-width="2.5"/>`;
-    g += `<text x="${x(it.target) + 8}" y="${mid - 15}" font-size="11" font-weight="600"
-            fill="var(--ink)" font-family="var(--sans)">${esc(it.targetLabel)}</text>`;
-    g += `<text x="${padL + bw + 8}" y="${mid + 4}" font-size="12" font-weight="600"
+    if (it.targetLabel) {
+      /* Wide there is a right margin to write into; narrow there is not, so
+         the target label reads back from its own rule -- unless that would
+         run off the left edge, in which case it starts at the left. */
+      const wLab = String(it.targetLabel).length * 5.6;
+      const back = NARROW && tx - wLab > padL;
+      g += `<text x="${NARROW ? (back ? tx : padL) : tx + 8}" y="${mid - 17}"
+              text-anchor="${back ? "end" : "start"}" font-size="11" font-weight="600"
+              fill="var(--ink)" font-family="var(--sans)">${esc(it.targetLabel)}</text>`;
+    }
+    /* The value sits after its bar, or before the right edge if the bar has
+       grown far enough that "after" is off the canvas. */
+    const wVal = String(it.valueLabel).length * 6.6;
+    const room = padL + bw + 8 + wVal < W - padR;
+    g += `<text x="${room ? padL + bw + 8 : W - padR}" y="${mid + 4}"
+            text-anchor="${room ? "start" : "end"}" font-size="12" font-weight="600"
             fill="${it.color || "var(--below)"}" font-family="var(--sans)">${esc(it.valueLabel)}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts && opts.label || "measurement against a threshold")}">${g}</svg>`;
@@ -695,12 +802,17 @@ function table(headers, rows) {
       `<td class="${i ? "num" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 const tableFold = (summary, headers, rows) =>
-  `<details class="tbl"><summary>${esc(summary)}</summary>${table(headers, rows)}</details>`;
+  `<details class="tbl"><summary>${esc(summary)}</summary>
+     <div class="scroll">${table(headers, rows)}</div></details>`;
 
 function render(f) {
   const s = f.scenario;
   const stocks = f.nStocks ? `${intIN(f.nStocks)} stocks` : f.universeLabel;
   const years = new Date().getFullYear() - s.year;
+  /* The histogram's bin width is wider on a phone, and the caption has to say
+     so -- a caption that reads "two points to a bar" over four-point bars is
+     the same failure as a stale number in the prose, just better hidden. */
+  const bin = NARROW ? 4 : 2;
 
   /* ── 1. the tempting number ───────────────────────────────────────── */
   const s1 = `
@@ -797,7 +909,7 @@ function render(f) {
     <figure class="wide" id="fig-spread">${dotStrip(
       f.bestRowCells.map(c => ({ x: c.x, key: c.key,
         tip: `${signed(c.x)} points a year vs buy &amp; hold` })),
-      { median: f.bestRowMedian, height: 168,
+      { median: f.bestRowMedian, height: 168, heightNarrow: 210,
         highlight: v => v.key === f.best.key,
         label: `Every setting of ${f.best.name}, measured against buy and hold` })}
       <figcaption>One dot per setting of ${esc(f.best.name)}. The blue dot is the
@@ -823,11 +935,12 @@ function render(f) {
       : `, and ${words(f.nRowsPositiveMedian)} of the ${intIN(f.nRows)} rules has a typical setting that beats it`}.</p>
 
     <figure class="wide" id="fig-all">${histogram(f.allCells,
-      { median: f.allMedian, height: 250, binWidth: 2, step: 20,
+      { median: f.allMedian, height: 250, heightNarrow: 230,
+        binWidth: bin, binWidthNarrow: bin, step: 20,
         label: "Every run on the board, measured against buy and hold" })}
-      <figcaption>All ${intIN(f.nScored)} scored runs, two percentage points to a
-      bar. Blue bars are runs that beat buy &amp; hold. The bulk of the mass sits
-      to its left and the tail that reaches the right is thin.</figcaption>
+      <figcaption>All ${intIN(f.nScored)} scored runs, ${words(bin)} percentage points
+      to a bar. Blue bars are runs that beat buy &amp; hold. The bulk of the mass
+      sits to its left and the tail that reaches the right is thin.</figcaption>
     </figure>
 
     <p>Reading the board by its best row is therefore the wrong way round. Read by
@@ -912,7 +1025,8 @@ function render(f) {
         color: r.med > 0 ? "var(--above)" : "var(--below)",
         tip: `${r.name}|typical setting ${signed(r.med)} points a year vs buy &amp; hold` })),
       { threshold: f.mde, thresholdLabel: `anything out here we would have caught`,
-        height: 200, step: 5, r: 5.5,
+        thresholdLabelNarrow: `we would have caught this`,
+        height: 200, heightNarrow: 240, step: 5, stepNarrow: 10, r: 5.5, rNarrow: 4.6,
         label: "Each rule's typical setting against the smallest detectable edge" })}
       <figcaption>One dot per rule, at its typical setting. The blue rule on the
       right is the smallest edge this data could reliably detect. Every rule sits
@@ -956,34 +1070,76 @@ function attachTips() {
   const tip = document.getElementById("tip");
   if (!tip) return;
   const body = document.getElementById("body");
-  body.addEventListener("mouseover", e => {
-    const m = e.target && e.target.getAttribute && e.target.getAttribute("data-tip");
-    if (!m) return;
+  const tipOf = e =>
+    (e.target && e.target.getAttribute && e.target.getAttribute("data-tip")) || null;
+  const hide = () => { tip.style.opacity = "0"; };
+  /* Keep the tooltip on the screen it is on. Below the fold it flips above the
+     finger; at the right edge it stops rather than running off. */
+  const place = (cx, cy) => {
+    const w = window.innerWidth || 900, h = window.innerHeight || 700;
+    const boxW = Math.min(320, w - 26);
+    tip.style.left = Math.max(8, Math.min(cx + 14, w - 8 - boxW)) + "px";
+    tip.style.top = (cy + 18 > h - 72 ? Math.max(8, cy - 60) : cy + 18) + "px";
+  };
+  const show = (m, cx, cy) => {
     const [head, rest] = m.split("|");
     tip.innerHTML = rest ? `<b>${head}</b><br>${rest}` : head;
     tip.style.opacity = "1";
+    place(cx, cy);
+  };
+
+  body.addEventListener("mouseover", e => { const m = tipOf(e); if (m) show(m, e.clientX, e.clientY); });
+  body.addEventListener("mousemove", e => { if (tipOf(e)) place(e.clientX, e.clientY); });
+  body.addEventListener("mouseout", e => { if (tipOf(e)) hide(); });
+  /* A phone has no pointer to hover with, so without this every mark on the
+     page is mute for exactly the readers most likely to be holding one. Tap a
+     mark to open its tooltip, tap anywhere else to close it. */
+  body.addEventListener("click", e => {
+    const m = tipOf(e);
+    m ? show(m, e.clientX, e.clientY) : hide();
   });
-  body.addEventListener("mousemove", e => {
-    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 330) + "px";
-    tip.style.top = (e.clientY + 18) + "px";
-  });
-  body.addEventListener("mouseout", e => {
-    if (e.target && e.target.getAttribute && e.target.getAttribute("data-tip")) {
-      tip.style.opacity = "0";
-    }
-  });
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("scroll", hide, { passive: true });
+  }
+}
+
+let F = null;
+let drawnNarrow = null;
+
+/* Redraw only when the geometry actually changes. A resize that does not cross
+   the breakpoint must not rebuild the page under the reader -- and on a phone
+   the address bar sliding in and out fires resize continuously. */
+function paint() {
+  setView();
+  if (NARROW === drawnNarrow) return;
+  drawnNarrow = NARROW;
+  document.getElementById("body").innerHTML = render(F);
 }
 
 function boot(payload) {
   DATA = payload;
-  const f = facts();
+  F = facts();
   document.getElementById("dateline").textContent =
-    `Built from prices to ${f.built} · ${f.nRows} rules · ${intIN(f.nScored)} scored runs`;
-  document.getElementById("body").innerHTML = render(f);
+    `Built from prices to ${F.built} · ${F.nRows} rules · ${intIN(F.nScored)} scored runs`;
+  drawnNarrow = null;
+  paint();
+  /* The listener sits on #body itself, which paint() never replaces -- only
+     its contents -- so it survives every redraw and is attached once. */
   attachTips();
-  return f;
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    let t = null;
+    window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(paint, 150); });
+  }
+  return F;
 }
 
+/* ── BOOTSTRAP ────────────────────────────────────────────────────────────
+   The SERVED page asks the server for its numbers. scripts/build_standalone.py
+   replaces everything between these two markers with the payload itself, to
+   make one file that needs no server -- so keep the markers, and keep
+   everything that is not bootstrap outside them.
+   ──────────────────────────────────────────────────────────────────────── */
+/* BOOTSTRAP-START */
 fetch("/api/dashboard").then(r => {
   if (r.status === 401) { window.location = "/login"; return null; }
   return r.json();
@@ -996,4 +1152,5 @@ fetch("/api/dashboard").then(r => {
     `<p class="err">Could not load the results: ${esc(err.message || err)}.
      Is the dashboard server running?</p>`;
 });
+/* BOOTSTRAP-END */
 </script>
