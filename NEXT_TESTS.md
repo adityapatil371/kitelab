@@ -257,13 +257,13 @@ timeframe per variant for 1,000 symbols).
 
 ### NEXT SESSION, set by the user 2026-09-17
 
-**Item 24 — add all eight queued entry families to the board — is the next
-kitelab session's whole job**, in a session dedicated to it. The user's words:
-*"all of these"*, then *"plan the additions for next session, this one has been
-too long"*. Read item 24 at the bottom of this file first; it carries the
-pre-registered queue, the pick order, the prerequisites, the rebuild cost and
-the multiple-testing consequence. The three items below it are older and stay
-queued behind it.
+~~**Item 24 — add all eight queued entry families to the board**~~ —
+**DONE 2026-09-19, 177.9 min, commit `663311b`.** The board is 36 rows and not
+one of them beats hold; see item 24 at the bottom for the result and the
+prediction scoring. **Items 24 and 25 are both closed, and 25 is the last
+numbered section in this file — the numbered items are a LOG of questions
+answered, not a queue.** What is actually open is the table below: **item 5**
+and **item 18-followup**. Both are cheap and neither needs a rebuild.
 
 ### Set by the user 2026-09-16
 
@@ -2180,7 +2180,23 @@ idea has content, never whether the idea clears the bar.
     output/measurements/xrank_gate_2026-09-17_shuffle.csv   (552 rows x 16 cols)
     output/logs/xrank_gate_run.log, output/logs/xrank_gate_shuffle.log
 
-## 24. Add the queued entry rules to the board — PLANNED 2026-09-17, NOT RUN
+## 24. Add the queued entry rules to the board — RAN 2026-09-19. CLOSED.
+
+**DONE. Do not re-run this; the rebuild is 177.9 minutes.** All eight families
+went on, the board is **36 rows** (18 families × 2 stop arms), and the payload
+built 2026-09-19 13:32 IST is the one on disk. Committed as `663311b`.
+**Not one of the 36 rows beats buy-and-hold**: medians run −23.60 (`low252|own`)
+to −3.45 (`pull|atr3`). 87 of 9,936 cells clear an uncorrected 0.05 where
+**496.8** were expected by chance; 0 survive BH, 0 survive Bonferroni. `n_eff`
+rose 7.7 → 11.2 but FELL per label (0.385 → 0.311) — sixteen new rows bought
+about 0.22 ideas each. Five of six pre-registered predictions held; **prediction
+6 failed** (cross-arm Spearman measured 0.490 against the < 0.4 predicted).
+Audit any of this yourself with `./check_all.sh`.
+
+The plan as it was written before the run is kept below, unedited, because the
+pre-registration is the point of it.
+
+### The plan as pre-registered (kept for the record)
 
 **The user's instruction, verbatim: "all of these".** Given on 2026-09-17 in
 response to the twelve-candidate queue below. It was deferred in that session
