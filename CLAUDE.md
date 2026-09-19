@@ -47,6 +47,11 @@ python3 -m scripts.preflight                 # build path, one symbol per bucket
 # does the page still render the file just built? (needs node, not pandas)
 node scripts/check_dashboard.js
 
+# show it to the group — SHARING.md is the runbook
+export KITELAB_PASSPHRASE='...'          # >= 10 chars, or serve() refuses
+./run_dashboard.sh                       # then, in another terminal:
+cloudflared tunnel --url http://127.0.0.1:8765
+
 # fetch new data — the only job needing a Zerodha account
 set -a; source ~/.secrets/all.env; set +a
 python3 -m scripts.login                 # once a day; tokens die ~06:00 IST
@@ -250,6 +255,35 @@ verdict on a computation whose own code has not been checked is worse than
 showing the number with a provisional flag. Promote engines into
 `ARM_B_VERIFIED` as they are checked; the page's wording follows the constant.
 
+## Sharing it with a group
+
+`SHARING.md` is the runbook. Added 2026-09-19 as a port of livedesk's door; the
+two `access.py` files are siblings, not a shared module, and fixes travel by
+hand.
+
+**The dashboard is read-only in a way livedesk is not**, and that difference is
+why this is smaller than livedesk's version: livedesk has a *book* people write
+to (stops, notes), so it asks for a name at the door and stamps it on every
+change. Nothing here is writable — all five routes are reads over a snapshot
+computed before the server started — so there is no change to stamp and the
+door asks for a passphrase only. What the passphrase protects is **disclosure**:
+`dashboard.json` names every stock in the universe and holds five years of
+curves.
+
+Two interlocks, neither with an off switch, both pinned by
+`tests/test_dashboard_door.py`:
+
+- `serve()` refuses a non-loopback bind without a passphrase, and refuses one
+  under 10 characters.
+- The handler 403s any request carrying proxy headers when no passphrase is
+  set. This is the one that catches a **tunnel**: `cloudflared` connects to
+  127.0.0.1, so the bind check sees a private dashboard while the whole
+  internet is on the other end.
+
+`/api/dashboard` is gzipped (8.2 MB → 1.07 MB, memoised on the file's size and
+mtime) and still `no-store`: caching a payload behind a mismatched page renders
+blank, and that argument did not change when the bandwidth one appeared.
+
 ## Layout
 
 - `kitelab/` — the library. Strategy and data logic lives here, never in scripts.
@@ -263,7 +297,8 @@ showing the number with a provisional flag. Promote engines into
   - `validation.py` — edge-vs-luck math. `screener.py`, `contracts.py`
     (hand-entered lot sizes/margins — `unverified_multipliers()` warns).
   - `signals.py` — stamped signal caches. `registry.py` — the board.
-  - `dashboard_server.py` — stdlib HTTP; `/`, `/api/dashboard`, `/api/status`, `/api/curve`.
+  - `dashboard_server.py` — stdlib HTTP; `/`, `/api/dashboard`, `/api/status`,
+    `/api/curve`, `/login`. `access.py` — the door (see Sharing).
 - `scripts/` — thin entry points, all `python -m scripts.<name>`.
   `dashboard_data.py` precomputes the whole grid into `dashboard.json`.
 - `tests/` — ~400 hermetic tests, no price files or network (`support.py`
@@ -271,6 +306,7 @@ showing the number with a provisional flag. Promote engines into
   against `backtesting.py` (skips if that dev extra is absent).
   `scripts/preflight.py` is the integration test, `check_dashboard.js` the page one.
 - `web/dashboard.html` — the entire UI, one file, two views (Compare, Detail).
+  `web/login.html` — the door, when a passphrase is set.
   Nothing is simulated in the browser: every control selects precomputed
   results. **Everything in the payload is displayed** — if you add a payload
   key, add the view with it (unrendered sections were removed 2026-09-03; the
@@ -434,9 +470,10 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
   missing import, MAR computed but never put in the payload, numpy scalars
   that will not serialise. Dry-run the page against the built file
   (`node scripts/check_dashboard.js`) after every rebuild.
-- `dashboard_server.serve()` binds `127.0.0.1` with no host parameter: a
-  server inside the dev container is unreachable from the host browser and
-  `-p 8765:8765` does not help. `curl` in-container proves only liveness.
+- `dashboard_server.serve()` binds `127.0.0.1` by default, so a server inside
+  the dev container is unreachable from the host browser and `-p 8765:8765`
+  does not help. `curl` in-container proves only liveness. `--host 0.0.0.0`
+  fixes it and **requires a passphrase** — see Sharing below.
 - **The Mac views the dashboard over HTTPS, not `./run_dashboard.sh`.** Safari
   enforces HTTPS-Only there and refuses a plain-http navigation outright. The
   fix is a trusted self-signed cert, NOT an http allowlist — so the browser is

@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kitelab</title>
+<style>
+  /* The dashboard's own tokens, light and dark, so the door does not look like
+     a different site from the page behind it. */
+  :root {
+    color-scheme: light dark;
+    --bg:#f7f7f5; --card:#fff; --line:#e6e5e0;
+    --ink:#14140f; --ink-2:#5c5b54; --ink-3:#8b897f;
+    --accent:#2f6fd0; --down:#c0392b;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#131316; --card:#1b1b1f; --line:#2c2c32;
+           --ink:#f0efeb; --ink-2:#adaca6; --ink-3:#7c7b74;
+           --accent:#6ea8fe; --down:#ff6b5e; }
+  }
+  *{box-sizing:border-box}
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         padding:24px; background:var(--bg); color:var(--ink);
+         font:15px/1.55 var(--sans); }
+  form { width:min(92vw, 380px); background:var(--card); padding:26px 24px 22px;
+         border:1px solid var(--line); border-radius:10px; }
+  h1 { font-size:19px; margin:0 0 4px; letter-spacing:.2px; }
+  p.sub { margin:0 0 20px; color:var(--ink-3); font-size:13.5px; }
+  label { display:block; font-size:12px; color:var(--ink-2); margin:14px 0 5px;
+          text-transform:uppercase; letter-spacing:.6px; }
+  input { width:100%; padding:10px 12px; font-size:15px; font-family:inherit;
+          background:var(--bg); color:var(--ink); border:1px solid var(--line);
+          border-radius:6px; }
+  input:focus { outline:none; border-color:var(--accent); }
+  button { width:100%; margin-top:20px; padding:10px; font-size:15px;
+           font-family:inherit; background:var(--accent); color:#fff; border:0;
+           border-radius:6px; cursor:pointer; }
+  button:hover { filter:brightness(1.08); }
+  .err { margin-top:16px; padding:9px 11px; border-radius:6px; font-size:13px;
+         color:var(--down); border:1px solid var(--down); }
+  .foot { margin-top:22px; padding-top:16px; border-top:1px solid var(--line);
+          font-size:12.5px; color:var(--ink-3); line-height:1.6; }
+</style>
+<form method="POST" action="/login">
+  <h1>kitelab</h1>
+  <p class="sub">A research dashboard. Nothing on it is advice, and it places no orders.</p>
+
+  <label for="passphrase">Passphrase</label>
+  <input id="passphrase" name="passphrase" type="password"
+         autocomplete="current-password" required autofocus>
+
+  <button type="submit">Open the dashboard</button>
+
+  <!--ERROR-->
+
+  <p class="foot">
+    This page only shows results that were computed before the server started.
+    Whatever you click changes what <em>you</em> see and nothing else — there is
+    no shared state here, and no button can alter the numbers.
+  </p>
+</form>

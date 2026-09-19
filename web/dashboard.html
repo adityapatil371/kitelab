@@ -1948,7 +1948,14 @@ function init() {
   render();
 }
 
-fetch("/api/dashboard").then(r => { if (!r.ok) throw new Error("no data"); return r.json(); })
+/* 401 is the door, not a failure: when the server was started with a passphrase
+   its sessions live in memory only, so a restart logs every viewer out and the
+   next poll lands here. Sending them back to /login is the whole recovery. */
+fetch("/api/dashboard").then(r => {
+    if (r.status === 401) { location.href = "/login"; throw new Error("locked"); }
+    if (!r.ok) throw new Error("no data");
+    return r.json();
+  })
   .then(d => { DATA = hydrate(d); init();
                const btn = $("cmp-export");
                if (btn) btn.addEventListener("click", exportCsv); })

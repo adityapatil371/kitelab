@@ -3,13 +3,43 @@
     GET  /              the dashboard page
     GET  /api/dashboard the precomputed results (dashboard.json)
     GET  /api/status    whether those results still describe the current universe
+    GET  /api/curve     one equity curve, by byte range
+    GET/POST /login     the door, when a passphrase is set
 
 Run it with `python -m scripts.dashboard`, then open
 http://localhost:8765. Rebuild the numbers it serves with
 `python -m scripts.refresh`.
 
 The page is a pure viewer: every control selects among precomputed
-backtests, so the server only ever reads one JSON file from disk.
+backtests, so the server only ever reads files from disk. **No route here
+writes anything**, and that is the fact the rest of this module is built on.
+
+SHOWING IT TO OTHER PEOPLE (2026-09-19)
+---------------------------------------
+`SHARING.md` is the runbook; this is why the code looks the way it does.
+
+  Binding.  127.0.0.1 by default, which is also the reason a server started
+            inside the dev container is unreachable from the host browser no
+            matter how the port is published. `--host 0.0.0.0` fixes that.
+
+  The door. Binding anything but loopback REQUIRES a passphrase and `serve()`
+            refuses to start without one. Not because a viewer could break
+            something -- nobody can, there is nothing to write -- but because
+            dashboard.json is a complete account of the owner's research over
+            1,000 named stocks, and a link is not a secret.
+
+            A tunnel slips past that check, because `cloudflared` runs on this
+            machine and connects to 127.0.0.1: the socket still looks private
+            while the whole internet is on the other end. So the handler ALSO
+            refuses any request carrying proxy headers when no passphrase is
+            set. Belt and braces, for the one case where the braces cannot see
+            the trousers.
+
+  Weight.   dashboard.json is 8.2 MB and every viewer pulls all of it. It gzips
+            to 1.07 MB in 0.09 s (measured 2026-09-19), which is free on
+            loopback and the difference between usable and not over a tunnel on
+            a phone. The compressed copy is memoised on the file's (size, mtime)
+            so nine viewers cost one compression, not nine.
 
 WHY /api/status EXISTS
 ----------------------
@@ -26,6 +56,7 @@ request to read two fields would turn a 0.1s response into a slow one.
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import re
@@ -33,10 +64,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import config, signals
+from . import access, config, signals
 from .config import CLEAN
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
+LOGIN_PATH = WEB_ROOT / "login.html"
 DATA_PATH = CLEAN / "dashboard.json"
 # One curve per line, addressed by the byte offsets in payload["curve_index"].
 # The comparison table needs no curves at all, and a detail view needs exactly
@@ -44,6 +76,13 @@ DATA_PATH = CLEAN / "dashboard.json"
 # the page would almost never look at.
 CURVES_PATH = CLEAN / "dashboard.curves.jsonl"
 STAMP_PATH = CLEAN / "dashboard.stamp.json"
+
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+# Below this, the gzip header costs more than the compression saves, and the
+# CPU is spent for nothing. The page and the payload are both far above it; a
+# single curve and the status JSON are below.
+MIN_GZIP = 16_384
 
 
 def write_stamp(symbols, built: str, inputs: dict | None = None,
@@ -193,26 +232,168 @@ def status() -> dict:
                         ". Rebuild with: python -m scripts.refresh")}
 
 
+_GZIP_CACHE: dict = {}
+
+
+def _payload() -> tuple[bytes, bytes | None]:
+    """dashboard.json and its gzip, memoised on the file's (size, mtime).
+
+    Nine viewers on a tunnel would otherwise be nine compressions of the same
+    8 MB, and a poll after a rebuild would quietly serve the old bytes -- hence
+    the stat key rather than a plain lru_cache.
+    """
+    st = DATA_PATH.stat()
+    key = (st.st_size, st.st_mtime_ns)
+    if _GZIP_CACHE.get("key") != key:
+        raw = DATA_PATH.read_bytes()
+        _GZIP_CACHE.update(key=key, raw=raw, gz=gzip.compress(raw, 6))
+    return _GZIP_CACHE["raw"], _GZIP_CACHE["gz"]
+
+
 class Handler(BaseHTTPRequestHandler):
+    """The routes.
+
+    `gate` is a CLASS attribute so that `Handler` stays importable and usable on
+    its own: `~/.kitelab-dev-tls/serve_https.py` on the Mac does exactly that to
+    wrap the socket in TLS, and a factory function would have broken it
+    silently. `serve()` binds a real gate by subclassing.
+    """
+
+    gate = access.Gate(None)          # unguarded: loopback only, see serve()
+
     def log_message(self, *args):          # keep the console quiet
         pass
 
-    def _send(self, body: bytes, content_type: str, status: int = 200) -> None:
+    def _send(self, body: bytes, content_type: str, status: int = 200,
+              extra: list | None = None, gz: bytes | None = None) -> None:
+        """One response. Compresses when it is worth it and the client says yes.
+
+        `gz` is a caller-supplied compressed copy of the same bytes, for the one
+        body big enough that recompressing it per request would show.
+        """
+        if len(body) >= MIN_GZIP and "gzip" in (
+                self.headers.get("Accept-Encoding") or "").lower():
+            body = gz if gz is not None else gzip.compress(body, 6)
+            encoded = True
+        else:
+            encoded = False
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        if encoded:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         # Never cache. Both files change under the browser -- the page whenever
         # the layout is edited, the data on every rebuild -- and the failure is
         # silent and confusing: a cached PAGE against fresh DATA (or the reverse)
-        # renders blank, because the two are only ever in step by version. There
-        # is no bandwidth argument for caching either; this serves localhost.
+        # renders blank, because the two are only ever in step by version. That
+        # was written when this only ever served localhost and there was no
+        # bandwidth argument either way. Over a tunnel there now is one, and it
+        # loses anyway: a viewer holding yesterday's payload behind today's page
+        # is the exact failure nobody would think to look for, and gzip already
+        # took the cost from 8.2 MB to 1.1 MB.
         self.send_header("Cache-Control", "no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
+        for k, v in (extra or []):
+            self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    # -- the door ------------------------------------------------------------
+
+    @property
+    def _client(self) -> str:
+        """Who is asking, for rate-limiting only.
+
+        Behind a tunnel every request arrives from 127.0.0.1, so the forwarding
+        header is the only thing that separates callers. A caller can lie about
+        it, which is exactly why `Gate` also counts failures globally -- this
+        value is a convenience, never a permission.
+        """
+        fwd = (self.headers.get("CF-Connecting-IP")
+               or self.headers.get("X-Forwarded-For") or "")
+        return fwd.split(",")[0].strip() or self.client_address[0]
+
+    @property
+    def _secure(self) -> bool:
+        """True when the browser reached us over HTTPS (the tunnel ends TLS)."""
+        return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+
+    @property
+    def _proxied(self) -> bool:
+        """Did this request come through something, rather than straight here?
+
+        It matters because the bind-address interlock in `serve()` cannot see a
+        tunnel. `cloudflared` runs on this machine and connects to 127.0.0.1, so
+        a dashboard exposed to the whole internet is still, as far as the socket
+        is concerned, a private loopback one. The forwarding headers a proxy
+        adds are the one signal that says otherwise.
+        """
+        return bool(self.headers.get("CF-Connecting-IP")
+                    or self.headers.get("X-Forwarded-For")
+                    or self.headers.get("X-Forwarded-Proto"))
+
+    def _refuse_unguarded_proxy(self) -> bool:
+        """Serve nothing to a proxied caller when there is no passphrase."""
+        if self.gate.guarded or not self._proxied:
+            return False
+        self._send((
+            "kitelab is not serving this request.\n\n"
+            "It was started without a passphrase, which means it trusted being "
+            "reachable only from its own machine -- but this request arrived "
+            "through a proxy or tunnel, so that is no longer true.\n\n"
+            "Stop the server and restart it with --passphrase (or "
+            "KITELAB_PASSPHRASE) before tunnelling it.\n"
+        ).encode(), "text/plain; charset=utf-8", 403)
+        return True
+
+    def _login_page(self, message: str = "") -> None:
+        if not LOGIN_PATH.exists():
+            return self._send(b"web/login.html is missing", "text/plain", 500)
+        html = LOGIN_PATH.read_text()
+        if message:
+            html = html.replace("<!--ERROR-->", f'<div class="err">{message}</div>')
+        self._send(html.encode(), "text/html; charset=utf-8")
+
+    def do_POST(self):
+        if self._refuse_unguarded_proxy():
+            return
+        if urlparse(self.path).path != "/login":
+            return self._send(json.dumps({"error": "not found"}).encode(),
+                              "application/json", 404)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        form = parse_qs(self.rfile.read(min(length, 4096)).decode("utf-8", "replace"))
+        given = (form.get("passphrase") or [""])[0]
+        if self.gate.locked_out(self._client):
+            return self._login_page("Too many wrong tries. Wait five minutes.")
+        token = self.gate.login(self._client, given)
+        if token is None:
+            return self._login_page("That passphrase is not right.")
+        cookie = (f"{access.COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/"
+                  + ("; Secure" if self._secure else ""))
+        self._send(b"", "text/plain", 303,
+                   [("Location", "/"), ("Set-Cookie", cookie)])
 
     def do_GET(self):
+        if self._refuse_unguarded_proxy():
+            return
         route = urlparse(self.path).path
+        if route == "/logout":
+            self.gate.logout(self.headers.get("Cookie"))
+            return self._send(b"", "text/plain", 303, [("Location", "/login")])
+        if route == "/login":
+            return self._login_page()
+        if not self.gate.admits(self.headers.get("Cookie")):
+            # An unauthenticated fetch gets JSON, not the login HTML, so the
+            # page can tell "session expired" from "server died" and send the
+            # viewer back to the door instead of rendering a parse error.
+            if route.startswith("/api/"):
+                return self._send(json.dumps({"locked": True}).encode(),
+                                  "application/json", 401)
+            return self._login_page()
         try:
             if route in ("/", "/index.html", "/dashboard"):
                 self._send((WEB_ROOT / "dashboard.html").read_bytes(),
@@ -248,9 +429,9 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/api/status":
                 self._send(json.dumps(status()).encode(), "application/json")
             elif route == "/api/dashboard":
-                data_file = DATA_PATH
-                if data_file.exists():
-                    self._send(data_file.read_bytes(), "application/json")
+                if DATA_PATH.exists():
+                    raw, gz = _payload()
+                    self._send(raw, "application/json", gz=gz)
                 else:
                     self._send(json.dumps({
                         "error": "no data yet -- run: python -m scripts.refresh"
@@ -263,9 +444,31 @@ class Handler(BaseHTTPRequestHandler):
                        "application/json", 500)
 
 
-def serve(port: int = 8765) -> None:
+def serve(port: int = 8765, host: str = "127.0.0.1",
+          passphrase: str | None = None) -> None:
+    """Start the dashboard. Refuses to expose an unguarded one.
+
+    The two refusals below have no off switch, by the same reasoning as
+    livedesk: a flag that turns off a safety check is a safety check that is one
+    flag away from being off. What is at stake here is disclosure rather than
+    damage -- see the module docstring -- but a link handed round a group is
+    still a link, and `dashboard.json` names every stock the owner trades.
+    """
+    gate = access.Gate(passphrase)
+    if host not in LOOPBACK and not gate.guarded:
+        raise SystemExit(
+            f"\n  Refusing to bind {host} without a passphrase.\n"
+            f"  Anyone who reaches this page sees the whole of dashboard.json:\n"
+            f"  every rule tried, every stock in the universe by name, and five\n"
+            f"  years of equity curves. Pass --passphrase, or set\n"
+            f"  KITELAB_PASSPHRASE. A good one: {access.suggest()}\n")
+    problem = gate.problem()
+    if host not in LOOPBACK and problem:
+        raise SystemExit(f"\n  Refusing to bind {host}: {problem}\n")
+
+    handler = type("GuardedHandler", (Handler,), {"gate": gate})
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        server = ThreadingHTTPServer((host, port), handler)
     except OSError as exc:
         # Almost always "address already in use": the dashboard is running in
         # another window. A stack trace here tells the reader nothing useful.
@@ -276,7 +479,10 @@ def serve(port: int = 8765) -> None:
                 f"  Or start this one elsewhere:  python -m scripts.dashboard "
                 f"--port {port + 1}\n")
         raise
-    print(f"\n  dashboard running at http://127.0.0.1:{port}")
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    print(f"\n  dashboard running at http://{shown}:{port}")
+    if gate.guarded:
+        print("  a passphrase is required -- the door is at /login")
     print("  press Ctrl-C to stop\n")
     try:
         server.serve_forever()

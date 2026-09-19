@@ -1,0 +1,150 @@
+# Showing the dashboard to other people
+
+Built 2026-09-19, when the question came up as *"can we make it like livedesk
+where other people can also interact with the dashboard?"*
+
+The answer had two halves and only one of them was work. **Reaching it** — a
+link nine people can open, with a passphrase in front — is livedesk's door
+ported across, and that is what this file is the runbook for. **Interacting
+with it** turned out to need nothing: every control on the page already works
+for whoever opens it, and each viewer's choices are their own. There is no
+shared state here to fight over, because there is nothing writable to share.
+
+---
+
+## The one-minute version
+
+On the machine that has the data — the Mac, not the container:
+
+```bash
+export KITELAB_PASSPHRASE='harbour-ingot-jetty-kernel'   # yours, not this one
+./run_dashboard.sh                                       # leave it running
+```
+
+In a second terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8765
+```
+
+It prints a line like `https://spare-violet-ridge-owl.trycloudflare.com`. Send
+that link and the passphrase to the group, **by different routes if you can** —
+the link in the group chat, the passphrase said out loud — because a link and
+its password in one message is one forwarded message away from neither.
+
+Stop it with Ctrl-C in each terminal. The link dies with the tunnel and a new
+one is minted next time; sessions live in memory, so stopping the server also
+logs everybody out.
+
+First time only: `brew install cloudflared`.
+
+---
+
+## What each person sees
+
+Everything, and independently. They pick their own universe, start year,
+account size, risk and sorting; they open any rule's detail; nothing they touch
+changes the page for anyone else, because no request this server answers writes
+a byte. The payload is a snapshot computed before the server started.
+
+What they cannot do is rebuild it, change it, or reach anything else on your
+machine. There are five routes in total and all five are reads.
+
+## Sizing, and who the numbers describe
+
+The account size on the page is an axis of the grid — ₹2,00,000 or ₹1,00,00,000
+— not a fact about the viewer. Everyone is looking at the same simulated
+account, so a drawdown on screen is that account's, not theirs. livedesk has
+the same issue with its flat ₹500 risk and it travels a little better there;
+here the honest reading is that **these are relative comparisons between rules**,
+and the rupee columns are how the comparison is scaled.
+
+## The thing to say when you send the link
+
+This matters more than the setup does, so it is written here rather than left
+to the moment.
+
+A sorted table with a row at the top reads as *"this one won"* to anyone who
+has not read the five checks. On this board **not one of the 36 rows beats
+buying the same stocks and waiting**, and **0 of 9,936 tested cells** clear the
+day-by-day gate where about 497 would clear an uncorrected 5% by luck alone —
+fewer than chance, which points away from an edge rather than merely failing to
+find one. The page says all of this in plain words, but people skim, and the
+leaderboard is the part that skims well.
+
+So: *"this is a record of rules that did not work, ordered by how badly"*. It
+is not a recommendation, nothing on it is a forecast, and the top row is the
+least bad of a losing set rather than a pick.
+
+---
+
+## The two interlocks
+
+Neither has an off switch, and that is deliberate: a flag that disables a safety
+check is a safety check one flag away from being off.
+
+**1. `serve()` refuses to bind a non-loopback address without a passphrase**, and
+refuses a passphrase under 10 characters (`access.MIN_PASSPHRASE`). What is at
+stake here is disclosure rather than damage — nobody can break anything, there
+is nothing to write — but `dashboard.json` is a complete account of which rules
+were tried over which stocks, naming all ~1,000 of them, with five years of
+equity curves. That is your research, and a link is not a secret.
+
+**2. The handler returns 403 to any request carrying proxy headers when no
+passphrase is set.** This is the one that catches a tunnel. `cloudflared` runs
+on your machine and connects to 127.0.0.1, so the socket still looks private
+while the whole internet is on the other end — the bind check in (1) cannot see
+it. The forwarding headers are the only signal that says otherwise.
+
+Both are pinned by `tests/test_dashboard_door.py`. The 403 especially needs a
+test, because it fires only on a request no browser and no person makes by hand,
+so nothing else would ever exercise it.
+
+## Brute force
+
+`access.Gate` counts failures two ways: **8 per client** and **30 in total**,
+both over a rolling **5 minutes**. The global counter is the one that holds
+behind a tunnel, where every request arrives from 127.0.0.1 and the only thing
+separating callers is a header the caller writes. While a client is locked out,
+even the correct passphrase is refused.
+
+## Weight
+
+The payload is 8.2 MB and every viewer pulls all of it. It is gzipped to
+**1.07 MB** (0.09 s, memoised on the file's size and mtime, so nine viewers cost
+one compression). Equity curves are not in it — the detail view fetches one at a
+time by byte range — which is why the page is usable on a phone.
+
+It is still not cached, for the same reason it never was: the page and the data
+are only ever in step by version, and a viewer holding yesterday's payload
+behind today's page renders blank with nothing on screen to explain it.
+
+---
+
+## Traps
+
+- **Do not point the tunnel at the HTTPS wrapper.** `~/.kitelab-dev-tls/serve_https.py`
+  exists because Safari refuses a plain-http *local* navigation; it is the right
+  way to open the dashboard on your own Mac. A tunnel does not need it —
+  Cloudflare terminates TLS, so the group gets `https://` either way — and
+  `cloudflared` pointed at a self-signed local certificate is one more thing to
+  go wrong. Run `./run_dashboard.sh` for tunnelling, the TLS wrapper for
+  yourself. The wrapper imports `Handler` directly and so inherits interlock (2),
+  but **not** (1): it does its own binding. Keep it on loopback.
+- **`--host 0.0.0.0` is a different problem.** It is for running the server
+  inside the dev container and opening the page from the host browser (loopback
+  inside a container is unreachable no matter how the port is published). It is
+  not how you share with people, and it demands a passphrase just the same.
+- **A passphrase on the command line lands in your shell history and in `ps`**,
+  where every user on the machine can read it. `--passphrase` exists; prefer
+  `KITELAB_PASSPHRASE`, and keep it in `~/.secrets/all.env` with the rest.
+- **The link changes every restart.** A quick tunnel mints a fresh hostname each
+  time. If the group ever needs a bookmark that survives, that is a *named*
+  Cloudflare tunnel and a domain — and at that point per-person logins become
+  worth having instead of one shared passphrase.
+- **Your laptop is the server.** Close the lid and the link dies mid-sentence for
+  everyone. `caffeinate -i ./run_dashboard.sh` is the fix, as on livedesk.
+- **The staleness banner still applies, and now other people see it.** If the
+  page says the numbers are out of date, they are out of date for the whole
+  group; `/api/status` checks the live config on every request, so it tells the
+  truth to every viewer independently.
