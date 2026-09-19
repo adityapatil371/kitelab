@@ -116,9 +116,28 @@ td.stale-baseline{color:var(--ink-3)}
          color:var(--ink-3);font-weight:600}
 .stat .v{font-size:23px;font-weight:600;font-family:var(--mono);
          font-variant-numeric:tabular-nums;margin-top:3px;letter-spacing:-.02em}
-.stat .d{font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px}
+.stat .d{font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px;line-height:1.45}
 .stat.hero{background:var(--accent-soft)}
 .stat.hero .v{font-size:30px}
+
+/* ── the plain-language layer (2026-09-19) ────────────────────────────────
+   The precise wording is not deleted, it is folded away. .prec has to sit
+   inside a .stat tile without stretching it, so it is small, quiet, and
+   collapsed until asked for. */
+.prec{margin-top:6px;font-size:var(--fs-xs);color:var(--ink-3)}
+.prec summary{cursor:pointer;color:var(--ink-3);opacity:.75}
+.prec summary:hover{opacity:1;color:var(--ink-2)}
+.prec div{margin-top:5px;line-height:1.5;color:var(--ink-2)}
+.explain{background:var(--accent-soft);padding:15px 17px;border-radius:var(--radius);
+         margin-bottom:var(--gap)}
+.explain h4{margin:0 0 6px;font-size:var(--fs);color:var(--ink-1)}
+.explain p{margin:0 0 9px;font-size:var(--fs-sm);line-height:1.6;color:var(--ink-1)}
+.explain p:last-child{margin-bottom:0}
+.explain .lede{font-size:var(--fs);line-height:1.6}
+.explain dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;
+            font-size:var(--fs-sm);line-height:1.55}
+.explain dt{color:var(--ink-3);font-weight:600;white-space:nowrap}
+.explain dd{margin:0;color:var(--ink-1)}
 .v.up{color:var(--up)} .v.down{color:var(--down)}
 
 svg{display:block;width:100%;overflow:visible}
@@ -148,6 +167,28 @@ svg{display:block;width:100%;overflow:visible}
     <div class="card">
       <h3>Every rule, the same conditions</h3>
       <p class="sub" id="cmp-sub"></p>
+      <!-- ADDED 2026-09-19. Compare is the page people land on, and it opened
+           straight into a sorted table of rules with no statement of what the
+           table is for or what would count as a good result. -->
+      <div class="explain">
+        <h4>How to read this table</h4>
+        <p class="lede">Each row is one trading rule: a mechanical instruction like
+          &ldquo;buy after a stock has fallen to a 20-day low&rdquo;, run over about a
+          thousand Indian stocks with one pot of money, with real trading costs charged.
+          The same rule appears twice, once for each way of deciding when to sell.</p>
+        <p>The only question worth asking is the last column but one: <b>did the rule beat
+          simply buying every stock and waiting?</b> That is what &ldquo;buy &amp; hold&rdquo;
+          means, and it is the honest thing to compare against, because it takes no skill
+          and almost no effort. A negative number there means the rule lost to doing
+          nothing.</p>
+        <p><b>Five checks</b> is five ticks or crosses in a row, one for each test a rule
+          must pass before this page will call it real. All five have to pass. Click any
+          row to see what each check asked and why it failed.</p>
+        <p><b>Worst fall</b> is the deepest drop from a high point to the low that
+          followed it &mdash; the part of the record you would have had to sit through.
+          Two rules that end up in the same place are not the same rule if one of them
+          halved on the way.</p>
+      </div>
       <div class="banner" id="cmp-baseline-warn"></div>
       <p class="note" id="cmp-inst" hidden></p>
       <p class="note" id="cmp-multitest" hidden></p>
@@ -157,14 +198,17 @@ svg{display:block;width:100%;overflow:visible}
         <div id="cmp-formulas"></div></details>
       <button id="cmp-export" class="export">Export to Excel</button>
       <div class="tablewrap"><table id="cmp"></table></div>
-      <p class="note">Sorted by <b>Validated</b> first, then <b>MAR</b> (return ÷ drawdown) within
-        each group -- a strategy that fails even one of the five checks under Validated ranks below
-        every strategy that passes all of them, whatever its other numbers say; see the banner above
-        and click any column to sort by it instead. <b>Captured</b> is the share of the rule's own
-        signals the account could afford; when it is low you are reading a cash constraint as much as
-        a rule. A row reading <b>no trades</b> is a cell the build computed and the account could
-        not act on. Ulcer, Sharpe and Sortino move to the Detail view, where there is room to explain what
-        each adds over MAR. Click a row for its detail.</p>
+      <p class="note">Rules that pass all five checks are listed first; within each group the
+        order is by return against the worst fall it took to earn it. A rule that fails even one
+        check ranks below every rule that passes all five, whatever its other numbers say. Click a
+        column heading to sort by it instead. A row reading <b>no trades</b> is not a gap in the
+        data: the build worked that cell out and the account could not act on it &mdash; nothing
+        affordable, or nothing the rule pointed at in that span.</p>
+      <p class="note"><b>The rest of the numbers did not go away.</b> This table was cut to five
+        columns on 2026-09-19 because fourteen columns is a spreadsheet, not an answer. Growth a
+        year, ending money, the number of trades, how much of the money was actually working, the
+        luck tests and the year-by-year record are all on the Detail view, one rule at a time, each
+        with a sentence saying what it means. Click any row to get there.</p>
     </div>
   </div>
 
@@ -940,6 +984,82 @@ function precise(key) {
     <div>${esc(FORMULA[key])}</div></details>` : "";
 }
 
+/* ── the rule, in plain words ─────────────────────────────────────────────
+   ADDED 2026-09-19 with the rest of the plain-language layer. Detail opened
+   on a wall of twelve numbers and never once said what the rule BUYS. A
+   reader who does not already know the rule cannot judge a single number
+   below this card, so it goes first, before any of them.
+
+   Everything here is prose the page owns. Nothing is recomputed: the verdict
+   sentence reads row.vsHold, which rows() already worked out and which
+   Compare's "vs Buy & Hold" column draws from the same field. */
+/* Every scenario the controls can select -- stocks x start year x priority x
+   risk x account size. Multiplied out rather than written down, because each
+   axis carries the measurement that set its length and any of them can move. */
+function scenarioCount() {
+  return Object.keys(DATA.universes || {}).length
+       * (DATA.start_years || []).length
+       * (DATA.priorities || [1]).length
+       * (DATA.risks || []).length
+       * (DATA.capitals || []).length;
+}
+
+function ruleCard(row) {
+  const what = PLAIN_FAMILY[row.skey] ||
+    "No plain description for this rule yet -- check_dashboard.js should have caught that.";
+  const stop = row.v === "own"
+    ? `The trade is closed if the price falls below the low of the day it was bought.
+       That is a tight exit: on this board it ends most trades within a day or two.`
+    : `The trade is closed if the price falls about three times the stock's recent
+       daily swing below where it was bought. That is a loose exit, so the trade is
+       given more room -- but because the size of a position is worked out from how
+       far away the exit is, a looser exit also means BUYING LESS of the stock.`;
+  /* One sentence, so nobody has to assemble the verdict from the tiles. The
+     comparison is always against buying every stock in the universe and
+     sitting still, which is the only honest yardstick here. */
+  const v = row.vsHold;
+  const verdict = v == null
+    ? `<b>There is no verdict for this rule in this scenario</b> -- it has no
+       comparable buy-and-hold to be measured against here.`
+    : v > 0
+      ? `In this scenario the rule finished <b>${Math.abs(v).toFixed(1)} percentage points
+         a year AHEAD</b> of simply buying every stock in this group and waiting.
+         That is <b>one</b> of the ${scenarioCount()} settings this page lets you pick,
+         and a winner found after looking at all of them is the kind of thing that turns
+         up by luck alone. It is not a forecast. The five checks below are what decides
+         whether it means anything.`
+      : `In this scenario the rule finished <b>${Math.abs(v).toFixed(1)} percentage points
+         a year BEHIND</b> simply buying every stock in this group and waiting. In
+         plain terms: the work of trading it lost money against doing nothing.`;
+  return `<div class="explain">
+    <h4>What this rule does</h4>
+    <p class="lede">${what}</p>
+    <h4>When it sells</h4>
+    <p>${stop}</p>
+    <h4>How it did here</h4>
+    <p>${verdict}</p>
+  </div>`;
+}
+
+/* The scenario line in Detail is five values in a row of middots, which is
+   unreadable unless you already know what each one selects. Spelled out. */
+function scenarioPlain() {
+  return `<div class="explain"><h4>What you are looking at</h4><dl>
+    <dt>Which stocks</dt><dd>${DATA.universes[S.uni]} &mdash; the rule was only allowed
+      to buy stocks in this group.</dd>
+    <dt>Starting money</dt><dd>${inr(DATA.capitals[S.cap])}, one single pot. Every
+      purchase comes out of it, so a rule can miss a signal simply because the cash
+      was already spent.</dd>
+    <dt>Risk per trade</dt><dd>${DATA.risks[S.risk]}% &mdash; the most of the pot the
+      account is willing to lose on any one trade if its exit is hit. This is what
+      decides how many shares get bought.</dd>
+    <dt>Start year</dt><dd>${S.year} &mdash; trading begins here and runs to the end
+      of the data.</dd>
+    <dt>Costs</dt><dd>${fillName()} &mdash; brokerage, taxes and the price slippage of
+      putting a real order into a real market are all charged.</dd>
+  </dl></div>`;
+}
+
 /* THE COMPARE TABLE IS FIVE COLUMNS (2026-09-19, the user's call: "the compare
    table is too crowded we dont need that much info just name gates cagr vs
    hold drawdown thats it"). It was fourteen, which is a spreadsheet and not a
@@ -1360,11 +1480,24 @@ function bigPct(v) {
    built from what rows() already computed, not re-derived. */
 function gateChecklist(row) {
   if (!row.val) return "";
-  const items = gateItems(row);   // shared with Compare's Gates strip
-  return `<div class="stats" style="margin-bottom:var(--gap)">` +
-    items.map(([label, ok]) => `<div class="stat">
+  const items = gateItems(row);   // shared with Compare's Five checks strip
+  /* Each tick now carries the QUESTION it answers (2026-09-19). A column of
+     five ticks and crosses is only readable by someone who already knows what
+     the five are, and this page is read by people who do not. PLAIN_GATE is
+     positional against gateItems(); check_dashboard.js asserts the lengths
+     match, which is the only drift a machine can catch here. */
+  return `<div class="explain"><h4>What the five checks ask</h4>
+      <p>A rule has to pass <b>all five</b>. Passing four is not a near miss, it is a
+      fail &mdash; each one rules out a different way of being fooled, so the ones it
+      failed are the ones to read.</p></div>
+    <div class="stats" style="margin-bottom:var(--gap)">` +
+    items.map(([label, ok], i) => `<div class="stat">
       <div class="k">${label}</div>
       <div class="v ${ok == null ? '' : ok ? 'up' : 'down'}">${ok == null ? '—' : ok ? '✓' : '✗'}</div>
+      <div class="d">${PLAIN_GATE[i] || ""}</div>
+      <div class="d" style="margin-top:4px;color:var(--ink-2)">${
+        ok == null ? "Could not be tested on this cell."
+                   : ok ? "Passed." : "Failed &mdash; this is one reason the rule is not validated."}</div>
     </div>`).join("") + `</div>`;
 }
 
@@ -1432,7 +1565,16 @@ function dailyCard(row) {
       ${stat("t (HAC)", d.t_hac == null ? "—" : d.t_hac.toFixed(2),
              "mean daily excess over a Newey-West standard error", ok == null ? "" : ok ? "up" : "down")}
       ${stat("p", d.p == null ? "—" : d.p < 1e-4 ? d.p.toExponential(1) : d.p.toFixed(4),
-             `one-sided; the gate is BH p &le; ${dg.bh_threshold}`)}
+             dg.bh_threshold > 0
+               ? `How likely a result this good would be if the rule had no edge at all.
+                  It has to come in under ${dg.bh_threshold} to pass &mdash; a bar set low
+                  on purpose, because ${(dg.n_tested || 0).toLocaleString("en-IN")} cells
+                  were tested at once and some will look good by luck.`
+               : `How likely a result this good would be if the rule had no edge at all.
+                  Lower is better. The passing bar on this board is <b>zero</b>: once the
+                  ${(dg.n_tested || 0).toLocaleString("en-IN")} simultaneous tests are
+                  corrected for, not one cell was convincing enough to clear it, so
+                  nothing can pass here.`)}
       ${stat("Excess", d.excess_pts == null ? "—"
              : (d.excess_pts > 0 ? "+" : "") + d.excess_pts.toFixed(1),
              "CAGR points a year over the hold", d.excess_pts == null ? ""
@@ -1664,9 +1806,16 @@ function renderDetail() {
   /* The stats are in hand; the charts are a disk seek away. Draw what we have
      rather than showing nothing until the curve lands. */
   const c = { d: [], eq: [], dd: [], cash: [] };
-  const stat = (k, v, d, cls = "", hero = false) =>
+  /* Each tile now carries the plain sentence for its number and folds the
+     precise wording underneath it (2026-09-19). `key` is the COLS/FORMULA key
+     -- pass it and the caption writes itself from PLAIN, so the tile and the
+     formula table cannot describe the same number two different ways. Pass a
+     literal caption only where the tile shows something COLS has no key for. */
+  const stat = (k, v, d, cls = "", hero = false, key = null) =>
     `<div class="stat${hero ? " hero" : ""}"><div class="k">${k}</div>
-     <div class="v ${cls}">${v}</div><div class="d">${d || ""}</div></div>`;
+     <div class="v ${cls}">${v}</div>
+     <div class="d">${(key && PLAIN[key]) || d || ""}</div>
+     ${key ? precise(key) : ""}</div>`;
   const n0 = v => v == null ? "—" : v.toLocaleString("en-IN");
   body.innerHTML = `
     <div class="card" style="margin-bottom:var(--gap)">
@@ -1674,28 +1823,49 @@ function renderDetail() {
       <p class="sub">${DATA.universes[S.uni]} · ${inr(DATA.capitals[S.cap])} ·
         ${DATA.risks[S.risk]}% risk · ${fillName()} · started ${S.year}</p>
     </div>
+    ${ruleCard(row)}
+    ${scenarioPlain()}
+    <h3 style="margin-bottom:9px">How the account did</h3>
     <div class="stats">
-      ${stat("MAR", num(r.mar), "return ÷ drawdown", "", true)}
-      ${stat("CAGR", cagrText(r), "compounded yearly", r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up")}
-      ${stat("Drawdown", pct(r.maxdd), "peak to trough", "down")}
-      ${stat("Final", inr(r.final), "from " + inr(DATA.capitals[S.cap]))}
-      ${stat("Trades", (r.taken ?? 0).toLocaleString("en-IN"),
-             (r.signals ?? 0).toLocaleString("en-IN") + " signals offered")}
-      ${stat("Captured", r.signals ? Math.round(100 * r.taken / r.signals) + "%" : "—",
-             "of signals taken; the refusals are itemised below")}
-      ${stat("Invested", r.exposure == null ? "—" : Math.round(r.exposure) + "%",
-             "of days with money at work")}
-      ${stat("Fully deployed", r.full_pct == null ? "—" : Math.round(r.full_pct) + "%",
-             "of days under 5% cash")}
-      ${stat("Ulcer", num(r.ulcer, 1), "depth × duration underwater")}
-      ${stat("Sharpe", num(r.sharpe, 2), "return ÷ all volatility")}
-      ${stat("Sortino", num(r.sortino, 2), "return ÷ downside volatility")}
-      ${stat("Credibility", r.t_taken == null ? "—" : "t=" + r.t_taken.toFixed(2),
-             "on the trades this account took (t_taken)")}
+      ${stat("vs Buy & Hold", row.vsHold == null ? "—"
+               : (row.vsHold > 0 ? "+" : "") + row.vsHold.toFixed(1) + " pts",
+             "", row.vsHold == null ? "" : row.vsHold > 0 ? "up" : "down", true, "vsHold")}
+      ${stat("Growth a year", cagrText(r), "",
+             r.wiped || (r.cagr ?? 0) < 0 ? "down" : "up", true, "cagr")}
+      ${stat("Worst fall", pct(r.maxdd), "", "down", false, "maxdd")}
+      ${stat("Reward for the pain", num(r.mar), "", "", false, "mar")}
+      ${stat("Ending money", inr(r.final), "", "", false, "final")}
+      ${stat("Trades", (r.taken ?? 0).toLocaleString("en-IN"), "", "", false, "taken")}
+      ${stat("Signals taken", r.signals ? Math.round(100 * r.taken / r.signals) + "%" : "—",
+             "", "", false, "capture")}
+      ${stat("Money at work", r.exposure == null ? "—" : Math.round(r.exposure) + "%",
+             "", "", false, "exposure")}
+      ${stat("Fully committed", r.full_pct == null ? "—" : Math.round(r.full_pct) + "%",
+             "Share of days with almost no spare cash left. On those days a new " +
+             "signal had to be turned down however good it looked.")}
+      ${stat("Time under water", num(r.ulcer, 1), "", "", false, "ulcer")}
+      ${stat("Sharpe", num(r.sharpe, 2), "", "", false, "sharpe")}
+      ${stat("Sortino", num(r.sortino, 2), "", "", false, "sortino")}
+      ${stat("Credibility here", r.t_taken == null ? "—" : "t=" + r.t_taken.toFixed(2),
+             "The same luck test as below, but run only on the trades THIS " +
+             "account actually managed to take at this scenario.")}
     </div>
-    <p class="note" style="margin:-4px 0 var(--gap)"><b>Captured</b> ${n0(r.taken)} / ${n0(r.signals)} signals;
+    <div class="explain"><h4>Why the rule did not take every signal it found</h4>
+      <p>The rule pointed at ${n0(r.signals)} buying opportunities and the account managed
+      to act on ${n0(r.taken)} of them. The rest were refused, and it matters which
+      refusals: a rule that looks good on paper can be one the money cannot actually
+      follow. ${n0(r.skipped_cash)} were skipped because the cash was already spent,
+      ${n0(r.skipped_tiny_cash)} because only scraps of cash were left and the resulting
+      order was below the ₹5,500 minimum worth placing, ${n0(r.skipped_tiny_risk)} because
+      the risk rule sized the order below that same minimum, and ${n0(r.skipped_size)}
+      because the order would have been so large it moved the price against itself.</p>
+    </div>
+    <details class="prec" style="margin:-4px 0 var(--gap)">
+      <summary>the same counts, in figures</summary>
+      <p class="note"><b>Captured</b> ${n0(r.taken)} / ${n0(r.signals)} signals;
       ${n0(r.skipped_cash)} unaffordable (cash); ${n0(r.skipped_tiny_cash)} under the ₹5.5k floor from cash
       scraps; ${n0(r.skipped_tiny_risk)} under it from risk sizing; ${n0(r.skipped_size)} over the size cap.</p>
+    </details>
     <div class="grid2">
       <div class="card">
         <h3>The account</h3><p class="sub">equity, and how much of it was spare</p>

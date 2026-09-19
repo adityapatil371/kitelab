@@ -599,15 +599,24 @@ async function checkDetail() {
   await p;
   const html = (els["det-body"] || {}).innerHTML || "";
   const t = text(html);
-  const stat = label => { const m = new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\S+)`).exec(t); return m ? m[1] : null; };
+  /* REWRITTEN 2026-09-19. This used to regex the flattened text for the first
+     token after a label, which broke the moment each tile grew a folded "the
+     precise version" underneath it: FORMULA.mar opens "MAR = ..." and the
+     scrape happily returned "=". Read the tile structurally instead -- the
+     <div class="k"> label and the <div class="v"> beside it -- so prose
+     anywhere on the page can never be mistaken for a value again. */
+  const tiles = new Map();
+  for (const m of html.matchAll(/<div class="k">([\s\S]*?)<\/div>\s*<div class="v[^>]*>([\s\S]*?)<\/div>/g))
+    if (!tiles.has(text(m[1]))) tiles.set(text(m[1]), text(m[2]));
+  const stat = label => tiles.has(label) ? tiles.get(label) : null;
   const eq = (label, want) => { const g = stat(label);
     g === want ? ok(`${pick.id}: ${label} = ${want}`) : bad(`${pick.id}: ${label} shows "${g}", payload says "${want}"`); };
   eq("Sharpe", cell.sharpe.toFixed(2));
   eq("Sortino", cell.sortino.toFixed(2));
-  eq("MAR", fmt.num2(cell.mar));
-  eq("Invested", Math.round(cell.exposure) + "%");
-  eq("Fully deployed", Math.round(cell.full_pct) + "%");
-  eq("Ulcer", cell.ulcer == null ? "—" : cell.ulcer.toFixed(1));
+  eq("Reward for the pain", fmt.num2(cell.mar));
+  eq("Money at work", Math.round(cell.exposure) + "%");
+  eq("Fully committed", Math.round(cell.full_pct) + "%");
+  eq("Time under water", cell.ulcer == null ? "—" : cell.ulcer.toFixed(1));
   const captured = `Captured ${fmt.int(cell.taken)} / ${fmt.int(cell.signals)} signals; ${fmt.int(cell.skipped_cash)} unaffordable (cash); `
     + `${fmt.int(cell.skipped_tiny_cash)} under the ₹5.5k floor from cash scraps; ${fmt.int(cell.skipped_tiny_risk)} under it from risk sizing; `
     + `${fmt.int(cell.skipped_size)} over the size cap.`;
