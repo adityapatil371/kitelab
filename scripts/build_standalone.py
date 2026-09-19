@@ -40,7 +40,10 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -113,6 +116,39 @@ def trim(payload):
     return out
 
 
+# The two geometries web/article.html draws. NARROW_AT is 700 in the page;
+# these are a laptop and a phone either side of it, and they are the same two
+# widths check_standalone.js compares.
+WIDE, NARROW = 1440, 380
+
+
+def replace_once(text, page, needle, sub):
+    """Substitute exactly one occurrence, or stop. Silently matching nothing
+    is how a build keeps succeeding while quietly dropping what it was for."""
+    if text.count(needle) != 1:
+        sys.exit(f"expected exactly one occurrence in {page} of:\n  "
+                 + needle[:90].replace("\n", " ") + " ...\n"
+                 f"found {text.count(needle)}")
+    return text.replace(needle, sub, 1)
+
+
+def prerender(page, payload_path, width):
+    """Run the page's own render() in node and return the HTML it produced.
+
+    Returns None if node is not installed -- the file still works in a real
+    browser, it just cannot be read in a viewer that will not run script.
+    """
+    node = shutil.which("node")
+    if not node:
+        return None
+    proc = subprocess.run(
+        [node, str(ROOT / "scripts" / "prerender.js"), str(page), str(payload_path), str(width)],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.exit(f"prerender at {width}px failed:\n{proc.stderr.strip()}")
+    return json.loads(proc.stdout)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-o", "--out", default=str(ROOT / "output" / "stock-analysis.html"),
@@ -161,6 +197,54 @@ def main():
         f"boot({blob});"
     )
     built = head + inline + tail
+
+    # ── pre-render, so the file reads with JavaScript switched OFF ─────────
+    # WhatsApp's in-app document viewer renders HTML and does not run script,
+    # and that is where most people open a file someone sent them: they got
+    # the opening question and nothing under it. The charts are a pure
+    # function of the payload, so they are drawn ONCE here rather than on
+    # every reader's machine; where script does run it redraws over the top
+    # and adds the tap-for-detail layer.
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(small, fh, separators=(",", ":"))
+        tmp_json = fh.name
+    try:
+        wide = prerender(page, tmp_json, WIDE)
+        narrow = prerender(page, tmp_json, NARROW) if wide else None
+    finally:
+        os.unlink(tmp_json)
+
+    if wide is None:
+        print("\n  !! node is not installed, so the charts could NOT be pre-rendered.")
+        print("     The file is still correct in a browser, but in WhatsApp's viewer")
+        print("     it will show the opening question and nothing else.")
+        print("     Install node and rebuild:  brew install node")
+    else:
+        # Both copies carry the same ids. Suffix the narrow one, because a
+        # document with two id="fig-board" is invalid whatever is on screen.
+        nar = re.sub(r'id="(sec|fig)-', r'id="\1-n-', narrow["body"])
+        static = ('<div id="body"><div class="pre-wide">' + wide["body"] +
+                  '</div><div class="pre-narrow">' + nar + '</div></div>')
+        built = replace_once(built, page,
+            '<div id="body"><p class="loading">Reading the results\u2026</p></div>',
+            static)
+        # The dateline is set by boot() too, so it needs baking as well or it
+        # stays a non-breaking space under the question.
+        built = replace_once(built, page,
+            '<p class="dateline" id="dateline">&nbsp;</p>',
+            '<p class="dateline" id="dateline">' + wide["dateline"] + '</p>')
+        # And the <noscript> now says the wrong thing: nothing is missing any
+        # more, only the hover layer.
+        built = replace_once(built, page,
+            """<noscript><p class="err">The charts on this page are drawn by JavaScript,
+  which is switched off in this browser. Everything below the question is
+  missing because of that, not because the page is still loading.</p></noscript>""",
+            """<noscript><p class="note">This viewer is not running JavaScript, so the
+  charts below are the ones drawn when the file was built and the
+  tap-for-detail labels are inactive. No number is missing.</p></noscript>""")
+        print("\n  pre-rendered the charts: " + f"{len(wide['body']):,}"
+              + f" bytes at {WIDE}px + " + f"{len(nar):,}" + f" at {NARROW}px"
+              + "\n     the file now reads with JavaScript switched off")
 
     # A provenance line in the source, where it cannot be mistaken for prose.
     built = built.replace(

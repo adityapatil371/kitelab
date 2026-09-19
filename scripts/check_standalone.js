@@ -145,6 +145,51 @@ for (const junk of ["undefined", "NaN", ">null<", "[object Object]", ">—<"]) {
                              : ok(`no ${junk} in the phone render`);
 }
 
+/* ── 2b. it reads with JavaScript switched OFF ────────────────────────── */
+/* This is the property the file is actually sent for. WhatsApp's in-app
+   document viewer renders HTML and runs no script, so the charts are baked in
+   at build time. A bake is exactly the kind of thing that goes stale silently
+   -- the page looks perfect in a browser, because there the script redraws
+   over the top -- so it is compared against the live render, both geometries,
+   character for character. */
+console.log("\nit reads with JavaScript switched off");
+const bodyBlock = (buildSrc.match(/<div id="body">([\s\S]*?)<\/div>\s*\n\s*<noscript>/) || [])[1];
+if (!bodyBlock) {
+  bad("no pre-rendered #body in the file -- it will be blank wherever script is off");
+} else {
+  /* the seam the builder writes, matched exactly -- an off-by-one here would
+     read as a stale bake and send someone rebuilding a file that is fine */
+  const HEAD = '<div class="pre-wide">', SEAM = '</div><div class="pre-narrow">';
+  const i = bodyBlock.indexOf(HEAD), j = bodyBlock.indexOf(SEAM);
+  const preWide = (i < 0 || j < 0) ? null : bodyBlock.slice(i + HEAD.length, j);
+  const preNarrow = j < 0 ? null : bodyBlock.slice(j + SEAM.length, bodyBlock.lastIndexOf("</div>"));
+  preWide ? ok(`a laptop drawing is baked in (${preWide.length} characters)`)
+          : bad("no .pre-wide block");
+  preNarrow ? ok(`a phone drawing is baked in (${preNarrow.length} characters)`)
+            : bad("no .pre-narrow block");
+  /* the narrow copy's ids are suffixed so the document has no duplicate id */
+  const expectNarrow = bNarrow.out.replace(/id="(sec|fig)-/g, 'id="$1-n-');
+  preWide === bWide.out
+    ? ok("the baked laptop drawing is what the script would draw")
+    : bad("the baked laptop drawing is STALE -- rebuild: python3 -m scripts.build_standalone");
+  preNarrow === expectNarrow
+    ? ok("the baked phone drawing is what the script would draw")
+    : bad("the baked phone drawing is STALE -- rebuild: python3 -m scripts.build_standalone");
+  /(id="(sec|fig)-[a-z]+")[\s\S]*\1/.test(bodyBlock)
+    ? bad("the two baked drawings share an id")
+    : ok("the two baked drawings carry distinct ids");
+}
+buildSrc.includes('class="loading"')
+  ? bad('"Reading the results..." survives -- that is what a script-less viewer would show')
+  : ok("no loading placeholder left to strand a script-less viewer");
+/\.pre-narrow\s*\{\s*display:\s*none/.test(buildSrc) && /max-width:\s*700px/.test(buildSrc)
+  ? ok("CSS alone picks the geometry, so no script is needed to choose")
+  : bad("the .pre-wide / .pre-narrow media query is missing");
+const datelineBaked = (buildSrc.match(/id="dateline">([^<]*)</) || [])[1] || "";
+datelineBaked.includes(FULL.built)
+  ? ok("the dateline is baked, not left blank")
+  : bad(`the dateline is not baked: "${datelineBaked}"`);
+
 /* ── 3. what the payload carries, and what it does not ────────────────── */
 console.log("\nwhat is in the file");
 const D = bWide.data;

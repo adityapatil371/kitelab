@@ -235,6 +235,20 @@ td.num { font-variant-numeric: tabular-nums; }
 .note h2 { border: 0; padding-top: 0; font-size: 1.15rem; margin-bottom: .8rem; }
 .note li { margin-bottom: .6rem; }
 .loading { color: var(--ink-3); font: 1rem/1.6 var(--sans); }
+
+/* ── the no-JavaScript build ───────────────────────────────────────────────
+   scripts/build_standalone.py pre-renders the charts into #body so the file
+   still reads in a viewer that will not run script -- WhatsApp's in-app
+   document preview above all, which is how most people will first open it.
+   BOTH geometries ship and CSS chooses between them, because a 980-wide
+   drawing squeezed into a phone renders its 11px labels at about 4px, and
+   because a media query is the only switch available when script is off.
+   The served page never emits these wrappers. */
+.pre-narrow { display: none; }
+@media (max-width: 700px) {
+  .pre-wide   { display: none; }
+  .pre-narrow { display: block; }
+}
 /* Both of these were referenced by the fetch error path and never styled.
    An error message set in the body font reads as prose, which is the one
    thing it must not do. */

@@ -94,11 +94,25 @@ So the reading page can also be baked into **one self-contained HTML file**:
 python3 -m scripts.build_standalone      # writes output/stock-analysis.html
 ```
 
-About 914 KB. No server, no tunnel, no passphrase, no network of any kind — it
-fetches nothing, and it renders the same page on a laptop or a phone (the
-charts are drawn twice, to two different geometries, and the page picks one at
-700 px). Mail it, AirDrop it, put it in the group chat. It opens by
+About 1.1 MB. No server, no tunnel, no passphrase, no network of any kind — it
+fetches nothing. Mail it, AirDrop it, put it in the group chat; it opens by
 double-clicking.
+
+**It needs no JavaScript, and that is not a nicety.** The first time this file
+went into WhatsApp it arrived as the opening question and nothing else, because
+**WhatsApp's in-app document viewer renders HTML and does not run script** —
+and every chart on the reading page is drawn by script. Telling nine people to
+"open it in a real browser instead" is not a fix; most of them will not. So the
+builder now runs the page's own drawing code once, at build time
+(`scripts/prerender.js`, under node), and bakes the finished charts into the
+file. Where script does run it redraws over the top and adds the
+tap-for-detail layer — nobody sees a difference, and a reader with no
+JavaScript at all is missing no number.
+
+Both geometries are baked — the 980-wide drawing and the 360-wide one — and a
+CSS media query at 700 px picks between them, because a media query is the only
+switch available when there is no script to choose. That is what the extra
+200 KB buys.
 
 **What travels with it.** The builder does not strip the payload down — it
 copies across an allowlist, ten top-level keys and four fields per grid cell,
@@ -119,7 +133,15 @@ answer when you want the thing read at all.
 
 `./check_all.sh` section 5 checks a built file if one exists, and tells you to
 build one if not — a **stale** single file is the failure mode to watch for,
-since unlike the tunnel it does not die when the data moves.
+since unlike the tunnel it does not die when the data moves. The baked charts
+have a second staleness of their own, and a nastier one: they would look
+perfect in any browser, because there the script redraws over them. So
+`check_standalone.js` compares the baked drawings against the live render at
+both widths, character for character, and fails if they have drifted apart.
+
+**Node is required to build the file** (it is not required to read one). Without
+it the build still succeeds and says, loudly, that the charts were not baked and
+the WhatsApp case will fail. `brew install node`.
 
 ## Sizing, and who the numbers describe
 
