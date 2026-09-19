@@ -94,8 +94,16 @@ echo; echo "=== 6. test suite + lint ==="
 # the suite needs pandas. Without it every strategy import fails and you get
 # dozens of errors that are really one missing package -- say so instead.
 if $PY -c "import pandas" 2>/dev/null; then
-    PYTHONPATH="$PWD" $PY -m unittest discover -s tests -t . 2>&1 \
-        | grep -E "^(Ran [0-9]+ test|OK$|FAILED)" | sed "s/^/  /"
+    # anchor at the START only. "OK$" missed "OK (skipped=1)" -- which is what
+    # the Mac prints, since the backtesting.py oracle test skips when that dev
+    # extra is absent -- while unanchored FAILED matched. An audit line that
+    # shows the test COUNT but swallows the VERDICT is worse than no line, so
+    # if no verdict is found the raw tail is printed rather than nothing.
+    out=$(PYTHONPATH="$PWD" $PY -m unittest discover -s tests -t . 2>&1)
+    if ! printf '%s\n' "$out" | grep -E "^(Ran [0-9]+ test|OK|FAILED)" | sed "s/^/  /"; then
+        echo "  (no verdict line matched -- raw tail follows)"
+        printf '%s\n' "$out" | tail -5 | sed "s/^/  | /"
+    fi
 else
     echo "  (no pandas in $PY -- suite skipped, it would report import errors only)"
 fi
