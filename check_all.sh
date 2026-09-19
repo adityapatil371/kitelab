@@ -85,7 +85,11 @@ echo; echo "=== 5. the page's own self-checks ==="
 # the verdict is "all checks passed" or "N FAILURE(S)"; a blank line follows it,
 # so grep for the line rather than taking the last one.
 if command -v node >/dev/null; then
-    node scripts/check_dashboard.js | grep -E "all checks passed|FAILURE" | sed "s/^/  /"
+    echo "  dashboard.html:"
+    node scripts/check_dashboard.js | grep -E "all checks passed|FAILURE" | sed "s/^/    /"
+    # The reading page checks itself the same way, against the same payload.
+    echo "  article.html:"
+    node scripts/check_article.js | grep -E "all checks passed|FAILURE" | sed "s/^/    /"
 else
     echo "  (node not installed -- skipped)"
 fi

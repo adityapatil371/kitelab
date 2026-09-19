@@ -398,6 +398,14 @@ class Handler(BaseHTTPRequestHandler):
             if route in ("/", "/index.html", "/dashboard"):
                 self._send((WEB_ROOT / "dashboard.html").read_bytes(),
                            "text/html; charset=utf-8")
+            elif route in ("/read", "/article"):
+                # The reading page. Same payload, same door: it sits INSIDE
+                # this post-gate block on purpose, because dashboard.json
+                # names every stock in the universe and the passphrase is
+                # protecting disclosure, not the numbers' reputation. A
+                # second page must not become a second way in.
+                self._send((WEB_ROOT / "article.html").read_bytes(),
+                           "text/html; charset=utf-8")
             elif route == "/api/curve":
                 # ?at=<offset>&len=<bytes>, both from the index in the payload.
                 # Offsets rather than a key lookup keeps the server from holding

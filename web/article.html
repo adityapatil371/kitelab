@@ -1,0 +1,982 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Did any of it beat just holding?</title>
+
+<!--
+  web/article.html — the READING page. Added 2026-09-19.
+
+  WHY THIS EXISTS, AND WHY IT IS NOT dashboard.html
+  -------------------------------------------------
+  The user's words: "we can make this less dashboard more info article i dont
+  mind, or we could keep things seperate, dashboard local ony for me too see,
+  abother thing which other people can peruse on there laptops" -> "yes
+  seperate things".
+
+  So there are two pages with two jobs and they must not be merged:
+
+    dashboard.html  an INSTRUMENT. 36 sortable rows, every axis exposed,
+                    read many times by one person who knows the board.
+    article.html    an ARGUMENT. One column, read top to bottom, once, by
+                    someone who has never seen the board and will not sort it.
+
+  Tufte CSS and Our World in Data are both ARTICLE forms -- one column, wide
+  margins for asides, chart-then-sentence. Applying them to the 36-row board
+  would wreck the board; applying the board's density here would lose the
+  reader. Hence two files.
+
+  THE RULE THIS FILE LIVES BY: NO NUMBER IS WRITTEN IN THE PROSE.
+  Every figure on this page is computed from dashboard.json at load time by
+  facts() and injected. A rebuild changes the payload, the page follows, and
+  nothing here can quietly go stale. The prose carries the SENTENCES; the
+  payload carries the NUMBERS; scripts/check_article.js recomputes every
+  number independently and fails if the two disagree.
+
+  Verify by RUNNING `node scripts/check_article.js`. Never by reading this
+  file and reasoning about whether it works -- that is the standing rule for
+  dashboard.html and it applies here for the same reason.
+
+  CHART FORMS come from the FT Visual Vocabulary poster the user added to the
+  repo (poster.png), which sorts a number by the RELATIONSHIP it expresses:
+    vs a fixed reference (buy & hold)  -> Deviation  -> diverging bar
+    the spread behind one headline     -> Distribution -> dot strip (n=276)
+                                                       or histogram (n=9,936)
+    a value against a threshold        -> Magnitude  -> bullet chart
+  The page has exactly ONE colour language: the diverging blue<->red pair with
+  a neutral grey midpoint. Blue always means "better than buy & hold" and red
+  "worse", on every chart. Emphasis (one mark in colour, the rest grey) carries
+  the single-number sections rather than introducing a second hue -- an earlier
+  draft highlighted in orange and `validate_palette.js` failed it at
+  normal-vision dE 7.1 against the red. Two hues, never three.
+-->
+
+<style>
+/* ─────────────────────────────────────────────────────────── tokens ──── */
+:root {
+  color-scheme: light;
+  --surface:      #fcfcfb;
+  --ink:          #0b0b0b;
+  --ink-2:        #52514e;
+  --ink-3:        #77766f;
+  --rule:         #e3e2dd;
+  --grid:         #eceae5;
+  --above:        #2a78d6;   /* diverging pole: better than buy & hold */
+  --below:        #e34948;   /* diverging pole: worse than buy & hold  */
+  --mid:          #f0efec;   /* neutral midpoint, never a hue          */
+  --quiet:        #c9c7c0;   /* de-emphasised marks                    */
+  --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #97968c;
+    --rule: #33322e; --grid: #2a2a27;
+    --above: #3987e5; --below: #e66767; --mid: #383835;
+    --quiet: #55544f;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #97968c;
+  --rule: #33322e; --grid: #2a2a27;
+  --above: #3987e5; --below: #e66767; --mid: #383835;
+  --quiet: #55544f;
+}
+
+/* ──────────────────────────────────────────────────── page furniture ──── */
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--surface); color: var(--ink);
+  font: 1.05rem/1.62 var(--serif);
+  -webkit-font-smoothing: antialiased;
+}
+article { max-width: 70rem; margin: 0 auto; padding: 3.5rem 2.5rem 6rem; }
+
+/* The text column. Everything is this wide unless it asks not to be --
+   Tufte's measure, ~46rem, which is where a serif line stops being tiring. */
+h1, h2, h3, p, ol, ul, .lede, .takeaway, .note, table { max-width: 46rem; }
+
+h1 {
+  font: 600 2.6rem/1.15 var(--sans);
+  letter-spacing: -.02em; margin: 0 0 1rem;
+}
+.lede { font-size: 1.22rem; color: var(--ink-2); margin: 0 0 .6rem; }
+.dateline {
+  font: .8rem/1.5 var(--sans); color: var(--ink-3);
+  letter-spacing: .04em; text-transform: uppercase;
+  border-top: 1px solid var(--rule); padding-top: .7rem; margin-top: 2rem;
+  max-width: 46rem;
+}
+section { margin: 4.5rem 0 0; }
+section:first-of-type { margin-top: 3rem; }
+h2 {
+  font: 600 1.45rem/1.3 var(--sans); letter-spacing: -.01em;
+  margin: 0 0 .4rem; padding-top: 1.6rem; border-top: 1px solid var(--rule);
+}
+.step {
+  font: 600 .74rem/1 var(--sans); letter-spacing: .12em;
+  color: var(--ink-3); text-transform: uppercase; display: block;
+  margin-bottom: .9rem;
+}
+p { margin: 0 0 1.1rem; }
+strong { font-weight: 600; }
+em.term { font-style: normal; border-bottom: 1px dotted var(--ink-3); }
+
+/* OWID's move: the takeaway sentence sits ABOVE the chart, not under it, so
+   the reader is told what to look for before they look. */
+.takeaway {
+  font: 500 1.16rem/1.5 var(--sans); color: var(--ink);
+  margin: 1.8rem 0 .9rem;
+}
+
+/* ───────────────────────────────────────────────────────── sidenotes ──── */
+/* Tufte's margin note: the aside sits beside the paragraph instead of under a
+   fold, so the reader's eye never leaves the page to find it. This page is
+   laptop-only by the user's decision, so the margin is always there; below
+   that width the note drops inline rather than disappearing. */
+.snref {
+  font: 500 .7rem/1 var(--sans); vertical-align: super;
+  color: var(--above); margin-left: .12em;
+}
+.sn {
+  float: right; clear: right; width: 19rem; margin-right: -21.5rem;
+  margin-top: .3rem; margin-bottom: 1rem;
+  font: .82rem/1.5 var(--sans); color: var(--ink-2);
+}
+.sn b { font-weight: 600; color: var(--ink); }
+@media (max-width: 1050px) {
+  .sn {
+    float: none; width: auto; margin: .8rem 0 1.2rem;
+    padding-left: .9rem; border-left: 2px solid var(--rule);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────── figures ──── */
+figure { margin: 0 0 1.6rem; max-width: 46rem; }
+figure.wide { max-width: 100%; }
+figure svg { display: block; width: 100%; height: auto; overflow: visible; }
+figcaption {
+  font: .82rem/1.5 var(--sans); color: var(--ink-3);
+  margin-top: .7rem; max-width: 42rem;
+}
+.legend {
+  display: flex; gap: 1.2rem; flex-wrap: wrap;
+  font: .8rem/1 var(--sans); color: var(--ink-2); margin: 0 0 .8rem;
+}
+.legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
+/* The hero figure. Sans, not serif -- a serif display number reads as
+   decoration, and this one is doing work. */
+.hero { display: flex; gap: 3.2rem; align-items: flex-end; margin: 2rem 0 1.4rem; flex-wrap: wrap; }
+.hero .big {
+  font: 600 4.4rem/.95 var(--sans); letter-spacing: -.035em;
+  font-variant-numeric: tabular-nums;
+}
+.hero .big.win { color: var(--above); }   /* blue because it is above hold, not decoration */
+.hero .lab { font: .86rem/1.4 var(--sans); color: var(--ink-2); margin-top: .5rem; max-width: 12rem; }
+
+/* ──────────────────────────────────────────────── the table fallback ──── */
+/* Every figure keeps its numbers as a real table underneath it: identity is
+   never colour-alone, and a reader who wants the values never has to read a
+   chart to get them. Demotion, not deletion -- the standing rule of the
+   dashboard, applied here. */
+details.tbl { max-width: 46rem; margin: 0 0 1rem; }
+details.tbl summary {
+  font: .82rem/1 var(--sans); color: var(--ink-3); cursor: pointer;
+  padding: .35rem 0;
+}
+details.tbl summary:hover { color: var(--ink); }
+table { border-collapse: collapse; font: .82rem/1.45 var(--sans); margin-top: .6rem; }
+th, td { text-align: right; padding: .28rem .7rem .28rem 0; border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--ink-2); }
+td.num { font-variant-numeric: tabular-nums; }
+
+/* ─────────────────────────────────────────────────────────── tooltip ──── */
+#tip {
+  position: fixed; z-index: 10; pointer-events: none; opacity: 0;
+  transition: opacity .09s; max-width: 20rem;
+  background: var(--ink); color: var(--surface);
+  font: .78rem/1.45 var(--sans); padding: .45rem .6rem; border-radius: 4px;
+}
+#tip b { font-weight: 600; }
+
+/* ───────────────────────────────────────────────────── closing notes ──── */
+.note {
+  border-top: 1px solid var(--rule); margin-top: 4rem; padding-top: 1.6rem;
+  font: .88rem/1.6 var(--sans); color: var(--ink-2);
+}
+.note h2 { border: 0; padding-top: 0; font-size: 1.15rem; margin-bottom: .8rem; }
+.note li { margin-bottom: .6rem; }
+.loading { color: var(--ink-3); font: 1rem/1.6 var(--sans); }
+.err { color: var(--below); font: .95rem/1.6 var(--sans); }
+a { color: var(--above); }
+</style>
+
+<article>
+  <h1>Did any of it beat just holding?</h1>
+  <p class="lede">We wrote three dozen trading rules, ran each one hundreds of
+  ways across a decade of Indian stock prices, and asked a single question:
+  would you have done better than buying the whole list and leaving it
+  alone?</p>
+  <p class="dateline" id="dateline">&nbsp;</p>
+
+  <div id="body"><p class="loading">Reading the results…</p></div>
+</article>
+<div id="tip"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   THE NUMBERS. Nothing below is typed by hand -- facts() derives every
+   figure the page prints from dashboard.json, so the article cannot drift
+   from the board. check_article.js recomputes the same quantities from the
+   raw payload and compares.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* The scenario a reader lands on. These are dashboard.html's own defaults
+   (its `const S`, web/dashboard.html:283) -- the article must describe the
+   same board the dashboard opens on, or the two pages disagree in public.
+   Risk is the SECOND entry of DATA.risks and capital the FIRST of
+   DATA.capitals, matching S.risk = 1 / S.cap = 0 there, which are indices. */
+const SCENARIO = { uni: "all", riskIdx: 1, capIdx: 0, fill: "1", prio: null, year: null };
+
+/* The stop-loss arms. Both are on the board for every rule because the stop
+   is a SIZING input as well as an exit: a wider stop buys fewer shares, so
+   the two arms are genuinely different strategies and each gets its own row. */
+const STOP_LABEL = { own: "tight stop", atr3: "wide stop" };
+
+/* One plain sentence per rule, for the hover layer and the tables. Lifted
+   from dashboard.html's PLAIN_FAMILY so the two pages say the same thing
+   about the same rule. They are separate copies on purpose -- the payload is
+   inside signals._ACCOUNT, so a sentence there would cost a ~178-minute
+   rebuild to publish text that changes no number. check_article.js asserts
+   this map against DATA.strategies in BOTH directions, which is what stops
+   the copy drifting. */
+const WHAT = {
+  mr:     "Buys a stock the day it closes at its lowest price in 20 trading days, betting it has fallen further than the news deserves.",
+  vcon:   "Buys after a week in which the stock barely moved, betting a quiet stock is coiling before a big move up.",
+  vol:    "Buys on a day when three times the usual number of shares change hands, betting a crowd that size knows something.",
+  cal:    "Buys on the first trading day of every month, whatever the price is doing. It contains no market information at all — it is here as a control, to show what a rule with nothing in it looks like.",
+  xrank:  "Ranks every stock by its return over the past year and buys the top tenth, betting winners keep winning.",
+  pull:   "Buys a stock above its 200-day average but below its 20-day average — a dip inside a long uptrend.",
+  gapdn:  "Buys a stock that opens 3% below yesterday's close, betting overnight panic overshoots.",
+  rsi30:  "Buys the moment a beaten-down stock stops falling, measured by a 0–100 gauge of recent gains against recent losses climbing back above 30.",
+  gap:    "Buys a stock that opens 3% above yesterday's close, betting good news keeps working. The exact opposite bet to Gap down, which is why both are here.",
+  mktrel: "Buys a stock that rose over the past month while the market as a whole fell, betting strength against the tide is real.",
+  dryup:  "Buys when trading volume falls under half its normal level, betting nobody is left who wants to sell.",
+  low252: "Buys at the lowest price in a year — the deepest version of the same bet Mean reversion makes.",
+  inside: "Buys when a whole day's price range fits inside the previous day's, betting on a pause before the move continues.",
+  pine:   "Your own TradingView rule, on weekly bars: a smoothed candle with no lower wick, a monthly trend filter and a momentum check.",
+  e1:     "Buys when the price crosses above its 20-day average, weighted towards recent days.",
+  pair:   "The same moving-average crosses as the rule below it but without the near-the-high filter. Not a proposal — the control, so the filtered version has something honest to be measured against.",
+  eath:   "Buys on monthly and weekly moving-average crosses, but only in stocks within 10% of their all-time high. Buy strength, not bargains.",
+  dv:     "The classic Turtle breakout: buy at a 55-day high, sell at a 20-day low, with a weekly confirmation. Named after a 1980s experiment that taught this rule to novices to see whether trading could be taught.",
+};
+
+/* ── payload helpers ──────────────────────────────────────────────────── */
+let DATA = null;
+
+const shortName = skey => String((DATA.strategies || {})[skey] || skey).split(" · ")[0];
+const rowName = (skey, v) => `${shortName(skey)} · ${STOP_LABEL[v] || v}`;
+
+function scenarioParts() {
+  const risk = DATA.risks[SCENARIO.riskIdx];
+  const cap = DATA.capitals[SCENARIO.capIdx];
+  const year = SCENARIO.year || DATA.start_default;
+  const prio = SCENARIO.prio || DATA.priority_default;
+  return { uni: SCENARIO.uni, risk, cap, fill: SCENARIO.fill, year, prio };
+}
+
+/* The grid's own key shape: strategy|variant|universe|risk|capital|fill|start|priority.
+   Risk is serialised by Python's repr, so 1.0 is the STRING "1" and 0.5 is
+   "0.5"; building the key from String(risk) reproduces that for both. */
+function cellKey(skey, v, p) {
+  return [skey, v, p.uni, String(p.risk), String(p.cap), p.fill, String(p.year), p.prio].join("|");
+}
+
+const holdFor = (uni, year) =>
+  ((DATA.validation_summary || {}).hold_cagr_by_scenario || {})[`${uni}|${year}`];
+
+/* A cell counts as scored when it exists, has a return, and did not wipe out.
+   Same test dashboard.html applies before it subtracts the benchmark. */
+function excess(key, cell) {
+  if (!cell || cell.cagr == null || cell.wiped) return null;
+  const [, , uni, , , , year] = key.split("|");
+  const h = holdFor(uni, year);
+  return h == null ? null : cell.cagr - h;
+}
+
+const median = xs => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/* ── facts(): every number on the page, in one object ─────────────────── */
+function facts() {
+  const p = scenarioParts();
+  const hold = holdFor(p.uni, p.year);
+  const variants = ["own", "atr3"];
+
+  /* SECTION 2 — the board as a reader meets it: one scenario, 36 rows. */
+  const board = [];
+  for (const skey of Object.keys(DATA.strategies)) {
+    for (const v of variants) {
+      const key = cellKey(skey, v, p);
+      const c = DATA.grid[key];
+      if (!c) continue;
+      board.push({
+        skey, v, key, name: rowName(skey, v),
+        cagr: c.cagr, wiped: !!c.wiped, maxdd: c.maxdd, taken: c.taken,
+        vsHold: excess(key, c),
+      });
+    }
+  }
+  board.sort((a, b) => (b.vsHold == null ? -1e9 : b.vsHold) - (a.vsHold == null ? -1e9 : a.vsHold));
+  const beat = board.filter(r => r.vsHold != null && r.vsHold > 0);
+  const best = board[0];
+
+  /* SECTION 3/4 — every cell, and the best row's own cells. */
+  const perRow = new Map();
+  const all = [];
+  for (const [key, cell] of Object.entries(DATA.grid)) {
+    const x = excess(key, cell);
+    if (x == null) continue;
+    all.push(x);
+    const [s, v] = key.split("|");
+    const id = `${s}|${v}`;
+    if (!perRow.has(id)) perRow.set(id, []);
+    perRow.get(id).push({ x, key, final: cell.final });
+  }
+  const bestRowCells = perRow.get(`${best.skey}|${best.v}`) || [];
+  const rowMedians = [...perRow.entries()]
+    .map(([id, cells]) => ({ id, med: median(cells.map(c => c.x)),
+                             name: rowName(id.split("|")[0], id.split("|")[1]) }))
+    .sort((a, b) => b.med - a.med);
+
+  /* SECTION 5/6 — the luck test, computed by the build, read here. */
+  const dg = DATA.diagnostics || null;
+  const vs = DATA.validation_summary || {};
+
+  return {
+    built: DATA.built,
+    scenario: p, hold,
+    universeLabel: (DATA.universes || {})[p.uni] || p.uni,
+    nStocks: parseInt(String((DATA.universes || {})[p.uni] || "").replace(/\D/g, ""), 10) || null,
+
+    rows: board, nRows: board.length,
+    nBeat: beat.length, nLose: board.length - beat.length,
+    best, bestVsHold: best ? best.vsHold : null,
+
+    bestRowCells, nBestRowCells: bestRowCells.length,
+    bestRowMedian: median(bestRowCells.map(c => c.x)),
+    bestRowBeat: bestRowCells.filter(c => c.x > 0).length,
+    bestRowBest: bestRowCells.length ? Math.max(...bestRowCells.map(c => c.x)) : null,
+    bestRowWorst: bestRowCells.length ? Math.min(...bestRowCells.map(c => c.x)) : null,
+
+    allCells: all, nScored: all.length, nCells: Object.keys(DATA.grid).length,
+    allMedian: median(all),
+    allBeat: all.filter(x => x > 0).length,
+    allBeatPct: all.length ? 100 * all.filter(x => x > 0).length / all.length : null,
+    rowMedians, nRowsPositiveMedian: rowMedians.filter(r => r.med > 0).length,
+    bestRowMedianOverall: rowMedians.length ? rowMedians[0] : null,
+    worstRowMedianOverall: rowMedians.length ? rowMedians[rowMedians.length - 1] : null,
+
+    diag: dg,
+    nTested: dg ? dg.n_tested : null,
+    nUncorrected: dg ? dg.n_uncorrected : null,
+    expectedByChance: dg ? dg.expected_by_chance : null,
+    nBH: dg ? dg.n_bh : null,
+    nBonferroni: dg ? dg.n_bonferroni : null,
+    mde: dg ? dg.median_mde_80 : null,
+
+    tried: vs.tried, nEff: vs.n_eff, avgCorr: vs.avg_correlation,
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FORMATTING
+   ═══════════════════════════════════════════════════════════════════════ */
+const fmt1 = x => x == null ? "—" : x.toFixed(1);
+const fmt2 = x => x == null ? "—" : x.toFixed(2);
+const signed = x => x == null ? "—" : (x > 0 ? "+" : "") + x.toFixed(1);
+const intIN = x => x == null ? "—" : Math.round(x).toLocaleString("en-IN");
+const pct = x => x == null ? "—" : x.toFixed(1) + "%";
+/* Small counts read better as words in a sentence than as digits -- but the
+   WORD still has to come from the payload, or it is a hardcoded number wearing
+   a disguise. This is the only reason the map exists. */
+const WORDS = ["zero","one","two","three","four","five","six","seven","eight","nine","ten",
+  "eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen",
+  "twenty","twenty-one","twenty-two","twenty-three","twenty-four","twenty-five","twenty-six",
+  "twenty-seven","twenty-eight","twenty-nine","thirty","thirty-one","thirty-two","thirty-three",
+  "thirty-four","thirty-five","thirty-six"];
+const words = n => (Number.isInteger(n) && n >= 0 && n < WORDS.length) ? WORDS[n] : intIN(n);
+const Words = n => { const w = words(n); return w.charAt(0).toUpperCase() + w.slice(1); };
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                          .replace(/"/g, "&quot;");
+/* Indian money, in the units people here actually speak: lakh and crore. */
+function rupees(x) {
+  if (x == null) return "—";
+  if (x >= 1e7) return "₹" + (x / 1e7).toFixed(2).replace(/\.?0+$/, "") + " crore";
+  if (x >= 1e5) return "₹" + (x / 1e5).toFixed(2).replace(/\.?0+$/, "") + " lakh";
+  return "₹" + Math.round(x).toLocaleString("en-IN");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CHARTS. Inline SVG, no library. Three forms, each picked from the FT
+   Visual Vocabulary by the relationship it expresses -- see the comment at
+   the top of this file.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Hairline axis and grid: solid, one shade off the surface. Never dashed --
+   a dashed rule reads as "threshold" or "projection" when it is just a grid. */
+function gridLine(x1, y1, x2, y2, color) {
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1"/>`;
+}
+
+/* ── 1. DIVERGING BAR ─────────────────────────────────────────────────────
+   Deviation: every rule measured against ONE fixed reference (buy & hold at
+   zero). Two poles, warm and cool, with the neutral midpoint at the zero
+   rule -- never a hue at the middle. Bars are thin, with the data-end
+   rounded and the baseline end square, so the eye lands on the zero line. */
+function divergingBar(rows, opts) {
+  const W = 980, padL = 272, padR = 78, rowH = 21, barH = 12, padT = 26, padB = 34;
+  const H = padT + rows.length * rowH + padB;
+  const vals = rows.map(r => r.vsHold).filter(v => v != null);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const span = Math.max(hi - lo, 1);
+  const x = v => padL + ((v - lo) / span) * (W - padL - padR);
+  const zero = x(0);
+
+  let g = "";
+  /* Ticks every 10 points, the unit the reader is being asked to think in. */
+  const step = 10;
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+    if (t === 0) continue;
+    g += gridLine(x(t), padT - 8, x(t), H - padB + 2, "var(--grid)");
+    g += `<text x="${x(t)}" y="${H - padB + 16}" text-anchor="middle"
+            font-size="11" fill="var(--ink-3)" font-family="var(--sans)">${signed(t)}</text>`;
+  }
+
+  rows.forEach((r, i) => {
+    const y = padT + i * rowH;
+    const yb = y + (rowH - barH) / 2;
+    const v = r.vsHold;
+    g += `<text x="${padL - 12}" y="${y + rowH / 2 + 4}" text-anchor="end" font-size="11.5"
+            fill="var(--ink-2)" font-family="var(--sans)">${esc(r.name)}</text>`;
+    if (v == null) {
+      g += `<text x="${zero + 6}" y="${y + rowH / 2 + 4}" font-size="11"
+              fill="var(--ink-3)" font-family="var(--sans)">no score</text>`;
+      return;
+    }
+    const pos = v > 0;
+    const bx = pos ? zero : x(v), bw = Math.max(Math.abs(x(v) - zero), 1.5);
+    /* Rounded data-end, square baseline end: a plain rect with a small radius
+       would round all four corners and detach the bar from its baseline. */
+    const rr = Math.min(4, bw);
+    const d = pos
+      ? `M${bx},${yb} H${bx + bw - rr} a${rr},${rr} 0 0 1 ${rr},${rr} V${yb + barH - rr} a${rr},${rr} 0 0 1 -${rr},${rr} H${bx} Z`
+      : `M${bx + bw},${yb} H${bx + rr} a${rr},${rr} 0 0 0 -${rr},${rr} V${yb + barH - rr} a${rr},${rr} 0 0 0 ${rr},${rr} H${bx + bw} Z`;
+    g += `<path d="${d}" fill="${pos ? "var(--above)" : "var(--below)"}"
+            class="mark" data-tip="${esc(r.name)}|${signed(v)} points a year vs buy &amp; hold — ${fmt1(r.cagr)}% a year against the benchmark's ${fmt1(opts.hold)}%"/>`;
+    /* Direct-label the extremes only. A number beside every bar is chaos.
+       The most negative bar begins at the gutter, so a label outside its left
+       end collides with the row name -- when there is no room outside, the
+       number goes INSIDE the bar in the surface colour instead. */
+    if (i === 0 || i === rows.length - 1) {
+      const lab = signed(v), wLab = lab.length * 6.4;
+      const outside = pos || (bx - 6 - wLab > padL);
+      const lx = pos ? bx + bw + 6 : (outside ? bx - 6 : bx + 6);
+      g += `<text x="${lx}" y="${yb + barH - 2}"
+              text-anchor="${pos || !outside ? "start" : "end"}" font-size="11" font-weight="600"
+              fill="${outside ? "var(--ink)" : "var(--surface)"}" font-family="var(--sans)">${lab}</text>`;
+    }
+  });
+
+  /* The zero rule last, so it sits on top of the bars that touch it. */
+  g += `<line x1="${zero}" y1="${padT - 10}" x2="${zero}" y2="${H - padB + 2}"
+          stroke="var(--ink-3)" stroke-width="1.5"/>`;
+  g += `<text x="${zero}" y="${padT - 15}" text-anchor="middle" font-size="11" font-weight="600"
+          fill="var(--ink-2)" font-family="var(--sans)">buy &amp; hold</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img"
+            aria-label="Thirty-six trading rules, each measured against buy and hold">${g}</svg>`;
+}
+
+/* ── 2. DOT STRIP PLOT ────────────────────────────────────────────────────
+   Distribution: what a single headline number is one of. The emphasis
+   pattern carries it -- one mark in the accent colour, every other mark
+   grey -- because the story is one number's place in a crowd, not eight
+   identities. */
+function dotStrip(values, opts) {
+  const W = 980, padL = 40, padR = 40, padT = opts.padT || 34, H = opts.height || 150;
+  const plotH = H - padT - 40;
+  /* The domain must cover the threshold too, or a rule drawn beyond the data
+     lands off the canvas and the comparison silently disappears. */
+  const xs = values.map(v => v.x).concat(opts.threshold != null ? [opts.threshold, 0] : []);
+  const lo = Math.min(...xs), hi = Math.max(...xs);
+  const span = Math.max(hi - lo, 1);
+  const x = v => padL + ((v - lo) / span) * (W - padL - padR);
+  const zero = x(0);
+
+  let g = "";
+  const step = opts.step || 10;
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+    if (t === 0) continue;
+    g += gridLine(x(t), padT, x(t), padT + plotH, "var(--grid)");
+    g += `<text x="${x(t)}" y="${padT + plotH + 17}" text-anchor="middle" font-size="11"
+            fill="var(--ink-3)" font-family="var(--sans)">${signed(t)}</text>`;
+  }
+
+  /* Deterministic jitter. A random y would redraw differently on every
+     reload and make the same data look like different data. */
+  const jitter = i => {
+    const s = Math.sin(i * 12.9898) * 43758.5453;
+    return (s - Math.floor(s)) * (plotH - 14) + 7;
+  };
+  const r0 = opts.r || 3.4;
+  values.forEach((v, i) => {
+    const hl = opts.highlight && opts.highlight(v);
+    /* A 2px surface ring on the emphasised mark, so it reads as sitting on top
+       of the crowd rather than mixed into it. */
+    g += `<circle cx="${x(v.x).toFixed(1)}" cy="${(padT + jitter(i)).toFixed(1)}"
+            r="${hl ? r0 + 2.6 : r0}" fill="${hl ? "var(--above)" : (v.color || "var(--quiet)")}"
+            ${hl ? 'stroke="var(--surface)" stroke-width="2"' : 'fill-opacity="0.6"'}
+            class="mark" data-tip="${esc(v.tip || (signed(v.x) + " points a year vs buy &amp; hold"))}"/>`;
+  });
+
+  /* A threshold the data is measured against -- drawn in the "better" pole,
+     because clearing it is what would count as good news. */
+  if (opts.threshold != null) {
+    const tx = x(opts.threshold);
+    g += `<line x1="${tx}" y1="${padT - 8}" x2="${tx}" y2="${padT + plotH + 4}"
+            stroke="var(--above)" stroke-width="2.5"/>`;
+    g += `<text x="${tx}" y="${padT - 13}" text-anchor="end" font-size="11" font-weight="600"
+            fill="var(--above)" font-family="var(--sans)">${esc(opts.thresholdLabel || "")} &#8594;</text>`;
+  }
+
+  /* The median, the one summary the reader is asked to carry away. */
+  if (opts.median != null) {
+    const mx = x(opts.median);
+    g += `<line x1="${mx}" y1="${padT - 8}" x2="${mx}" y2="${padT + plotH + 4}"
+            stroke="var(--ink)" stroke-width="2"/>`;
+    g += `<text x="${mx}" y="${padT - 13}" text-anchor="middle" font-size="11" font-weight="600"
+            fill="var(--ink)" font-family="var(--sans)">typical setting ${signed(opts.median)}</text>`;
+  }
+  g += `<line x1="${zero}" y1="${padT - 8}" x2="${zero}" y2="${padT + plotH + 4}"
+          stroke="var(--ink-3)" stroke-width="1.5"/>`;
+  g += `<text x="${zero}" y="${padT + plotH + 32}" text-anchor="middle" font-size="11"
+          font-weight="600" fill="var(--ink-2)" font-family="var(--sans)">buy &amp; hold</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || "distribution")}">${g}</svg>`;
+}
+
+/* ── 3. HISTOGRAM ─────────────────────────────────────────────────────────
+   Distribution at scale. A dot strip is right for a few hundred values; at ten
+   thousand the dots pack into a solid smear that hides the one thing worth
+   seeing -- how thin the right-hand tail is. Bin edges are anchored on zero so
+   no bar can straddle the benchmark, which would make its colour a lie. */
+function histogram(values, opts) {
+  const W = 980, padL = 44, padR = 44, padT = 34, padB = 40;
+  const H = opts.height || 240, plotH = H - padT - padB;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const bw = opts.binWidth || 2;
+  const first = Math.floor(lo / bw) * bw, last = Math.ceil(hi / bw) * bw;
+  const nBins = Math.max(Math.round((last - first) / bw), 1);
+  const counts = new Array(nBins).fill(0);
+  values.forEach(v => {
+    let i = Math.floor((v - first) / bw);
+    if (i >= nBins) i = nBins - 1;
+    if (i < 0) i = 0;
+    counts[i]++;
+  });
+  const maxC = Math.max(...counts);
+  const x = v => padL + ((v - first) / (last - first)) * (W - padL - padR);
+  const y = c => padT + plotH - (c / maxC) * plotH;
+  const zero = x(0);
+
+  let g = "";
+  const step = opts.step || 20;
+  for (let t = Math.ceil(first / step) * step; t <= last; t += step) {
+    if (t === 0) continue;
+    g += gridLine(x(t), padT, x(t), padT + plotH, "var(--grid)");
+    g += `<text x="${x(t)}" y="${padT + plotH + 17}" text-anchor="middle" font-size="11"
+            fill="var(--ink-3)" font-family="var(--sans)">${signed(t)}</text>`;
+  }
+  counts.forEach((c, i) => {
+    if (!c) return;
+    const b0 = first + i * bw, b1 = b0 + bw;
+    /* 2px surface gap between adjacent fills. */
+    const bx = x(b0) + 1, bwid = Math.max(x(b1) - x(b0) - 2, 0.8);
+    g += `<rect x="${bx.toFixed(1)}" y="${y(c).toFixed(1)}" width="${bwid.toFixed(1)}"
+            height="${(padT + plotH - y(c)).toFixed(1)}" rx="1"
+            fill="${b0 >= 0 ? "var(--above)" : "var(--below)"}" class="mark"
+            data-tip="${signed(b0)} to ${signed(b1)} points a year|${intIN(c)} runs"/>`;
+  });
+  g += gridLine(padL, padT + plotH, W - padR, padT + plotH, "var(--ink-3)");
+  if (opts.median != null) {
+    const mx = x(opts.median);
+    g += `<line x1="${mx}" y1="${padT - 8}" x2="${mx}" y2="${padT + plotH}"
+            stroke="var(--ink)" stroke-width="2"/>`;
+    g += `<text x="${mx}" y="${padT - 13}" text-anchor="middle" font-size="11" font-weight="600"
+            fill="var(--ink)" font-family="var(--sans)">typical run ${signed(opts.median)}</text>`;
+  }
+  g += `<line x1="${zero}" y1="${padT - 8}" x2="${zero}" y2="${padT + plotH}"
+          stroke="var(--ink-3)" stroke-width="1.5"/>`;
+  g += `<text x="${zero}" y="${padT + plotH + 32}" text-anchor="middle" font-size="11"
+          font-weight="600" fill="var(--ink-2)" font-family="var(--sans)">buy &amp; hold</text>`;
+  g += `<text x="${padL}" y="${padT - 13}" font-size="11" fill="var(--ink-3)"
+          font-family="var(--sans)">runs per ${bw}-point bin</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label || "distribution")}">${g}</svg>`;
+}
+
+/* ── 4. BULLET CHART ──────────────────────────────────────────────────────
+   Magnitude against a threshold: the FT poster's answer to "how did this
+   measurement do against the context of a target". A bar for what we found,
+   a rule for what the target is, on one axis. */
+function bullet(items, opts) {
+  const W = 980, padL = 250, padR = 120, rowH = 52, padT = 12;
+  const H = padT + items.length * rowH + 14;
+  const hi = Math.max(...items.map(i => Math.max(i.value, i.target))) * 1.08 || 1;
+  const x = v => padL + (v / hi) * (W - padL - padR);
+
+  let g = "";
+  items.forEach((it, i) => {
+    const y = padT + i * rowH, mid = y + rowH / 2;
+    g += `<text x="${padL - 14}" y="${mid - 4}" text-anchor="end" font-size="12.5"
+            fill="var(--ink)" font-family="var(--sans)" font-weight="600">${esc(it.label)}</text>`;
+    if (it.sub) {
+      g += `<text x="${padL - 14}" y="${mid + 12}" text-anchor="end" font-size="11"
+              fill="var(--ink-3)" font-family="var(--sans)">${esc(it.sub)}</text>`;
+    }
+    /* The qualitative range behind the bar: the neutral midpoint token, so
+       it reads as context rather than as a third series. */
+    g += `<rect x="${padL}" y="${mid - 11}" width="${x(it.target) - padL}" height="22"
+            fill="var(--mid)" rx="2"/>`;
+    const bw = Math.max(x(it.value) - padL, 1.5), rr = Math.min(4, bw);
+    g += `<path d="M${padL},${mid - 5} H${padL + bw - rr} a${rr},${rr} 0 0 1 ${rr},${rr}
+            V${mid + 5 - rr} a${rr},${rr} 0 0 1 -${rr},${rr} H${padL} Z"
+            fill="${it.color || "var(--below)"}" class="mark"
+            data-tip="${esc(it.tip || "")}"/>`;
+    /* The target as a rule across the bar -- the bullet chart's whole point. */
+    g += `<line x1="${x(it.target)}" y1="${mid - 13}" x2="${x(it.target)}" y2="${mid + 13}"
+            stroke="var(--ink)" stroke-width="2.5"/>`;
+    g += `<text x="${x(it.target) + 8}" y="${mid - 15}" font-size="11" font-weight="600"
+            fill="var(--ink)" font-family="var(--sans)">${esc(it.targetLabel)}</text>`;
+    g += `<text x="${padL + bw + 8}" y="${mid + 4}" font-size="12" font-weight="600"
+            fill="${it.color || "var(--below)"}" font-family="var(--sans)">${esc(it.valueLabel)}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts && opts.label || "measurement against a threshold")}">${g}</svg>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE ARTICLE
+   ═══════════════════════════════════════════════════════════════════════ */
+function table(headers, rows) {
+  return `<table><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map((c, i) =>
+      `<td class="${i ? "num" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+const tableFold = (summary, headers, rows) =>
+  `<details class="tbl"><summary>${esc(summary)}</summary>${table(headers, rows)}</details>`;
+
+function render(f) {
+  const s = f.scenario;
+  const stocks = f.nStocks ? `${intIN(f.nStocks)} stocks` : f.universeLabel;
+  const years = new Date().getFullYear() - s.year;
+
+  /* ── 1. the tempting number ───────────────────────────────────────── */
+  const s1 = `
+  <section id="sec-hero">
+    <span class="step">1 · the result that starts the argument</span>
+    <h2>One rule grew an account by ${fmt1(f.best.cagr)}% a year</h2>
+    <p>Open the dashboard on its default settings — ${esc(stocks)}, starting in
+    ${s.year}, risking ${rupees(s.risk / 100 * s.cap)} of a
+    ${rupees(s.cap)} account on each trade — and the rule at the top of the board
+    is <strong>${esc(f.best.name)}</strong>.<span class="snref">1</span>
+    <span class="sn"><b>1. What the rule does.</b> ${esc(WHAT[f.best.skey] || "")}
+    The <em>stop</em> is the price at which a losing trade is abandoned; it also
+    decides position size, because the further away it sits the fewer shares are
+    bought.</span>
+    Over ${years} years it compounded at ${fmt1(f.best.cagr)}% a year. Buying every
+    stock in the list on day one and never selling — what this page calls
+    <strong>buy &amp; hold</strong> — compounded at ${fmt1(f.hold)}%.</p>
+
+    <div class="hero">
+      <div><div class="big win">${fmt1(f.best.cagr)}%</div>
+        <div class="lab">a year, ${esc(f.best.name)}</div></div>
+      <div><div class="big">${fmt1(f.hold)}%</div>
+        <div class="lab">a year, buying the whole list and leaving it alone</div></div>
+      <div><div class="big">${signed(f.bestVsHold)}</div>
+        <div class="lab">points a year of apparent advantage</div></div>
+    </div>
+
+    <p>That is a large difference, and the rest of this page is about whether to
+    believe it. The account also fell ${fmt1(Math.abs(f.best.maxdd))}% below its own
+    high point at the worst moment along the way, which is the first thing worth
+    knowing about any number like ${fmt1(f.best.cagr)}%.</p>
+  </section>`;
+
+  /* ── 2. the other thirty-five ─────────────────────────────────────── */
+  const s2 = `
+  <section id="sec-board">
+    <span class="step">2 · but we did not test one rule</span>
+    <h2>We tested ${intIN(f.nRows)}, and ${intIN(f.nLose)} of them lost</h2>
+    <p>${esc(f.best.name)} was not a hypothesis anyone had before looking. It is
+    the winner of a competition between ${intIN(f.nRows)} rules, run on the same
+    stocks over the same years.<span class="snref">2</span>
+    <span class="sn"><b>2. Why ${intIN(f.nRows)} and not ${intIN(f.nRows / 2)}.</b>
+    ${intIN(f.nRows / 2)} ways of choosing what to buy, each run twice: once with a
+    tight stop and once with a wide one. The stop decides position size as well as
+    the exit, so the two arms genuinely are different strategies.</span>
+    Two of them — the calendar rule and the unfiltered moving-average pair — contain
+    no market information at all and are on the board deliberately, so you can see
+    what a rule with nothing in it looks like.</p>
+
+    <p class="takeaway">${Words(f.nBeat)} rule${f.nBeat === 1 ? "" : "s"} beat buy
+    &amp; hold here. ${Words(f.nLose)} lost to it, several catastrophically.</p>
+
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--above)"></i>better than buy &amp; hold</span>
+      <span><i class="swatch" style="background:var(--below)"></i>worse than buy &amp; hold</span>
+    </div>
+    <figure class="wide" id="fig-board">${divergingBar(f.rows, { hold: f.hold })}
+      <figcaption>Each bar is one rule, at the dashboard's default settings.
+      Zero is buy &amp; hold; the scale is percentage points of yearly return
+      above or below it. Hover a bar for the rule.</figcaption>
+    </figure>
+    ${tableFold(`the ${intIN(f.nRows)} rules as a table`,
+      ["Rule", "% a year", "vs buy & hold", "Worst fall %", "Trades"],
+      f.rows.map(r => [r.name, fmt1(r.cagr), signed(r.vsHold), fmt1(r.maxdd), intIN(r.taken)]))}
+
+    <p>${Words(f.nBeat)} winners out of ${intIN(f.nRows)} is already a weaker claim
+    than one winner out of one. If you try enough rules, some of them beat the market for
+    the same reason some coins come up heads five times: you tried a lot of coins.
+    The question is how many tries there really were — and the answer is much
+    larger than ${intIN(f.nRows)}.</p>
+  </section>`;
+
+  /* ── 3. the settings behind each row ──────────────────────────────── */
+  const s3 = `
+  <section id="sec-spread">
+    <span class="step">3 · and each rule was tried many ways</span>
+    <h2>That ${fmt1(f.best.cagr)}% is one setting out of ${intIN(f.nBestRowCells)}</h2>
+    <p>Every rule on the board is run over five different groups of stocks, five
+    possible starting years, three ways of choosing which signal to take when there
+    is not enough money for all of them, two position sizes and two account
+    sizes.<span class="snref">3</span>
+    <span class="sn"><b>3. None of these is a discovery.</b> They are settings a
+    person picks before trading, and nobody picked them in advance here. The
+    dashboard shows one combination at a time; this chart shows all of them for
+    the rule that won.</span>
+    For ${esc(f.best.name)} that is ${intIN(f.nBestRowCells)} separate runs, and the
+    headline above is the one the dashboard happens to open on.</p>
+
+    <p class="takeaway">Across its own ${intIN(f.nBestRowCells)} settings,
+    ${esc(f.best.name)} beat buy &amp; hold ${intIN(f.bestRowBeat)} times and lost
+    the other ${intIN(f.nBestRowCells - f.bestRowBeat)}. Its typical setting lost by
+    ${fmt1(Math.abs(f.bestRowMedian))} points a year.</p>
+
+    <figure class="wide" id="fig-spread">${dotStrip(
+      f.bestRowCells.map(c => ({ x: c.x, key: c.key,
+        tip: `${signed(c.x)} points a year vs buy &amp; hold` })),
+      { median: f.bestRowMedian, height: 168,
+        highlight: v => v.key === f.best.key,
+        label: `Every setting of ${f.best.name}, measured against buy and hold` })}
+      <figcaption>One dot per setting of ${esc(f.best.name)}. The blue dot is the
+      headline from section 1; the black line is the typical setting. Best
+      ${signed(f.bestRowBest)}, worst ${signed(f.bestRowWorst)}.</figcaption>
+    </figure>
+
+    <p>This is the shape of the whole problem. The number a reader is shown first
+    is a <em class="term">maximum</em> over choices nobody committed to in advance,
+    and a maximum over ${intIN(f.nBestRowCells)} noisy numbers is large whether or
+    not anything real is underneath it.</p>
+  </section>`;
+
+  /* ── 4. everything at once ────────────────────────────────────────── */
+  const s4 = `
+  <section id="sec-all">
+    <span class="step">4 · all of it at once</span>
+    <h2>${intIN(f.nScored)} runs, and the typical one lost by
+    ${fmt1(Math.abs(f.allMedian))} points a year</h2>
+    <p class="takeaway">Only ${pct(f.allBeatPct)} of the
+    ${intIN(f.nScored)} runs beat buy &amp; hold at all${f.nRowsPositiveMedian === 0
+      ? ` — and not one of the ${intIN(f.nRows)} rules has a typical setting that beats it`
+      : `, and ${words(f.nRowsPositiveMedian)} of the ${intIN(f.nRows)} rules has a typical setting that beats it`}.</p>
+
+    <figure class="wide" id="fig-all">${histogram(f.allCells,
+      { median: f.allMedian, height: 250, binWidth: 2, step: 20,
+        label: "Every run on the board, measured against buy and hold" })}
+      <figcaption>All ${intIN(f.nScored)} scored runs, two percentage points to a
+      bar. Blue bars are runs that beat buy &amp; hold. The bulk of the mass sits
+      to its left and the tail that reaches the right is thin.</figcaption>
+    </figure>
+
+    <p>Reading the board by its best row is therefore the wrong way round. Read by
+    its typical row, the best rule on the board is
+    <strong>${esc(f.bestRowMedianOverall.name)}</strong>, which still loses to buy
+    &amp; hold by ${fmt1(Math.abs(f.bestRowMedianOverall.med))} points a year; the
+    worst is ${esc(f.worstRowMedianOverall.name)} at
+    ${fmt1(Math.abs(f.worstRowMedianOverall.med))} points behind.</p>
+    ${tableFold("each rule's typical setting",
+      ["Rule", "Typical setting, vs buy & hold"],
+      f.rowMedians.map(r => [r.name, signed(r.med)]))}
+  </section>`;
+
+  /* ── 5. the luck test ─────────────────────────────────────────────── */
+  const s5 = f.diag ? `
+  <section id="sec-luck">
+    <span class="step">5 · so we asked whether luck could explain it</span>
+    <h2>Chance alone predicts ${intIN(f.expectedByChance)} winners.
+    We found ${intIN(f.nUncorrected)}.</h2>
+    <p>The test is the plain one. For each of the ${intIN(f.nTested)} runs with
+    enough day-by-day history to test — one of the scored runs is too short —
+    take every trading day, subtract what buy &amp; hold made that day from what the rule
+    made, and ask whether the leftover is reliably positive rather than a handful of
+    good months.<span class="snref">4</span>
+    <span class="sn"><b>4. Why day by day.</b> A whole-period return can be one
+    lucky year wearing a decade's clothing. Daily differences make the rule prove
+    itself roughly ${intIN(f.diag.median_days)} times instead of once. The arithmetic
+    also discounts days that move together, because a hundred positions opened in
+    the same week are one bet, not a hundred.</span>
+    Run that test on a rule with no edge whatsoever and it still passes about one
+    time in twenty, which is why the count that matters is not how many passed but
+    how many more passed than chance predicts.</p>
+
+    <p class="takeaway">${f.nUncorrected < f.expectedByChance
+      ? "Fewer runs cleared the bar than chance alone would have produced"
+      : `${intIN(f.nUncorrected)} runs cleared the bar against the ${intIN(f.expectedByChance)} chance predicts`}.
+    After correcting for the number of tests, the count that survives is
+    ${words(f.nBH)}.</p>
+
+    <figure id="fig-luck" class="wide">${bullet([
+      { label: "Runs that cleared a plain 5% bar", sub: `out of ${intIN(f.nTested)} tested`,
+        value: f.nUncorrected, target: f.expectedByChance,
+        valueLabel: intIN(f.nUncorrected), targetLabel: `${intIN(f.expectedByChance)} expected by chance alone`,
+        tip: `${intIN(f.nUncorrected)} runs cleared an uncorrected 5% bar` },
+      { label: "Runs that survive the correction", sub: "for having tested so many",
+        value: f.nBH, target: f.expectedByChance,
+        valueLabel: intIN(f.nBH), targetLabel: "",
+        tip: `${intIN(f.nBH)} of ${intIN(f.nTested)} survive` },
+    ], { label: "Winners found against winners expected by chance" })}
+      <figcaption>The black rule is what pure chance predicts; the red bar is what
+      we actually found. A real edge would put the bar well to the right of the
+      rule.</figcaption>
+    </figure>
+
+    <p>This is the strongest thing the board has produced, and it points the
+    opposite way from the headline. It is not "we could not find an edge". It is
+    "there was less here than randomness alone would have supplied".</p>
+  </section>` : "";
+
+  /* ── 6. would we have seen it? ────────────────────────────────────── */
+  const s6 = f.diag && f.mde != null ? `
+  <section id="sec-power">
+    <span class="step">6 · could we have missed one?</span>
+    <h2>Only if it were smaller than ${fmt1(f.mde)} points a year</h2>
+    <p>A test that finds nothing is worth nothing until you know what it could have
+    found. With ${intIN(f.diag.median_days)} trading days of evidence per run, an
+    edge of ${fmt1(f.mde)} percentage points a year is the smallest this data
+    reliably detects — meaning a rule genuinely that good would be caught four
+    times in five.<span class="snref">5</span>
+    <span class="sn"><b>5. What this does not rule out.</b> An edge smaller than
+    ${fmt1(f.mde)} points a year could be real and still invisible here. It would
+    also be small enough that costs, slippage and the discipline of actually
+    following the rule for a decade would have to be argued about before it meant
+    anything.</span></p>
+
+    <p class="takeaway">Nothing on the board comes close to that size. The best
+    typical setting anywhere is ${fmt1(Math.abs(f.bestRowMedianOverall.med))} points
+    ${f.bestRowMedianOverall.med < 0 ? "<em>behind</em>" : "ahead of"} buy &amp; hold.</p>
+
+    <figure id="fig-power" class="wide">${dotStrip(
+      f.rowMedians.map(r => ({ x: r.med,
+        color: r.med > 0 ? "var(--above)" : "var(--below)",
+        tip: `${r.name}|typical setting ${signed(r.med)} points a year vs buy &amp; hold` })),
+      { threshold: f.mde, thresholdLabel: `anything out here we would have caught`,
+        height: 200, step: 5, r: 5.5,
+        label: "Each rule's typical setting against the smallest detectable edge" })}
+      <figcaption>One dot per rule, at its typical setting. The blue rule on the
+      right is the smallest edge this data could reliably detect. Every rule sits
+      not just short of it but on the far side of buy &amp; hold.</figcaption>
+    </figure>
+  </section>` : "";
+
+  /* ── the closing box: OWID puts the caveats in one place, at the end ── */
+  const notes = `
+  <div class="note">
+    <h2>What this is, and what it is not</h2>
+    <ul>
+      <li><b>Nothing here is advice, and no number here is a forecast.</b> This is a
+      study of what already happened in a fixed set of price files. It says nothing
+      about what any rule will do next.</li>
+      <li><b>The biggest known flaw is that dead companies are missing.</b> Only
+      stocks that still exist have price histories, so both the rules and buy &amp;
+      hold are flattered. Measuring it moved the benchmark by up to two points a
+      year and the gap between rule and benchmark by under a fifth of a point, but
+      it is a floor, not a full correction.</li>
+      <li><b>Costs are modelled, not assumed away</b> — brokerage, taxes, and a cap
+      that stops any single order exceeding 1% of a stock's daily turnover.</li>
+      <li><b>${intIN(f.tried)} rules are not ${intIN(f.tried)} independent tries.</b>
+      Many fire on the same days in the same stocks; the board's effective number of
+      distinct ideas is about ${fmt1(f.nEff)}, with an average correlation of
+      ${fmt2(f.avgCorr)} between rules. The corrections above account for this.</li>
+      <li><b>Two rules on the board are deliberate duds</b> — one buys on the first
+      day of each month, one is a moving-average pair with its filter removed. If a
+      rule cannot beat those, that is information.</li>
+    </ul>
+  </div>`;
+
+  return s1 + s2 + s3 + s4 + s5 + s6 + notes;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HOVER LAYER. An SVG chart is interactive by default; a bar or a dot that
+   cannot say what it is has thrown away the only thing it had over a table.
+   ═══════════════════════════════════════════════════════════════════════ */
+function attachTips() {
+  const tip = document.getElementById("tip");
+  if (!tip) return;
+  const body = document.getElementById("body");
+  body.addEventListener("mouseover", e => {
+    const m = e.target && e.target.getAttribute && e.target.getAttribute("data-tip");
+    if (!m) return;
+    const [head, rest] = m.split("|");
+    tip.innerHTML = rest ? `<b>${head}</b><br>${rest}` : head;
+    tip.style.opacity = "1";
+  });
+  body.addEventListener("mousemove", e => {
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - 330) + "px";
+    tip.style.top = (e.clientY + 18) + "px";
+  });
+  body.addEventListener("mouseout", e => {
+    if (e.target && e.target.getAttribute && e.target.getAttribute("data-tip")) {
+      tip.style.opacity = "0";
+    }
+  });
+}
+
+function boot(payload) {
+  DATA = payload;
+  const f = facts();
+  document.getElementById("dateline").textContent =
+    `Built from prices to ${f.built} · ${f.nRows} rules · ${intIN(f.nScored)} scored runs`;
+  document.getElementById("body").innerHTML = render(f);
+  attachTips();
+  return f;
+}
+
+fetch("/api/dashboard").then(r => {
+  if (r.status === 401) { window.location = "/login"; return null; }
+  return r.json();
+}).then(j => {
+  if (!j) return;
+  if (j.locked) { window.location = "/login"; return; }
+  boot(j);
+}).catch(err => {
+  document.getElementById("body").innerHTML =
+    `<p class="err">Could not load the results: ${esc(err.message || err)}.
+     Is the dashboard server running?</p>`;
+});
+</script>
