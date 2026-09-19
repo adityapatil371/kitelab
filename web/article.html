@@ -235,6 +235,14 @@ td.num { font-variant-numeric: tabular-nums; }
 .note h2 { border: 0; padding-top: 0; font-size: 1.15rem; margin-bottom: .8rem; }
 .note li { margin-bottom: .6rem; }
 .loading { color: var(--ink-3); font: 1rem/1.6 var(--sans); }
+/* Both of these were referenced by the fetch error path and never styled.
+   An error message set in the body font reads as prose, which is the one
+   thing it must not do. */
+.err { font: 1rem/1.6 var(--sans); color: var(--ink); }
+.err-detail { font: .78rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+              white-space: pre-wrap; overflow-x: auto; color: var(--ink-2);
+              border-left: 2px solid var(--ink-3);
+              padding: .5rem .8rem; margin: .8rem 0; }
 .err { color: var(--below); font: .95rem/1.6 var(--sans); }
 a { color: var(--above); }
 
@@ -280,6 +288,9 @@ a { color: var(--above); }
   <p class="dateline" id="dateline">&nbsp;</p>
 
   <div id="body"><p class="loading">Reading the results…</p></div>
+  <noscript><p class="err">The charts on this page are drawn by JavaScript,
+  which is switched off in this browser. Everything below the question is
+  missing because of that, not because the page is still loading.</p></noscript>
 </article>
 <div id="tip"></div>
 
@@ -1116,7 +1127,26 @@ function paint() {
   document.getElementById("body").innerHTML = render(F);
 }
 
+/* A page that fails silently is worse than one that fails loudly. Until
+   2026-09-19 anything thrown below left "Reading the results..." on screen
+   for ever, which is indistinguishable from a slow load -- and that is
+   exactly how the first bug report against the single-file build read.
+   Now the page prints what went wrong, where the charts would have been. */
+function fail(err) {
+  const el = document.getElementById("body");
+  const msg = (err && (err.stack || err.message)) || String(err);
+  if (el) el.innerHTML =
+    `<p class="err">This page could not draw its charts.</p>
+     <pre class="err-detail">${esc(msg)}</pre>
+     <p class="note">If you were sent this file, send this message back with
+     the name of your browser -- it says exactly what broke.</p>`;
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("error", e => fail(e.error || e.message));
+}
+
 function boot(payload) {
+ try {
   DATA = payload;
   F = facts();
   document.getElementById("dateline").textContent =
@@ -1131,6 +1161,7 @@ function boot(payload) {
     window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(paint, 150); });
   }
   return F;
+ } catch (err) { fail(err); throw err; }
 }
 
 /* ── BOOTSTRAP ────────────────────────────────────────────────────────────
