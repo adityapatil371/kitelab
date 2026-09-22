@@ -34,6 +34,7 @@ from kitelab.config import CLEAN, DATA, ROOT
 
 # Small outputs (tables, reports) belong with the code, not with the data.
 OUTPUT_DIR = ROOT / "output"
+_summary_name = "clean_data_summary.csv"
 
 REQUIRED = ["ts", "open", "high", "low", "close", "volume"]
 OHLC = ["open", "high", "low", "close"]
@@ -223,10 +224,35 @@ def main() -> None:
                     help="measure and report, but write nothing")
     ap.add_argument("--all", action="store_true",
                     help="clean every raw file, not just the symbols in use")
+    ap.add_argument("--symbols-file", default=None,
+                    help="clean exactly the symbols named in this file, one "
+                         "per line, instead of the working set. For a study "
+                         "on a universe the board does not trade (the Nifty "
+                         "500 list, 2026-09-22). Writing a cleaned file for a "
+                         "symbol OUTSIDE cfg.merged cannot invalidate a signal "
+                         "cache: signals.stamp() walks its own symbol list, "
+                         "not the clean directory. Its summary goes to a "
+                         "separate CSV so the full run's report survives.")
     args = ap.parse_args()
+    if args.symbols_file and args.all:
+        raise SystemExit("--symbols-file and --all are mutually exclusive")
+
+    global _summary_name
+    _summary_name = ("clean_data_summary_subset.csv" if args.symbols_file
+                     else "clean_data_summary.csv")
 
     files = sorted(DATA.glob("*.parquet"))
-    if not args.all:
+    if args.symbols_file:
+        want = {ln.strip().upper() for ln in open(args.symbols_file) if ln.strip()}
+        files = [p for p in files if in_scope(p, want)
+                 and not p.name.startswith(PASSTHROUGH_PREFIX)]
+        seen = {p.stem.rpartition("_")[0] for p in files}
+        print(f"symbol list {args.symbols_file}: {len(want)} symbols, "
+              f"{len(seen)} with a raw file, {len(files)} files")
+        absent = sorted(want - seen)
+        if absent:
+            print(f"  NO RAW FILE for {len(absent)}: {', '.join(absent)}")
+    elif not args.all:
         keep = working_set()
         files = [p for p in files if in_scope(p, keep)]
         print(f"working set: {len(keep)} symbols "
@@ -294,7 +320,7 @@ def main() -> None:
     out_dir = OUTPUT_DIR
     if not args.dry_run:
         out_dir.mkdir(parents=True, exist_ok=True)
-        summary.to_csv(out_dir / "clean_data_summary.csv", index=False)
+        summary.to_csv(out_dir / _summary_name, index=False)
 
     print("\n" + "=" * 78)
     print("RULES APPLIED")
@@ -319,7 +345,7 @@ def main() -> None:
     print(f"  files losing rows    {len(changed):>12,}")
     if not args.dry_run:
         print(f"\n  cleaned parquet -> {CLEAN}")
-        print(f"  per-file counts -> {out_dir / 'clean_data_summary.csv'}")
+        print(f"  per-file counts -> {out_dir / _summary_name}")
 
 
 def _wrap(text: str, width: int = 68) -> list[str]:

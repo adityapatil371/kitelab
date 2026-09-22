@@ -1,0 +1,31 @@
+ind_nifty500list.csv -- provenance
+==================================
+
+Where it came from
+  NSE's published Nifty 500 constituent list, downloaded by the user on the Mac
+  (this container's firewall blocks nseindia.com -- curl exits 7) and pasted
+  into the session on 2026-09-22. Written here verbatim, byte for byte as
+  pasted. Nothing in this repo can rebuild it, which is why it lives in
+  data/keep/ rather than data/ or output/.
+
+What is in it, checked on arrival 2026-09-22
+  501 data rows, 501 unique symbols, 360ONE .. ECLERX, no blank Symbol or ISIN.
+  Series: 499 EQ, 2 BE (HEG, HFCL).
+  One placeholder row: DUMMYHEG, ISIN DUM545A01024 -- a demerger artefact, not
+  a tradable company. Drop it. The real constituent count is 500.
+
+What it is NOT
+  It is TODAY's membership, not point-in-time membership. NSE rebalances the
+  Nifty 500 every March and September, so backtesting this list over a past
+  period selects stocks that earned their place by rising. A large 2024-2026
+  IPO cohort in here (LENSKART, MEESHO, SWIGGY, GROWW, HYUNDAI, LGEINDIA,
+  ATHERENERG, ...) has little or no pre-2018 history at all.
+
+  Do not quote a number built on this list without the measured inclusion
+  premium beside it. Measuring that premium -- the same rules on this list
+  against the point-in-time liquidity buckets -- is the job scripts/nifty500_list.py
+  and the Nifty 500 report were written for.
+
+Read by
+  scripts/nifty500_list.py (reconciles against data/keep/universe.json and
+  writes data/keep/nifty500.json).
