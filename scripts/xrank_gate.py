@@ -56,8 +56,8 @@ Reads:  /data/clean/kitelab/dashboard.json     (axes, universe labels, hold key)
         the cleaned parquet candles, via kitelab.frames
         output/wf_attach_hold_<board key>.pkl  (hold curves, already built)
 Writes: output/measurements/xrank_gate_<date>.csv   (every cell, every leg)
-        output/xrank_gate_<date>.json               (the same, plus the t rows)
-        output/xrank_gate_<date>.png                (the four legs, one figure)
+        output/measurements/xrank_gate_<date>.json               (the same, plus the t rows)
+        output/figures/xrank_gate_<date>.png                (the four legs, one figure)
 """
 from __future__ import annotations
 
@@ -82,6 +82,10 @@ from scripts.wf_pine import hold_cagrs, load_board, universes
 from scripts.xrank_account import spread_off, trades_for
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 
 STOP, EXIT = "atr3", "stop"       # the cell on trial
 N_LIVE, LOOKBACK = 20, 252
@@ -449,7 +453,7 @@ def figure(flat, placebo_rows, knife_rows, cells, stamp):
 
     fig.suptitle(f"xrank N={N_LIVE} / 3xATR / stop-exit -- four tests  ({stamp})")
     fig.tight_layout()
-    path = OUT / f"xrank_gate_{stamp}.png"
+    path = FIG / f"xrank_gate_{stamp}.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"\n  wrote {path.name}")
@@ -523,7 +527,7 @@ def main():
     df.to_csv(cpath, index=False)
     print(f"\n  wrote measurements/{cpath.name} "
           f"({len(df)} rows x {len(df.columns)} columns)")
-    jpath = OUT / f"xrank_gate_{stamp}_{args.leg}.json"
+    jpath = MEAS / f"xrank_gate_{stamp}_{args.leg}.json"
     jpath.write_text(json.dumps(
         {"generated": stamp, "board": board, "on_trial":
          {"n": N_LIVE, "lookback": LOOKBACK, "stop": STOP, "exit": EXIT},

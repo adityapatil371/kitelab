@@ -119,8 +119,8 @@ Reads:  the cleaned parquet candles, via kitelab.frames
         /data/clean/kitelab/dashboard.json   (axes, hold CAGR, self-check)
 Writes: output/measurements/wf_trail_<date>_<width>.csv        (per arm x cell)
         output/measurements/wf_trail_daily_<date>_<width>.csv  (per HAC test)
-        output/wf_trail_<date>_<width>.json
-        output/wf_trail_<date>_<width>.png
+        output/measurements/wf_trail_<date>_<width>.json
+        output/figures/wf_trail_<date>_<width>.png
 Cost:   run --pilot 60 first; it prints a measured estimate for the full run.
 """
 from __future__ import annotations
@@ -144,6 +144,10 @@ from scripts import dashboard_data as dd
 from scripts.wf_daily import MIN_DAYS, hac_se, norm_sf, nw_lag
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 ARMS = ("fixed", "atr", "swing")
 TRAIL_K = 3.0          # the ratchet width, matching registry.STOPS["atr3"]
 
@@ -632,7 +636,7 @@ def main() -> None:
     frame.to_csv(csv, index=False)
     tcsv = OUT / "measurements" / f"wf_trail_daily_{stamp}.csv"
     tframe.to_csv(tcsv, index=False)
-    js = OUT / f"wf_trail_{stamp}.json"
+    js = MEAS / f"wf_trail_{stamp}.json"
     js.write_text(json.dumps({
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
         "built": payload["built"], "width": args.width, "trail_k": TRAIL_K,
@@ -658,7 +662,7 @@ def main() -> None:
         ax.set_title(f"Fixed vs trailing stop, {args.width} width, "
                      f"from {dd.START_DEFAULT} (costs on)")
         fig.tight_layout()
-        png = OUT / f"wf_trail_{stamp}.png"
+        png = FIG / f"wf_trail_{stamp}.png"
         fig.savefig(png, dpi=130)
         print(f"  wrote {png}")
     except ImportError:

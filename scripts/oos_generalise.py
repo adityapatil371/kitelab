@@ -71,7 +71,7 @@ Reads:  /data/clean/kitelab/dashboard.json          (axes, buckets, daily_excess
         output/wf_attach_hold_<board key>.pkl       (hold curves, already built)
 Writes: output/oos_generalise_ckpt_<board key>/*.pkl   (one per label, resumable)
         output/measurements/oos_generalise_<date>.csv  (every cell, both halves)
-        output/oos_generalise_<date>.json
+        output/measurements/oos_generalise_<date>.json
 Rebuilds nothing. Edits no stamped module, and is in neither stamp tier.
 """
 from __future__ import annotations
@@ -94,6 +94,8 @@ from scripts.attach_diagnostics import bh_threshold
 from scripts.wf_daily import MIN_DAYS, norm_sf
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+MEAS.mkdir(parents=True, exist_ok=True)
 CACHE = CLEAN / "signal_cache"
 ALPHA = 0.05
 
@@ -415,7 +417,7 @@ def main():
     out = OUT / "measurements" / f"oos_generalise_{date.today()}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     d.to_csv(out, index=False)
-    js = OUT / f"oos_generalise_{date.today()}.json"
+    js = MEAS / f"oos_generalise_{date.today()}.json"
     js.write_text(json.dumps({"built": payload["built"],
                               "split_date": str(SPLIT_DATE.date()),
                               "summary": summary}, indent=1))

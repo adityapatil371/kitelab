@@ -45,9 +45,9 @@ TWO TRAPS THIS SCRIPT OWNS.
 Reads:  the cleaned daily parquet (via kitelab.frames), /data/clean/kitelab/
         dashboard.json, output/wf_attach_hold_<board>.pkl,
         output/measurements/entry_exit_grid_2026-09-17.csv (self-check only)
-Writes: output/xrank_account_<date>.json,
+Writes: output/measurements/xrank_account_<date>.json,
         output/measurements/xrank_account_<date>.csv,
-        output/xrank_account_<date>.png, output/logs/ (by the caller)
+        output/figures/xrank_account_<date>.png, output/logs/ (by the caller)
 """
 from __future__ import annotations
 
@@ -71,6 +71,10 @@ from scripts.stop_sweep import cells_for
 from scripts.wf_pine import hold_cagrs, load_board, universes
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 GRID_CSV = OUT / "measurements" / "entry_exit_grid_2026-09-17.csv"
 ENTRY = "xrank"
 EXIT = "stop"
@@ -302,7 +306,7 @@ def main():
         w = csv.DictWriter(fh, fieldnames=list(flat[0].keys()))
         w.writeheader()
         w.writerows(flat)
-    (OUT / f"xrank_account_{stamp}.json").write_text(json.dumps(
+    (MEAS / f"xrank_account_{stamp}.json").write_text(json.dumps(
         {"built": stamp, "board": board, "summary": rows,
          "raw_trades": raw}, indent=2, default=str))
     print(f"\nwrote {cpath} ({len(flat):,} rows)")
@@ -321,7 +325,7 @@ def main():
     ax.set_title(f"{ENTRY} x {EXIT} through the account layer — "
                  f"0 = ties buy-and-hold")
     fig.tight_layout()
-    ppath = OUT / f"xrank_account_{stamp}.png"
+    ppath = FIG / f"xrank_account_{stamp}.png"
     fig.savefig(ppath, dpi=130)
     print(f"wrote {ppath}")
 

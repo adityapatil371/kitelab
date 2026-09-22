@@ -35,7 +35,7 @@ flag is off at the top of every single build.
 Reads:  the price parquet via kitelab.config, /data/clean/kitelab/dashboard.json
         (its universes, hold curves and the nine strategies' daily_excess
         block), and the cached wf_attach hold-curve pickle.
-Writes: output/pine_candidate_<date>.json,
+Writes: output/measurements/pine_candidate_<date>.json,
         output/measurements/pine_candidate_<date>.csv (one row per cell), and
         a per-label checkpoint directory output/pine_candidate_ckpt_<board>/
         so a crash never forces a full re-run.
@@ -58,6 +58,8 @@ import scripts.wf_pine as wp
 from scripts.attach_diagnostics import bh_threshold
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+MEAS.mkdir(parents=True, exist_ok=True)
 TF = "W"                      # weekly bars, monthly EMA(20) filter
 ALPHA = 0.05
 
@@ -334,7 +336,7 @@ def main():
             "timeframe": TF, "timeframe_label": wp.TIMEFRAMES[TF][0],
             "labels": list(summary), "summary": summary, "gates": gates,
             "redundancy": red, "cells": all_cells}
-    jpath = OUT / f"pine_candidate_{stamp}.json"
+    jpath = MEAS / f"pine_candidate_{stamp}.json"
     jpath.write_text(json.dumps(blob, indent=1, default=str))
     print(f"\n  wrote {jpath.name} and measurements/{cpath.name} "
           f"({len(flat)} rows x {len(flat.columns)} cols)"

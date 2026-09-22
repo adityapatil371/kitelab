@@ -56,8 +56,8 @@ TWO AXES, because a board is a grid and both sides of it can be redundant:
 Reads:  the cleaned parquet candles, via kitelab.frames
         <CLEAN>/signal_cache/*_all.pkl        (one per board row, entry stamps)
 Writes: output/measurements/board_span_<date>.csv   (every pair, both axes)
-        output/board_span_<date>.json               (matrices + the slate)
-        output/board_span_<date>.png                (heatmaps + the n_eff curve)
+        output/measurements/board_span_<date>.json               (matrices + the slate)
+        output/figures/board_span_<date>.png                (heatmaps + the n_eff curve)
 """
 from __future__ import annotations
 
@@ -80,6 +80,10 @@ from scripts.redundancy import meff
 from scripts.xrank_account import spread_off
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 # Slate size. The selection axis is ENTRIES, and the board carries 10 entry
 # families (each registered twice, once per stop arm in registry.STOPS), so 10
 # keeps a re-run cost-neutral against what is on the page. Was 9 for the
@@ -249,7 +253,7 @@ def figure(C, names, board_idx, slate_idx, R, rnames, curve, stamp):
 
     fig.suptitle(f"Board span -- entries and exits, no returns read  ({stamp})")
     fig.tight_layout()
-    path = OUT / f"board_span_{stamp}.png"
+    path = FIG / f"board_span_{stamp}.png"
     fig.savefig(path, dpi=130)
     plt.close(fig)
     print(f"  wrote {path.name}")
@@ -371,7 +375,7 @@ def main():
     df.to_csv(cpath, index=False)
     print(f"\n  wrote measurements/{cpath.name} "
           f"({len(df)} rows x {len(df.columns)} columns)")
-    jpath = OUT / f"board_span_{stamp}.json"
+    jpath = MEAS / f"board_span_{stamp}.json"
     jpath.write_text(json.dumps(
         {"generated": stamp, "names": names, "entry_phi": C.tolist(),
          "exit_names": rnames, "exit_spearman": R.tolist(),

@@ -2,7 +2,7 @@
 
     Reads   /data/raw/kitelab/*.parquet          READ-ONLY, never modified
     Writes  /data/clean/kitelab/<same filename>  one cleaned file per raw file
-    Writes  /work/kitelab/output/clean_data_summary.csv   per-file counts
+    Writes  /work/kitelab/output/measurements/clean_data_summary.csv   per-file counts
 
 The cleaning rules are NOT reinvented here. Each candle frame is handed to
 kitelab.frames.sanitise(), which is the definition of "clean" that every strategy
@@ -33,7 +33,10 @@ from kitelab import config, frames
 from kitelab.config import CLEAN, DATA, ROOT
 
 # Small outputs (tables, reports) belong with the code, not with the data.
-OUTPUT_DIR = ROOT / "output"
+# The top level of output/ is live state only, so the summary goes in
+# measurements/ with every other finished table.
+OUTPUT_DIR = ROOT / "output" / "measurements"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _summary_name = "clean_data_summary.csv"
 
 REQUIRED = ["ts", "open", "high", "low", "close", "volume"]

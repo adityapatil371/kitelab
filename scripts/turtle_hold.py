@@ -46,7 +46,7 @@ Reads:  /data/clean/kitelab/dashboard.json      (axes, universe buckets, hold ke
         the cleaned parquet candles, via kitelab.frames
         output/wf_attach_hold_<board key>.pkl   (hold curves, reused if built)
 Writes: output/turtle_hold_ckpt_<board key>/*.pkl   (one per variant, resumable)
-        output/turtle_hold_<date>.json             (every cell)
+        output/measurements/turtle_hold_<date>.json             (every cell)
         output/measurements/turtle_hold_<date>.csv (the same, flat)
 """
 from __future__ import annotations
@@ -67,6 +67,8 @@ import scripts.wf_attach as wa
 from scripts.wf_pine import cells_for, hold_cagrs, load_board, universes
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+MEAS.mkdir(parents=True, exist_ok=True)
 
 # (board label, entry_len, exit_len). The two rules the user asked for; both are
 # registry entries `dv|20-10` and `dv|55-20`, weekly gate ON.
@@ -435,7 +437,7 @@ def main():
             "rules": [r for r, _, _ in RULES],
             "variants": [vlabel(r, s) for r, _, _ in RULES for s, _, _ in VARIANTS],
             "summary": summary, "cells": all_cells}
-    jpath = OUT / f"turtle_hold_{stamp}.json"
+    jpath = MEAS / f"turtle_hold_{stamp}.json"
     jpath.write_text(json.dumps(blob, indent=1, default=str))
     flat = pd.DataFrame([
         {k: v for k, v in c.items() if k != "daily"}

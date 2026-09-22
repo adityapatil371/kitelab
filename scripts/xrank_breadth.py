@@ -39,9 +39,9 @@ scripts.xrank_account, whose mirror check pins them to item 20's trade list;
 
 Reads:  the cleaned daily parquet (via kitelab.frames), /data/clean/kitelab/
         dashboard.json, output/wf_attach_hold_<board>.pkl
-Writes: output/xrank_breadth_<date>.json,
+Writes: output/measurements/xrank_breadth_<date>.json,
         output/measurements/xrank_breadth_<date>.csv,
-        output/xrank_breadth_<date>.png
+        output/figures/xrank_breadth_<date>.png
 """
 from __future__ import annotations
 
@@ -64,6 +64,10 @@ from scripts.wf_pine import hold_cagrs, load_board, universes
 from scripts.xrank_account import spread_off, trades_for, summarise
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 BREADTHS = [5, 10, 20, 50, 100]
 STOP = "atr3"
 EXIT = "stop"
@@ -166,7 +170,7 @@ def main():
         w = csv.DictWriter(fh, fieldnames=list(flat[0].keys()))
         w.writeheader()
         w.writerows(flat)
-    (OUT / f"xrank_breadth_{stamp}.json").write_text(
+    (MEAS / f"xrank_breadth_{stamp}.json").write_text(
         json.dumps({"built": stamp, "board": board, "stop": STOP,
                     "summary": rows}, indent=2, default=str))
     print(f"\nwrote {cpath} ({len(flat):,} rows)")
@@ -196,7 +200,7 @@ def main():
     a2.set_title("does concentrating help?")
     fig.suptitle("xrank breadth sweep — stop 3xATR, exit hold-till-stopped")
     fig.tight_layout()
-    ppath = OUT / f"xrank_breadth_{stamp}.png"
+    ppath = FIG / f"xrank_breadth_{stamp}.png"
     fig.savefig(ppath, dpi=130)
     print(f"wrote {ppath}")
 

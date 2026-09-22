@@ -78,7 +78,7 @@ Reads:  the universe from config.load().merged, daily bars through
         /data/clean/kitelab/signal_cache/<cache>_all.pkl.
 Writes: output/measurements/entry_zoo_signals_<date>.csv   (firing rates)
         output/measurements/entry_zoo_phi_<date>.csv       (the matrix)
-        output/entry_zoo_<date>.png
+        output/figures/entry_zoo_<date>.png
 Rebuilds nothing. Edits no stamped module. Run:
 
         PYTHONPATH=/work/kitelab python3 -m scripts.entry_zoo [--pilot]
@@ -101,6 +101,8 @@ from kitelab import config, frames, registry
 from kitelab.config import CLEAN
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+FIG.mkdir(parents=True, exist_ok=True)
 CACHE = CLEAN / "signal_cache"
 
 SEED = 20260917          # the random placebo, pinned so the run reproduces
@@ -380,7 +382,7 @@ def main():
                  "phi over listed stock-sessions; `rand` is the placebo and "
                  "must read ~0")
     fig.tight_layout()
-    png = OUT / f"entry_zoo_{stamp}.png"
+    png = FIG / f"entry_zoo_{stamp}.png"
     fig.savefig(png, dpi=130)
     plt.close(fig)
 

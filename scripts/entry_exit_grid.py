@@ -64,7 +64,7 @@ Reads:  the universe from config.load().merged and daily bars through
         kitelab.frames.daily.
 Writes: output/measurements/entry_exit_grid_<date>.csv       (every cell)
         output/measurements/entry_exit_attrib_<date>.csv     (the decomposition)
-        output/entry_exit_grid_<date>.png
+        output/figures/entry_exit_grid_<date>.png
 Run:    PYTHONPATH=/work/kitelab python3 -m scripts.entry_exit_grid [--pilot]
 """
 from __future__ import annotations
@@ -84,6 +84,8 @@ from numpy.lib.stride_tricks import sliding_window_view
 from kitelab import config, frames, slippage
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+FIG.mkdir(parents=True, exist_ok=True)
 
 SEED = 20260917
 MAXHOLD = 120          # sessions; the longest any cell may hold. Caps the
@@ -562,7 +564,7 @@ def main():
                  "last row = random entry, last column = random exit; "
                  "the corner is the null")
     fig.tight_layout()
-    png = OUT / f"entry_exit_grid_{stamp}.png"
+    png = FIG / f"entry_exit_grid_{stamp}.png"
     fig.savefig(png, dpi=130); plt.close(fig)
     print(f"\nwrote {meas / f'entry_exit_grid_{stamp}.csv'}")
     print(f"wrote {meas / f'entry_exit_attrib_{stamp}.csv'}")

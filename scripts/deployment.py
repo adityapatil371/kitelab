@@ -46,7 +46,7 @@ distance. A daily candle's low sits ~2% under the entry and a quarterly one
 
 Reads:  the 19 *_all.pkl signal caches.
 Writes: output/measurements/deployment_2026-09-10.csv
-        output/deployment_curve.png
+        output/figures/deployment_curve.png
 """
 from __future__ import annotations
 
@@ -64,8 +64,10 @@ from kitelab import config, registry, signals, sizing  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
 CSV_PATH = os.path.join(OUT, "measurements", "deployment_2026-09-10.csv")
-CURVE = os.path.join(OUT, "deployment_curve.png")
+CURVE = os.path.join(FIG, "deployment_curve.png")
 
 # Only two engines' worth of keys are universal: `cost_of_entry` is emitted by
 # backtest.py's family but NOT by the `pair` engine, so position value is taken

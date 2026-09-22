@@ -56,7 +56,7 @@ Reads:  scripts/data/alpha101.json, the 19 *_all.pkl signal caches, the daily
         parquet candles, output/measurements/priority_control_2026-09-11.csv
 Writes: output/alpha_ckpt_<n>.pkl          (per-alpha values at trade coords)
         output/measurements/alpha_priority_<date>.csv   (resumable)
-        output/alpha_priority_<date>.png
+        output/figures/alpha_priority_<date>.png
 Touches nothing under kitelab/, so no cache and no grid partition is invalidated.
 """
 from __future__ import annotations
@@ -78,9 +78,11 @@ from scripts.priority_control import CELLS, CAPITALS, PARTICIPATION, RISK, REQUI
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
 TODAY = dt.date.today().isoformat()
 CSV = os.path.join(OUT, "measurements", f"alpha_priority_{TODAY}.csv")
-PNG = os.path.join(OUT, f"alpha_priority_{TODAY}.png")
+PNG = os.path.join(FIG, f"alpha_priority_{TODAY}.png")
 NULL_CSV = os.path.join(OUT, "measurements", "priority_control_2026-09-11.csv")
 # The mom_hi COLUMN OF NULL_CSV IS THE PRE-FIX ONE -- written before the
 # _desc/_asc NaN-sentinel fix, so it sorted no-history trades first and reads

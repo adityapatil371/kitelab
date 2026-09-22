@@ -60,7 +60,8 @@ python3 -m scripts.backfill --symbols-file <list> --daily-only
 # health / audits
 python3 -m scripts.cache_status | data_audit | validate | bootstrap | ath_band
 
-# one-off measurements, off the board; each writes a dated CSV/PNG to output/
+# one-off measurements, off the board; each writes a dated CSV/JSON to
+# output/measurements/ and its figure to output/figures/
 python3 -m scripts.wf_<name>             # ceiling cost_gap daily excess lookahead
                                          # power risk survivor tail — see each docstring
 ```
@@ -497,13 +498,19 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
 - `pkill -f "scripts.dashboard"` matches its own shell and kills the session.
   Use PIDs; `pgrep -a -f` has the same problem.
 - `/tmp` is cleared between sessions. Long-running logs go in `output/`.
-- **`output/` is gitignored, so a delete there is permanent, and every script
-  hardcodes it FLAT** — `wf_attach.py:69`, `attach_diagnostics.py:44`,
-  `wf_power.py:45`, `wf_survivor.py:72`, `wf_risk.py:123`, `wf_excess.py:35` all
-  resolve `OUT = <repo>/output` and join a bare filename, never searching
-  subdirectories. Tidied into folders 2026-09-10 (`showcase/`, `classwork/`,
-  `measurements/`, `logs/`); the files left at the top level are the live
-  checkpoints scripts read back, and filing one away silently costs its re-run
+- **`output/` is gitignored, so a delete there is permanent. Its top level is
+  LIVE STATE ONLY** — the four things a script reads back. Everything finished
+  goes in a folder: `figures/` (every PNG), `measurements/` (every finished CSV
+  or JSON), `reports/` (PDFs, the standalone HTML), plus `logs/`, `showcase/`,
+  `classwork/`. **This is enforced in code, not by convention**: each script
+  defines `FIG`/`MEAS` beside its `OUT` and writes through those. It was
+  convention only until 2026-09-22, and the top level had drifted to 80 entries
+  and 335M with the live files buried in it — if you add a script, write its
+  figure to `FIG` and its result to `MEAS` or the drift starts again. The live
+  files are `wf_attach_<built date>.json`, `wf_attach_ckpt_<board key>/`,
+  `wf_attach_hold_<board key>.pkl` and `wf_tail_hold.pkl`; `wf_excess_<built
+  date>.csv` joins them when `wf_excess` has run, because `wf_power` reads it
+  back. Filing one away silently costs its re-run
   (`wf_attach_<built date>.json` = the 106.9-min diagnostics run;
   `wf_attach_ckpt_<board key>/` and `wf_attach_hold_<board key>.pkl` = resume
   instead of restart). **The two checkpoints are keyed on `wf_attach.board_key`,
@@ -523,7 +530,11 @@ reading `dashboard.html` or the checker's source to infer whether it worked.
   it is deliberate. If an edit is genuinely inert, **prove it** (recompute two
   strategies, diff the pickles) and carry the rest over by hand — do not widen
   the key to make an edit cheap. `output/README.md`
-  carries the full map — and is itself gitignored, so this entry is the durable copy.
+  carries the full map — and is itself gitignored, so this entry is the durable
+  copy. **Pruned 2026-09-22: 335M → 27M, 80 top-level entries → 12**, by
+  deleting the checkpoints of boards that no longer exist. A checkpoint keyed to
+  a dead board key, or to a `date.today()` that has passed, can never be found
+  again — `alpha_ckpt_<today>.pkl` alone was 265M of that.
 - Small samples mislead — the ATH band looked neutral on 30 stocks and clearly
   harmful on 101.
 - Deleting a block can take a shared import with it, 20 minutes into a rebuild.

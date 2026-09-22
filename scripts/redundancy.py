@@ -62,6 +62,8 @@ from kitelab.config import CLEAN
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
 
 
 def load(path):
@@ -165,7 +167,7 @@ def figure(C_raw, C_dem, names, scens, built):
     fig.suptitle(f"kitelab board, built {built} -- how many rules are "
                  f"really here?", fontsize=11)
     fig.tight_layout()
-    png = os.path.join(OUT, f"redundancy_{built.split()[0]}.png")
+    png = os.path.join(FIG, f"redundancy_{built.split()[0]}.png")
     fig.savefig(png, dpi=130)
     print(f"\nwrote {png}")
 

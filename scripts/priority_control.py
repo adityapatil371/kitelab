@@ -89,7 +89,7 @@ reproduces under the fix unchanged (checked: nearhigh_hi and tight, diff 0.00).
 
 Reads:  the 19 *_all.pkl signal caches, the daily parquet candles.
 Writes: output/measurements/priority_control_2026-09-11.csv   (resumable)
-        output/priority_control.png
+        output/figures/priority_control.png
 """
 from __future__ import annotations
 
@@ -106,8 +106,10 @@ from kitelab import config, frames, portfolio, signals, slippage
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
 CSV = os.path.join(OUT, "measurements", "priority_control_2026-09-11.csv")
-PNG = os.path.join(OUT, "priority_control.png")
+PNG = os.path.join(FIG, "priority_control.png")
 
 # One order <= 1% of the stock's daily turnover -- dashboard_data's
 # REALISTIC_PARTICIPATION, restated here so this script has no import on it.

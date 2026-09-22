@@ -53,7 +53,7 @@ Reads:  every registered rule's *_all.pkl signal cache and the daily
 Writes: output/measurements/entry_edge_<N>strat_<date>.csv
         output/measurements/holding_counterfactual_<N>strat_<date>.csv
         output/measurements/exposure_<N>strat_<date>.csv
-        output/entry_edge_curve.png
+        output/figures/entry_edge_curve.png
 """
 from __future__ import annotations
 
@@ -76,7 +76,9 @@ HORIZONS = (5, 20, 60, 250)
 # flat" trap: every measurement script here resolves output/ for itself.
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
-CURVE = os.path.join(OUT, "entry_edge_curve.png")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
+CURVE = os.path.join(FIG, "entry_edge_curve.png")
 N_RULES = len(registry.REGISTRY)
 # The board has been cut twice (19 -> 13 -> 9) while these filenames stayed
 # fixed, so a CSV named for a DATE said nothing about which board it holds.

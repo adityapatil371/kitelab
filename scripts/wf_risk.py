@@ -96,7 +96,7 @@ a LOWER BOUND on true trading cost, same as in scripts.wf_daily --capped.
 Reads:  /data/clean/kitelab/signal_cache/{strategy}_all.pkl
         output/wf_tail_hold.pkl   (the daily hold curve, already checkpointed)
 Writes: output/wf_risk_<today>.csv
-        output/wf_risk_<today>.png   (drawdown chart; skipped if no matplotlib)
+        output/figures/wf_risk_<today>.png   (drawdown chart; skipped if no matplotlib)
 
 Cost: 3 portfolio.run calls. scripts.wf_tail did 36 of them, so this should be
 well inside that -- but the last estimate given to the user (3 min for the
@@ -121,6 +121,8 @@ from kitelab.config import CLEAN
 import scripts.wf_daily as wd
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+FIG.mkdir(parents=True, exist_ok=True)
 CACHE = CLEAN / "signal_cache"
 
 CAPITAL = 200_000.0
@@ -325,7 +327,7 @@ def main() -> None:
                  "friction priced")
     ax.legend(loc="lower left", fontsize=8)
     fig.tight_layout()
-    png = OUT / f"wf_risk_{stamp}.png"
+    png = FIG / f"wf_risk_{stamp}.png"
     fig.savefig(png, dpi=130)
     plt.close(fig)
     print(f"wrote {png}")

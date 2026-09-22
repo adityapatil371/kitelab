@@ -41,7 +41,7 @@ Reads:  every registered rule's *_all.pkl signal cache, the daily parquet
         candles, and output/measurements/net_in_market_<N>strat_*.csv (the
         self-check reference -- the rule's own exit must reproduce it).
 Writes: output/measurements/hold_longer_<N>strat_<date>.csv
-        output/hold_longer_curve.png
+        output/figures/hold_longer_curve.png
 """
 from __future__ import annotations
 
@@ -64,7 +64,9 @@ from scripts.entry_edge import (close_matrix, hold_index,  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 M = os.path.join(REPO, "output", "measurements")
 CSV_PATH = os.path.join(M, f"hold_longer_{STAMP}.csv")
-CURVE = os.path.join(REPO, "output", "hold_longer_curve.png")
+FIG = os.path.join(REPO, "output", "figures")   # every PNG
+os.makedirs(FIG, exist_ok=True)
+CURVE = os.path.join(FIG, "hold_longer_curve.png")
 
 HOLDS = (3, 5, 10, 20, 40, 60, 90, 120, 180, 250)
 BOOKS = (200_000, 10_000_000)    # dashboard_data.CAPITALS -- the board's own two

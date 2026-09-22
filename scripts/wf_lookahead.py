@@ -73,7 +73,7 @@ question.
 
 Reads:  /data/clean/kitelab/*.parquet (via kitelab.frames), and
         /data/clean/kitelab/dashboard.json for the self-check baseline.
-Writes: output/wf_lookahead_<date>.csv, output/wf_lookahead_<date>.png
+Writes: output/wf_lookahead_<date>.csv, output/figures/wf_lookahead_<date>.png
 
     python3 -m scripts.wf_lookahead --symbols 60   # timed pilot, no self-check
     python3 -m scripts.wf_lookahead                # full universe
@@ -99,6 +99,8 @@ from kitelab.config import CLEAN
 from scripts import dashboard_data as dd
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+FIG.mkdir(parents=True, exist_ok=True)
 
 # The board cell arm A must reproduce. Read off the built grid, not constructed:
 # the key format is dashboard_data's business, not this script's.
@@ -260,7 +262,7 @@ def figure(rows: list[dict], stamp: str) -> Path:
     ax.legend(fontsize=8)
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    path = OUT / f"wf_lookahead_{stamp}.png"
+    path = FIG / f"wf_lookahead_{stamp}.png"
     fig.savefig(path, dpi=140)
     plt.close(fig)
     return path

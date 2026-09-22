@@ -54,8 +54,8 @@ regime-bound (see NEXT_TESTS item 15: eight of nine shortfalls shrank after
 
 Reads:  /data/clean/kitelab/signal_cache/<stem>_all.pkl (finished trades, all
         19 rules), /data/clean/kitelab/dashboard.json (for the self-check).
-Writes: output/measurements/pbo_<date>.csv, output/pbo_<date>.json,
-        output/pbo_<date>.png. Rebuilds nothing, edits no stamped module.
+Writes: output/measurements/pbo_<date>.csv, output/measurements/pbo_<date>.json,
+        output/figures/pbo_<date>.png. Rebuilds nothing, edits no stamped module.
 """
 from __future__ import annotations
 
@@ -81,6 +81,10 @@ import scripts.wf_attach as wa
 from scripts.wf_daily import MIN_DAYS
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 CACHE = CLEAN / "signal_cache"
 
 # Blocks, and the split count they imply. S must be even. 16 is the value the
@@ -371,7 +375,7 @@ def picture(rows_excess, rows_raw, stamp):
     fig.suptitle(f"Probability of backtest overfitting, {S_BLOCKS} blocks, "
                  f"all {len(LABELS)} rules as trials")
     fig.tight_layout()
-    p = OUT / f"pbo_{stamp}.png"
+    p = FIG / f"pbo_{stamp}.png"
     fig.savefig(p, dpi=110)
     plt.close(fig)
     print(f"  wrote {p.relative_to(OUT.parent)}")
@@ -445,7 +449,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     full = pd.concat([d for d in (d_x, d_r) if not d.empty], ignore_index=True)
     full.to_csv(out, index=False)
-    (OUT / f"pbo_{stamp}.json").write_text(json.dumps({
+    (MEAS / f"pbo_{stamp}.json").write_text(json.dumps({
         "built": payload["built"], "board_key": board, "blocks": S_BLOCKS,
         "priority": PRIORITY, "n_trials": len(store),
         "median_pbo_excess": None if d_x.empty else float(d_x["pbo"].median()),

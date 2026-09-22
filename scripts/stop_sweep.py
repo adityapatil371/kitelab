@@ -49,8 +49,8 @@ trades field for field on the `own` stop before anything else runs, and the
 
 Reads:  the signal caches (for the self-check only), the cleaned parquet,
         /data/clean/kitelab/dashboard.json, output/wf_attach_hold_<board>.pkl
-Writes: output/stop_sweep_ckpt_<board>/*.pkl, output/stop_sweep_<date>.json,
-        output/measurements/stop_sweep_<date>.csv, output/stop_sweep_curve.png
+Writes: output/stop_sweep_ckpt_<board>/*.pkl, output/measurements/stop_sweep_<date>.json,
+        output/measurements/stop_sweep_<date>.csv, output/figures/stop_sweep_curve.png
 """
 from __future__ import annotations
 
@@ -75,6 +75,8 @@ import scripts.wf_attach as wa
 from scripts.wf_pine import hold_cagrs, load_board, universes
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+MEAS.mkdir(parents=True, exist_ok=True)
 ATR_LEN = 14
 SELFCHECK_SYMBOLS = 40
 
@@ -852,7 +854,7 @@ def main():
 
     print(f"\n  {len(flat):,} cells in {(time.time()-t_start)/60:.1f} min")
     stamp = date.today().isoformat()
-    (OUT / f"stop_sweep_{stamp}.json").write_text(json.dumps(
+    (MEAS / f"stop_sweep_{stamp}.json").write_text(json.dumps(
         {"built": payload["built"], "board": board, "variants": [n for n, _, _ in VARIANTS],
          "years": years, "priorities": prios, "rows": [
              {"rule": l, "trade": t, "account": a} for l, t, a in rows]}, indent=1))

@@ -64,8 +64,8 @@ TWO CAVEATS, STATED RATHER THAN IMPLIED.
 Reads:  the cleaned parquet candles, via kitelab.frames
         <CLEAN>/signal_cache/*_all.pkl          (the board's 20 entry panels)
 Writes: output/measurements/pine_span_<date>.csv
-        output/pine_span_<date>.json
-        output/pine_span_<date>.png
+        output/measurements/pine_span_<date>.json
+        output/figures/pine_span_<date>.png
 """
 from __future__ import annotations
 
@@ -88,6 +88,10 @@ from scripts import wf_pine as P
 from scripts.xrank_account import spread_off
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+FIG.mkdir(parents=True, exist_ok=True)
+MEAS.mkdir(parents=True, exist_ok=True)
 
 # The slate `board_span.py` actually selected on 2026-09-17: ten entry families,
 # maximin on the firing panel, max pairwise phi 0.103. That number is the bar a
@@ -379,7 +383,7 @@ def main():
     fig.colorbar(im, ax=b, fraction=0.045)
     fig.suptitle(f"The Pine on the board's own returns-blind criterion  ({stamp})")
     fig.tight_layout()
-    png = OUT / f"pine_span_{stamp}.png"
+    png = FIG / f"pine_span_{stamp}.png"
     fig.savefig(png, dpi=130)
     plt.close(fig)
     print(f"\n  wrote {png.name}")
@@ -401,7 +405,7 @@ def main():
                                   "pairs": len(same)},
             "panels": flat.to_dict("records"),
             "next_picks": picks, "pine_enters_at_pick": pine_step}
-    jpath = OUT / f"pine_span_{stamp}.json"
+    jpath = MEAS / f"pine_span_{stamp}.json"
     jpath.write_text(json.dumps(blob, indent=2))
     print(f"  wrote {jpath.name}")
     print(f"\n  total {(time.time() - t0) / 60:.1f} min")

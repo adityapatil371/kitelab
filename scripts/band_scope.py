@@ -64,7 +64,7 @@ Reads:  /data/clean/kitelab/signal_cache/<cache>_all.pkl for the 9 registry
         kitelab.frames.daily -- the same cleaned frame the engine trades on.
 Writes: output/measurements/band_scope_<N>strat_<date>.csv  (per rule)
         output/measurements/band_scope_days_<N>strat_<date>.csv  (per band)
-        output/band_scope_<date>.png
+        output/figures/band_scope_<date>.png
 Rebuilds nothing. Edits no stamped module. Run:
 
         PYTHONPATH=/work/kitelab python3 -m scripts.band_scope [--pilot] [--no-pine]
@@ -90,6 +90,8 @@ import scripts.wf_attach as wa
 import scripts.wf_pine as wp
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+FIG = OUT / "figures"              # every PNG
+FIG.mkdir(parents=True, exist_ok=True)
 CACHE = CLEAN / "signal_cache"
 
 # Canonical NSE bands, and the placebo values used as the false-positive
@@ -485,7 +487,7 @@ def main():
     fig.suptitle(f"Board fills against inferred NSE price bands "
                  f"({n_rules} rules, {n:,} fills) — bands INFERRED, not fetched")
     fig.tight_layout()
-    png = OUT / f"band_scope_{stamp}.png"
+    png = FIG / f"band_scope_{stamp}.png"
     fig.savefig(png, dpi=130)
     plt.close(fig)
 

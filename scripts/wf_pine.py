@@ -55,7 +55,7 @@ Reads:  /data/clean/kitelab/dashboard.json      (axes, universe labels, hold key
         the cleaned parquet candles, via kitelab.frames
         output/wf_attach_hold_<board key>.pkl   (hold curves, if already built)
 Writes: output/wf_pine_ckpt_<board key>/*.pkl   (one per variant, resumable)
-        output/wf_pine_<date>.json              (every cell)
+        output/measurements/wf_pine_<date>.json              (every cell)
         output/measurements/wf_pine_<date>.csv  (the same, flat)
 """
 from __future__ import annotations
@@ -84,6 +84,8 @@ from scripts import wf_attach as wa
 from scripts.wf_daily import MIN_DAYS
 
 OUT = Path(__file__).resolve().parent.parent / "output"
+MEAS = OUT / "measurements"        # every finished CSV or JSON result
+MEAS.mkdir(parents=True, exist_ok=True)
 
 # Everything the SIGNAL needs now lives in kitelab/pine.py and is imported
 # above; only the trade-construction settings are still declared here. Keeping
@@ -596,7 +598,7 @@ def main():
             "timeframe": args.tf, "timeframe_label": TIMEFRAMES[args.tf][0],
             "variants": [vkey(s, f, args.tf) for s, f in VARIANTS],
             "summary": summary, "cells": all_cells}
-    jpath = OUT / f"wf_pine_{args.tf}_{stamp}.json"
+    jpath = MEAS / f"wf_pine_{args.tf}_{stamp}.json"
     jpath.write_text(json.dumps(blob, indent=1, default=str))
     flat = pd.DataFrame([
         {k: v for k, v in c.items() if k != "daily"} |

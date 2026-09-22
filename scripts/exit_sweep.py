@@ -29,7 +29,7 @@ handle. Read the SHAPE, not the argmax.
 Reads:  every registered rule's *_all.pkl signal cache and the daily
         parquet candles. The rule count comes from registry.REGISTRY.
 Writes: output/measurements/exit_sweep_<N>strat_<date>.csv
-        output/exit_sweep_curve.png
+        output/figures/exit_sweep_curve.png
 """
 from __future__ import annotations
 
@@ -50,9 +50,11 @@ from scripts.entry_edge import (close_matrix, forward, hold_index,  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, "output")
+FIG = os.path.join(OUT, "figures")       # every PNG
+os.makedirs(FIG, exist_ok=True)
 # Same stamp as entry_edge: the file names the board it describes.
 CSV_PATH = os.path.join(OUT, "measurements", f"exit_sweep_{STAMP}.csv")
-CURVE = os.path.join(OUT, "exit_sweep_curve.png")
+CURVE = os.path.join(FIG, "exit_sweep_curve.png")
 
 HOLDS = (3, 5, 10, 20, 40, 60, 90, 120, 180, 250)
 
