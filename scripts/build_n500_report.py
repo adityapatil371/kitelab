@@ -1,4 +1,4 @@
-"""Build output/nifty500_report.pdf -- what the Nifty 500 is, and what it did.
+"""Build output/reports/nifty500_report.pdf -- what the Nifty 500 is, and what it did.
 
     python3 -m scripts.build_n500_report
 
@@ -8,7 +8,7 @@ Reads   output/measurements/n500_profile_<year>_<date>.json   (the index itself)
         output/measurements/n500_grid_<year>_<date>.csv        (36 rows, 2 arms)
         output/measurements/n500_grid_check_<year>_<date>.json (self-check)
         data/keep/nifty500.json                                (the study universe)
-Writes  output/figures/n500_fig[1-5].png and output/nifty500_report.pdf
+Writes  output/figures/n500_fig[1-5].png and output/reports/nifty500_report.pdf
 
 STRUCTURE, AND WHY IT IS THIS ONE. The first version of this document led with
 membership bias and never described the index at all; the reader's verdict was
@@ -30,7 +30,7 @@ themselves (see Counter), and the prose names none of them, because this
 document has already been reordered once and hand-typed references survived
 the move as lies.
 
-WHO IT IS FOR. The same reader as output/strategy_report.pdf -- an experienced
+WHO IT IS FOR. The same reader as output/reports/strategy_report.pdf -- an experienced
 discretionary trader who does not read statistics. The two documents are meant
 to sit side by side, so the styles, palette and page furniture are deliberately
 the first report's, imported rather than copied.
@@ -61,7 +61,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUTDIR = ROOT / "output"
 MEAS = OUTDIR / "measurements"
 FIGDIR = OUTDIR / "figures"
-PDF = OUTDIR / "nifty500_report.pdf"
+REPORTS = OUTDIR / "reports"       # finished documents; the top level is live state only
+PDF = REPORTS / "nifty500_report.pdf"
 
 YEARS = [2012, 2018, 2022]
 REFERENCE_YEAR = 2018          # the one start year the prose quotes by default
@@ -884,7 +885,7 @@ def check_layout(story):
 
 
 def main():
-    OUTDIR.mkdir(exist_ok=True)
+    REPORTS.mkdir(parents=True, exist_ok=True)
     FIGDIR.mkdir(parents=True, exist_ok=True)
     hold, grid, chk, prof, uni = load_all()
     y = REFERENCE_YEAR

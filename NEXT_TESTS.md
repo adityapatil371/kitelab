@@ -1,5 +1,63 @@
 # START HERE — kitelab open state
 
+> ## 2026-09-22 — READ THIS FIRST, THE REST OF THIS FILE IS 2026-09-11 VINTAGE
+>
+> Everything below the horizontal rule describes the **9-strategy board** and is
+> kept for its reasoning, not its numbers. The live board has been **36 rows
+> (18 entry families x 2 stop widths), built 2026-09-19 13:32 IST**, since well
+> before this session. Treat every count, every cell total and every headline
+> figure below as superseded. The current open state lives in the memory note
+> `kitelab-nifty500-doc-open-state`.
+>
+> **What this session did (2026-09-22, sixth session):**
+>
+> 1. **`output/` is now live-state-only, and the scripts enforce it** — commit
+>    `cabf565`. 335M to 27M, 80 top-level entries to 12. Twenty-four scripts
+>    gained `FIG = OUT / "figures"` and `MEAS = OUT / "measurements"` right
+>    after their `OUT`, and every write site moved. The crowding was a CODE
+>    fault, not housekeeping: every script joined a bare filename onto a flat
+>    `OUT`, so the 2026-09-10 manual tidy was undone by the next run. See
+>    `output/README.md` (gitignored) and the `output/` bullet in `CLAUDE.md`.
+> 2. **Two report builders still wrote to the old flat path** — missed by that
+>    sweep because they name their own `PDF` constant rather than joining onto
+>    `OUT`. `scripts/build_report.py` and `scripts/build_n500_report.py` now
+>    write to `output/reports/`. Docstrings corrected too. pyflakes clean; no
+>    test touches either file.
+> 3. **A Pine script for the `pull` row** — `pine/pullback_uptrend.pine`, new.
+>    Mirrors `kitelab/entries.py` `signal(..., "pull")` + `simulate()` exactly:
+>    rising-edge entry at the signal bar's close, both stop arms behind a
+>    settings toggle, stop tested on CLOSES and BEFORE the 60-session cap,
+>    fixed-capital risk sizing. Daily charts only. The two places it cannot
+>    match the Python (ATR seeding, re-entry on a coincident exit bar) are in
+>    its header. It carries a **diagnostics table** that counts every fresh
+>    signal into exactly one bucket, added after the user hit TradingView's
+>    "this report requires trade data" — which only ever means zero trades.
+>    ONE custom script is the user's whole free-plan budget
+>    (`pine-tradingview-free-plan-limit`), so this replaces whatever is loaded.
+> 4. **Answered: Holy Grail is NOT in the report, and `pull` is.** They were
+>    never compared. Holy Grail was DROPPED 2026-09-11 on its own record —
+>    last of 19, 0 of 300 cells beat hold, luckiest cell of 300 still -3.1 CAGR
+>    points (`kitelab/registry.py:222-230`; `HG_VARIANTS = []` at :231, empty
+>    rather than deleted so one tuple brings it back). `pull` was ADDED
+>    2026-09-17 in commit `0ea45da` by maximin distance on FIRING OVERLAP with
+>    no return read anywhere, because rank-selection measured PBO 0.412 here.
+>    So `pull` was not chosen over Holy Grail; Holy Grail was already gone.
+>
+> **The `pull` row's measured standing** (dashboard 2026-09-19, 276 scenarios
+> per arm, costs on, median excess vs buy-and-hold):
+>
+>     pull|atr3   -1.27 pts/yr   behind hold in 164/276   BEST OF ALL 36 ROWS
+>     pull|own    -7.05 pts/yr   behind hold in 220/276   21st of 36
+>
+> The best row on the board still loses to doing nothing. That is the honest
+> framing for the Pine script and it is in the script's header.
+>
+> **Still open, unchanged:** `poster.png` and `scripts/n500_profile.py` are
+> untracked and await the user's decision — do NOT `git add -A`, it sweeps
+> them in. The teacher has not yet been handed livedesk's `TEACHER_BRIEF.md`.
+>
+> ---
+
 Last updated **2026-09-11, fourth session** (the Pine timeframe ladder). Supersedes the
 2026-09-09 note that memory still points at (that file never existed on disk; this one does).
 

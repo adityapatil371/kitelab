@@ -1,11 +1,11 @@
-"""Build output/strategy_report.pdf -- the full write-up of all 36 board rows.
+"""Build output/reports/strategy_report.pdf -- the full write-up of all 36 board rows.
 
     python3 -m scripts.build_report
 
 Reads   CLEAN/dashboard.json (the 10,800-cell board) and kitelab.registry for
         labels. Nothing is simulated and nothing cached is touched, so this
         cannot trigger a rebuild.
-Writes  output/figures/report_fig[1-4].png and output/strategy_report.pdf.
+Writes  output/figures/report_fig[1-4].png and output/reports/strategy_report.pdf.
 
 WHO IT IS FOR, 2026-09-22: an experienced discretionary trader who does not
 read statistics. So every quantity is defined in words before it is used, every
@@ -45,7 +45,8 @@ from scripts import report_text as text
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUTDIR = ROOT / "output"
 FIGDIR = OUTDIR / "figures"
-PDF = OUTDIR / "strategy_report.pdf"
+REPORTS = OUTDIR / "reports"       # finished documents; the top level is live state only
+PDF = REPORTS / "strategy_report.pdf"
 
 # The one scenario the report quotes when it needs a single concrete cell.
 # Chosen for being the DEFAULTS, not for being the best: all 1,000 stocks, from
@@ -1077,7 +1078,7 @@ def build(story):
 
 
 def main():
-    OUTDIR.mkdir(exist_ok=True)
+    REPORTS.mkdir(parents=True, exist_ok=True)
     FIGDIR.mkdir(parents=True, exist_ok=True)
     d = load()
     diag = d["diagnostics"]

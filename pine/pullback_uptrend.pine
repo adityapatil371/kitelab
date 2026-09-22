@@ -1,0 +1,249 @@
+//@version=5
+// ============================================================================
+// PULLBACK IN AN UPTREND — the board's `pull` row, on a chart.
+//
+// MIRRORS kitelab/entries.py signal(..., entry == "pull") + simulate(), which
+// is row `pull` of the 36-row board and section "Pullback in an uptrend" of
+// output/reports/strategy_report.pdf.
+//
+// THE RULE
+//   ENTRY  buy at the close of the first daily bar where BOTH are true:
+//            close > SMA(close, 200)   the long trend is up, and
+//            close < SMA(close, 20)    the last few weeks are down.
+//          Only on the RISING EDGE — false yesterday, true today. The
+//          condition can stay true for weeks; without the edge the rule would
+//          re-enter every session and pay a spread a day to hold one position.
+//   STOP   one of two, chosen in the settings, because the board trades both:
+//            "own"   the ENTRY BAR'S OWN LOW          (the narrow arm)
+//            "atr3"  close - 3 x ATR(14) at entry     (the wide arm)
+//   EXIT   sell at the close, whichever comes first:
+//            - a close AT OR BELOW the stop, or
+//            - 60 sessions held.
+//          CLASS CONVENTION: the stop is checked at CLOSES only. A wick that
+//          dips below it during the bar does NOT sell. (A broker's resting
+//          stop order would fire intrabar — a different, also valid strategy,
+//          but a manual end-of-bar backtester can only check closes.) The stop
+//          is checked BEFORE the 60-session cap, so a bar that trips both is
+//          charged the worse of the two.
+//   SIZE   risk a % of a FIXED capital per trade: the distance to the stop
+//          decides the share count, capped by what the capital can buy. Fixed,
+//          not compounding, because that is what the lab's sizing.position()
+//          does.
+//   SKIP   if the stop is at or above the entry price there is nothing to risk
+//          and nothing to size against, so the signal is skipped, not filled.
+//
+// WHAT IT MEASURED (dashboard built 2026-09-19, 276 scenarios per arm,
+// costs on). Median return per year against simply buying and holding the
+// same universe:
+//     pull|atr3   -1.27 pts/yr   behind hold in 164 of 276 scenarios
+//     pull|own    -7.05 pts/yr   behind hold in 220 of 276 scenarios
+// `pull|atr3` is the BEST of all 36 rows on the board — and it still loses to
+// buy-and-hold. Nothing here is a recommendation to trade it.
+//
+// TWO PLACES THIS CANNOT MATCH THE PYTHON EXACTLY, both small:
+//   1. ATR seeding. The lab uses pandas ewm(alpha=1/14, adjust=False), seeded
+//      on the first true range; Pine's ta.atr seeds on an average of the first
+//      14. They converge within a few dozen bars, so only the earliest atr3
+//      trades of a symbol's history can differ.
+//   2. Re-entry timing. The lab resumes scanning the bar AFTER an exit; here
+//      pyramiding = 0 blocks an entry while a position is open. Same effect
+//      except on the single bar an exit and a fresh signal coincide.
+//
+// WHERE TO SEE THE RESULTS: the Strategy Tester panel at the bottom.
+// TradingView computes net profit, the equity curve and max drawdown itself,
+// which is what makes this an independent check on the Python. For the lab's
+// GROSS numbers, set commission to 0 in Settings -> Properties.
+//
+// USE IT ON A DAILY CHART. The 200 and 20 were measured on daily bars; on any
+// other timeframe the script takes no trades and says so.
+//
+// IF THE STRATEGY TESTER SAYS "this report requires trade data" it means zero
+// trades were taken. Read the DIAGNOSTICS PANEL in the top right: it counts
+// every fresh signal and sorts it into exactly one bucket, so the row shaded
+// red is the reason. The usual causes, in order of how often they happen:
+//   - the chart is not daily (row 1),
+//   - the symbol has fewer than 200 daily bars loaded, so SMA 200 never
+//     forms and the setup can never be true (rows 2 and 3),
+//   - "capital < 1 share": the stock costs more than the Capital input, so
+//     the size works out to zero. Raise Capital in the settings.
+// Turn the panel off once you are getting trades.
+// ============================================================================
+
+// --- strategy declaration ---------------------------------------------------
+// process_orders_on_close = true is the line that matters most: an order placed
+// on a bar FILLS AT THAT BAR'S CLOSE. The default would fill it at the NEXT
+// bar's open instead, which is a different strategy (the lab calls that
+// NEXT_OPEN_FILLS and leaves it off).
+strategy("Pullback in an Uptrend (kitelab)",
+     overlay              = true,
+     initial_capital      = 200000,
+     pyramiding           = 0,                 // never add to an open position
+     calc_on_every_tick   = false,             // judge completed bars only
+     process_orders_on_close = true,
+     commission_type      = strategy.commission.percent,
+     commission_value     = 0.11)              // flat stand-in for delivery charges
+
+// --- inputs -----------------------------------------------------------------
+// Exposed so anyone can experiment; every default is the tested board value.
+slowInput  = input.int(200, "Slow SMA — the trend filter", minval = 2)
+fastInput  = input.int(20,  "Fast SMA — the dip", minval = 2)
+stopInput  = input.string("atr3", "Stop arm", options = ["own", "atr3"],
+     tooltip = "own = the entry bar's own low (narrow). " +
+       "atr3 = close - 3 x ATR(14) at entry (wide). The board trades both; " +
+       "atr3 is the better of the two and still loses to buy-and-hold.")
+atrLenIn   = input.int(14, "ATR length (atr3 arm only)", minval = 1)
+atrMultIn  = input.float(3.0, "ATR multiple (atr3 arm only)", minval = 0.1, step = 0.5)
+holdInput  = input.int(60, "Max hold, sessions", minval = 1)
+riskInput  = input.float(1.0, "Risk % per trade", minval = 0.1, step = 0.5)
+capInput   = input.float(200000, "Capital the sizing uses", minval = 1000,
+     tooltip = "FIXED, not the running equity — the lab sizes against a " +
+       "constant so a good run cannot inflate later position sizes.")
+
+// --- the two averages -------------------------------------------------------
+// Both SIMPLE, not exponential, and each needs its own full length of history:
+// the lab's rolling(N, min_periods=N) is silent for a stock's first 200
+// sessions rather than guessing, and ta.sma returns na over the same stretch.
+slowMa = ta.sma(close, slowInput)
+fastMa = ta.sma(close, fastInput)
+
+// --- timeframe guard --------------------------------------------------------
+tfOk = timeframe.isdaily
+
+// --- the signal -------------------------------------------------------------
+// `setup` is the rule itself. `cond` is the rule AFTER the timeframe guard.
+// They are kept apart on purpose so the diagnostics panel can tell "the setup
+// never happened" from "the setup happened and the guard blocked it".
+setup = not na(slowMa) and not na(fastMa) and close > slowMa and close < fastMa
+cond  = tfOk and setup
+fresh = cond and not cond[1]          // the RISING EDGE only
+
+// --- the stop this bar would set --------------------------------------------
+atrNow   = ta.atr(atrLenIn)
+stopCand = stopInput == "own" ? low : close - atrMultIn * atrNow
+perShare = close - stopCand           // what one share puts at risk
+
+// --- sizing -----------------------------------------------------------------
+// Whole shares. Two ceilings: the risk budget and what the capital can buy.
+byRisk = perShare > 0 ? math.floor(capInput * riskInput / 100 / perShare) : 0
+byCap  = close > 0 ? math.floor(capInput / close) : 0
+qty    = math.min(byRisk, byCap)
+
+// --- state carried across bars ----------------------------------------------
+var float stopLevel = na
+var int   entryBar  = na
+
+// Every signal ends in exactly one of these buckets, so the counters below
+// always add up to nSignal. A strategy that takes no trades is then never
+// silent about why.
+var int nSetup    = 0   // bars where the rule was true (guard ignored)
+var int nSignal   = 0   // fresh rising edges that passed the guard
+var int nEntry    = 0   // ... that became a trade
+var int nHeld     = 0   // ... skipped: a position was already open
+var int nWarmup   = 0   // ... skipped: inside the ATR warm-up, no stop drawable
+var int nNoRisk   = 0   // ... skipped: stop at or above the entry price
+var int nTooSmall = 0   // ... skipped: the capital could not afford one share
+
+if setup
+    nSetup += 1
+
+// --- entry ------------------------------------------------------------------
+if fresh
+    nSignal += 1
+    if strategy.position_size != 0
+        nHeld += 1
+    else if na(stopCand)
+        nWarmup += 1
+    else if perShare <= 0
+        nNoRisk += 1
+    else if qty < 1
+        nTooSmall += 1
+    else
+        strategy.entry("pull", strategy.long, qty = qty)
+        stopLevel := stopCand
+        entryBar  := bar_index
+        nEntry    += 1
+
+// --- exit -------------------------------------------------------------------
+// From the bar AFTER entry, and the stop is tested FIRST, so a bar that trips
+// both the stop and the hold limit is charged the worse of the two.
+if strategy.position_size > 0 and not na(entryBar) and bar_index > entryBar
+    if close <= stopLevel
+        strategy.close("pull", comment = "stop (close)")
+    else if bar_index - entryBar >= holdInput
+        strategy.close("pull", comment = str.tostring(holdInput) + "-session limit")
+
+// --- what you see -----------------------------------------------------------
+plot(slowMa, "SMA 200", color = color.new(color.blue, 0),   linewidth = 2)
+plot(fastMa, "SMA 20",  color = color.new(color.orange, 0), linewidth = 1)
+plot(strategy.position_size > 0 ? stopLevel : na, "Stop",
+     color = color.new(color.red, 0), style = plot.style_linebr, linewidth = 2)
+
+// The dip inside the rise, shaded: above the slow average, below the fast one.
+bgcolor(cond ? color.new(color.teal, 90) : na, title = "Setup active")
+plotshape(fresh, "Fresh signal", shape.triangleup, location.belowbar,
+     color = color.new(color.teal, 0), size = size.tiny)
+
+// --- diagnostics ------------------------------------------------------------
+// TradingView's Strategy Tester says only "this report requires trade data"
+// when a strategy takes no trades, which is the least useful sentence it could
+// say. This panel names the reason instead. Turn it off once trades appear.
+showDiag = input.bool(true, "Show the diagnostics panel")
+
+var table diag = table.new(position.top_right, 2, 10,
+     border_width = 1, frame_width = 1)
+
+// Built as three parallel lists and drawn in one loop: a Pine function that
+// only calls table.cell returns nothing, and a void-returning helper is a
+// compile error waiting to happen.
+if barstate.islast and showDiag
+    barsHere = bar_index + 1
+    keys  = array.new_string(0)
+    vals  = array.new_string(0)
+    warns = array.new_bool(0)
+
+    array.push(keys, "chart timeframe")
+    array.push(vals, timeframe.period + (tfOk ? "  OK" : "  NOT DAILY"))
+    array.push(warns, not tfOk)
+
+    array.push(keys, "bars on the chart")
+    array.push(vals, str.tostring(barsHere))
+    array.push(warns, barsHere < slowInput)
+
+    array.push(keys, "SMA " + str.tostring(slowInput) + " ready?")
+    array.push(vals, na(slowMa) ? "no" : "yes")
+    array.push(warns, na(slowMa))
+
+    array.push(keys, "days the setup was true")
+    array.push(vals, str.tostring(nSetup))
+    array.push(warns, nSetup == 0)
+
+    array.push(keys, "fresh signals")
+    array.push(vals, str.tostring(nSignal))
+    array.push(warns, nSignal == 0)
+
+    array.push(keys, "  -> became trades")
+    array.push(vals, str.tostring(nEntry))
+    array.push(warns, nEntry == 0)
+
+    array.push(keys, "  -> already in a trade")
+    array.push(vals, str.tostring(nHeld))
+    array.push(warns, false)
+
+    array.push(keys, "  -> ATR warm-up")
+    array.push(vals, str.tostring(nWarmup))
+    array.push(warns, false)
+
+    array.push(keys, "  -> stop above entry")
+    array.push(vals, str.tostring(nNoRisk))
+    array.push(warns, false)
+
+    array.push(keys, "  -> capital < 1 share")
+    array.push(vals, str.tostring(nTooSmall))
+    array.push(warns, nTooSmall > 0)
+
+    for i = 0 to array.size(keys) - 1
+        bg = array.get(warns, i) ? color.new(color.red, 20) : color.new(color.gray, 25)
+        table.cell(diag, 0, i, array.get(keys, i), text_color = color.white,
+             text_halign = text.align_left,  text_size = size.small, bgcolor = bg)
+        table.cell(diag, 1, i, array.get(vals, i), text_color = color.white,
+             text_halign = text.align_right, text_size = size.small, bgcolor = bg)
