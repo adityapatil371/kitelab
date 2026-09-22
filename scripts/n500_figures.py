@@ -92,7 +92,12 @@ def fig_rule_dumbbell(rows, hold_today, hold_pit, path):
     dots for one rule, and a reader should read it without doing arithmetic.
     """
     rows = sorted(rows, key=lambda r: r["premium"])
-    fig, ax = plt.subplots(figsize=(7.2, 7.4))
+    # 4.9in, not the 7.4 it was drawn at until 2026-09-22: at 150mm wide in
+    # the report that was 153mm tall, taller than the space left on its page
+    # once the prose was cut, so it took a whole page and left a third of the
+    # one before it blank. The width, and so the label size, is unchanged;
+    # only the row pitch tightens, to ~11pt for a 7.4pt label.
+    fig, ax = plt.subplots(figsize=(7.2, 4.9))
     _frame(ax, xlabel="annual return, %")
     for i, r in enumerate(rows):
         a, b = r["pit_cagr"], r["today_cagr"]
@@ -150,4 +155,173 @@ def fig_overlap(overlap, n_today, path):
     ax.set_yticklabels([f"in {y}" for y in years], color=INK2, fontsize=8.5)
     ax.set_xlim(0, n_today)
     ax.invert_yaxis()
+    _save(fig, path)
+
+
+# ----------------------------------------------- the analysis figures ------
+# Added 2026-09-22. The three above answer "what does the membership list do
+# to a backtest". These four answer "what is this index, and what did it do",
+# which is a different question and the one a trader actually asked.
+
+def fig_dispersion(cagr, portfolio, tri, median, path, lo=-40, hi=70):
+    """Every member's own CAGR, with the portfolio and the index on top of it.
+
+    A histogram rather than a box plot: the shape is the point. The
+    distribution is right-skewed, which is exactly why the equal-weight
+    portfolio lands well above the typical member -- and a reader should see
+    the long right tail doing that lifting rather than be told about it.
+
+    The tail runs past 260%/yr, which would flatten everything else, so names
+    outside [lo, hi] are drawn as their OWN bars past a visible gap rather
+    than clipped into the end bins. Clipping was the first version and it
+    lied: it made a pile-up look like a real cluster of companies at exactly
+    70%/yr.
+    """
+    import numpy as np
+    cagr = np.asarray(cagr, dtype=float)
+    bins = np.linspace(lo, hi, 45)
+    step = bins[1] - bins[0]
+    under = int((cagr < lo).sum())
+    over = int((cagr > hi).sum())
+    inside = cagr[(cagr >= lo) & (cagr <= hi)]
+
+    fig, ax = plt.subplots(figsize=(7.2, 3.4))
+    _frame(ax, xlabel="each company's own annual return since the start, %",
+           ylabel="companies")
+    ax.hist(inside, bins=bins, color=GRID, edgecolor=SURFACE, linewidth=0.6,
+            zorder=3)
+    for n, x in ((under, lo - 2.4 * step), (over, hi + 2.4 * step)):
+        if n:
+            ax.bar(x, n, width=step, color=INK2, alpha=0.45, zorder=3)
+    top = ax.get_ylim()[1]
+    ax.axvspan(lo - 3.2 * step, 0, color=NEG, alpha=0.05, zorder=1)
+    ax.text(lo - 3.0 * step, top * 0.94,
+            f"{int((cagr < 0).sum())} of {len(cagr)} lost money",
+            fontsize=8, color=NEG, va="top")
+    if over:
+        ax.annotate(f"{over} ran away,\nthe best at {cagr.max():.0f}%/yr",
+                    xy=(hi + 2.4 * step, over), xytext=(hi - 9 * step,
+                                                        top * 0.62),
+                    fontsize=7.8, color=INK2, ha="right",
+                    arrowprops=dict(arrowstyle="-", color=INK2, lw=0.8))
+    if under:
+        ax.text(lo - 2.4 * step, under + top * 0.03, f"{under}",
+                fontsize=7.4, color=INK2, ha="center")
+    for x, c, ls in ((median, INK, "-"), (tri, TRI_C, "--"),
+                     (portfolio, TODAY_C, "-")):
+        ax.axvline(x, color=c, lw=1.8, ls=ls, zorder=5)
+    handles = [plt.Line2D([], [], color=INK, lw=1.8,
+                          label=f"the middle company, {median:.1f}%/yr"),
+               plt.Line2D([], [], color=TODAY_C, lw=1.8,
+                          label=f"holding all of them, {portfolio:.1f}%/yr"),
+               plt.Line2D([], [], color=TRI_C, lw=1.8, ls="--",
+                          label=f"the real Nifty 500, {tri:.1f}%/yr")]
+    ax.legend(handles=handles, frameon=False, fontsize=8, ncol=3,
+              loc="upper center", bbox_to_anchor=(0.5, -0.20), labelcolor=INK2)
+    ax.set_xlim(lo - 3.8 * step, hi + 3.8 * step)
+    # A thin break mark either side, so the two outlier bars are visibly off
+    # the scale rather than looking like the next bin along.
+    for x in (lo - 1.1 * step, hi + 1.1 * step):
+        ax.axvline(x, color=GRID, lw=0.9, ls=(0, (2, 2)), zorder=2)
+    # The end tick is dropped: "-40" and "below -40" printed on top of each
+    # other in the first version.
+    ticks = [t for t in range(int(lo) + 20, int(hi) + 1, 20)]
+    ax.set_xticks(ticks + [lo - 2.4 * step, hi + 2.4 * step])
+    ax.set_xticklabels([str(t) for t in ticks]
+                       + [f"below\n{lo:.0f}", f"above\n{hi:.0f}"])
+    ax.grid(axis="y", color=GRID, lw=0.6, zorder=0)
+    ax.set_axisbelow(True)
+    _save(fig, path)
+
+
+def fig_drawdown(dd, index_dd, path):
+    """How far each member fell from its own peak, with the index for scale.
+
+    The whole finding is that the index line and the lines inside it are not
+    the same kind of object, so both go on one axis.
+    """
+    import numpy as np
+    dd = np.asarray(dd, dtype=float)
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    _frame(ax, xlabel="deepest fall from the company's own peak, %",
+           ylabel="companies")
+    ax.hist(dd, bins=np.linspace(-100, 0, 41), color=GRID, edgecolor=SURFACE,
+            linewidth=0.6, zorder=3)
+    med = float(np.median(dd))
+    ax.axvline(med, color=NEG, lw=1.8, zorder=5)
+    ax.axvline(index_dd, color=TRI_C, lw=1.8, zorder=5)
+    handles = [plt.Line2D([], [], color=NEG, lw=1.8,
+                          label=f"median company, {med:.0f}%"),
+               plt.Line2D([], [], color=TRI_C, lw=1.8,
+                          label=f"the index itself, {index_dd:.0f}%")]
+    ax.legend(handles=handles, frameon=False, fontsize=8, ncol=2,
+              loc="upper center", bbox_to_anchor=(0.5, -0.22), labelcolor=INK2)
+    ax.grid(axis="y", color=GRID, lw=0.6, zorder=0)
+    ax.set_axisbelow(True)
+    _save(fig, path)
+
+
+def fig_concentration(shares, path):
+    """Cumulative share of the trading, against how many names it takes.
+
+    `shares` is one share per name, largest first, summing to 1. The straight
+    line is what the curve would look like if every name traded alike; the
+    distance between them IS the concentration.
+    """
+    import numpy as np
+    shares = np.asarray(shares, dtype=float)
+    cum = 100 * np.cumsum(shares)
+    n = len(shares)
+    xs = np.arange(1, n + 1)
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    _frame(ax, xlabel="number of companies, busiest first",
+           ylabel="share of all trading, %")
+    ax.plot(xs, 100 * xs / n, color=GRID, lw=1.4, ls="--", zorder=2,
+            label="if every company traded alike")
+    ax.plot(xs, cum, color=TODAY_C, lw=2.0, zorder=4,
+            label="what actually happens")
+    half = int(np.searchsorted(cum, 50) + 1)
+    ax.plot([half, half], [0, 50], color=INK2, lw=0.8, ls=":", zorder=3)
+    ax.plot([0, half], [50, 50], color=INK2, lw=0.8, ls=":", zorder=3)
+    ax.plot([half], [50], "o", color=INK, markersize=4.5, zorder=6)
+    ax.annotate(f"{half} companies are half the trading",
+                xy=(half, 50), xytext=(half + n * 0.06, 38),
+                fontsize=8.2, color=INK,
+                arrowprops=dict(arrowstyle="-", color=INK2, lw=0.8))
+    ax.set_xlim(0, n)
+    ax.set_ylim(0, 100)
+    ax.legend(frameon=False, fontsize=8, loc="lower right", labelcolor=INK2)
+    ax.grid(color=GRID, lw=0.6, zorder=0)
+    ax.set_axisbelow(True)
+    _save(fig, path)
+
+
+def fig_sectors(sectors, portfolio, path):
+    """Median company return by NSE industry, worst at the bottom.
+
+    `sectors` is the already-filtered list of dicts from the profile JSON.
+    Bars are coloured against the equal-weight portfolio, because "did this
+    sector keep up with simply holding everything" is the comparison a reader
+    makes anyway.
+    """
+    rows = sorted(sectors, key=lambda r: r["median_cagr"])
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    _frame(ax, xlabel="median company's annual return, %")
+    ys = range(len(rows))
+    ax.barh(list(ys), [r["median_cagr"] for r in rows], height=0.62,
+            color=[TODAY_C if r["median_cagr"] >= portfolio else GRID
+                   for r in rows], zorder=3)
+    ax.axvline(portfolio, color=INK2, lw=1.2, ls=":", zorder=5)
+    ax.text(portfolio, len(rows) - 0.3,
+            f"  holding everything, {portfolio:.1f}%", fontsize=7.8,
+            color=INK2, va="center")
+    for i, r in enumerate(rows):
+        ax.text(r["median_cagr"] + 0.4, i, f"{r['median_cagr']:.1f}",
+                va="center", fontsize=7.4, color=INK)
+    ax.set_yticks(list(ys))
+    ax.set_yticklabels([f"{r['industry']}  ({r['n']})" for r in rows],
+                       fontsize=7.8, color=INK2)
+    ax.set_xlim(0, max(r["median_cagr"] for r in rows) * 1.18)
+    ax.grid(axis="x", color=GRID, lw=0.6, zorder=0)
+    ax.set_axisbelow(True)
     _save(fig, path)

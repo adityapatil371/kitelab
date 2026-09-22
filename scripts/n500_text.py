@@ -3,11 +3,28 @@
 Same split, and the same reason, as scripts/report_text.py: the document is
 mostly words, and mixing them into the layout code buries the layout code.
 
-WHO IT IS FOR. The same reader as the first report -- an experienced
-discretionary trader who does not read statistics. So: every term is defined in
-words the first time it is used, the argument is carried by the prose rather
-than by the reader's ability to interpret a significance test, and every claim
-that rests on a measurement says which measurement.
+WHAT THIS FILE IS ALLOWED TO CONTAIN (set 2026-09-22, after two rounds of the
+reader cutting it back). The reader is the user's teacher. The verdict on the
+previous version was "literally half the doc is still explanation of what the
+Nifty 500 is, not what the analysis on it says". So every definition is gone --
+index, CAGR, total return, drawdown, look-ahead bias -- and so is every
+paragraph that set up a result before giving it.
+
+What is left is one of three things, and nothing else:
+  a FINDING     a sentence that is false unless a measurement says otherwise;
+  an IMPLICATION  what the finding costs someone reading a backtest;
+  a LIMIT       what the measurement cannot support.
+The numbers themselves live in the tables, the figures and their captions,
+which the builder writes -- not here.
+
+Test before adding a sentence: could it be said about any index anywhere? Then
+it is description, and it does not go in.
+
+The section order was set the same day, after the earlier verdict that the
+document read as a critique of the index rather than an analysis of it: what
+the index is made of, what it and its members did, how far they fell, where
+the returns came from, and only then the membership-bias correction that says
+how much of the four to believe.
 
 NO NUMBER IS WRITTEN HERE. Every figure in the finished document is read out of
 the measurement files at build time and formatted by the builder. A number
@@ -23,269 +40,222 @@ so editing either costs nothing and cannot trigger a rebuild.
 from __future__ import annotations
 
 TITLE = "The Nifty 500, Measured"
-SUBTITLE = ("What an index list does to a backtest -- and what it did to ours")
+SUBTITLE = "What the index is made of, what it did, and what it cost to hold"
 
 # --------------------------------------------------------------- opening ---
 WHY_THIS_EXISTS = (
-    "The first report measured eighteen trading rules on a thousand NSE "
-    "stocks that were chosen for being liquid. It did not test them on an "
-    "index, because the board does not trade one. The obvious next question "
-    "is the one you asked: what happens on the Nifty 500, the list most "
-    "people actually mean when they say &lsquo;the market&rsquo;?"
+    "Five measurements on the NSE constituent file: how lopsided the list is, "
+    "how far its members&rsquo; returns are spread, how far they fell, which "
+    "industries paid, and how much of all four is an artefact of using "
+    "today&rsquo;s membership."
 )
 
-WHAT_AN_INDEX_IS = (
-    "The Nifty 500 is a list. NSE publishes it, and it names the five hundred "
-    "companies the exchange currently counts as the investable part of the "
-    "market. Two things about that list matter more than anything else in "
-    "this document, and neither is a statistical point -- they are facts "
-    "about how the list is made."
+# -------------------------------------------- 1. what the index actually is -
+COMPOSITION_LEAD = (
+    "The list is far more concentrated than five hundred names suggests, on "
+    "both counts that matter: which industries it holds, and where the money "
+    "in it actually trades."
 )
 
-FACT_REBALANCE = (
-    "<b>The list changes twice a year.</b> NSE reviews it every March and "
-    "every September and swaps names in and out. A company joins because it "
-    "has grown large enough and traded heavily enough to qualify, and it "
-    "leaves because it has shrunk. The list you can download today is "
-    "today&rsquo;s list. It is not the list that existed in 2018, and nobody "
-    "in 2018 could have known what it would become."
+CONCENTRATION_READ = (
+    "That lopsidedness is an execution problem, not an arithmetic one. An "
+    "equal-weight study of this index puts the same rupees into the quietest "
+    "name as into the busiest, and the quiet end is where filling at the "
+    "screen price is least realistic."
 )
 
-FACT_WEIGHT = (
-    "<b>The index is not an equal bet on five hundred companies.</b> The real "
-    "Nifty 500 is weighted by market value: the largest companies carry most "
-    "of it and the smallest carry almost none. Holding an equal rupee amount "
-    "in each of five hundred names is a different portfolio with a different "
-    "return, and the difference is large enough to matter. Both numbers "
-    "appear below, labelled, because quoting one while meaning the other is "
-    "the most common way a backtest overstates itself."
+CONCENTRATION_WHAT_IT_IS_NOT = (
+    "<b>Trading activity, not index weight.</b> There is no market-value "
+    "series on disk, so this cannot state what fraction of the index a name "
+    "carries -- only how much money moved through it per day."
 )
 
-# ------------------------------------------------------------ the method ---
+# ------------------------------------------- 2. the index vs its members ----
+DISPERSION_LEAD = (
+    "Three numbers have an equal claim to being &lsquo;what the Nifty 500 "
+    "did&rsquo;, and they are far apart. Only the index is what a fund paid; "
+    "only the median member is what picking a name at random felt like."
+)
+
+DISPERSION_WHY = (
+    "The basket beating its own median member is structural. Losses stop at "
+    "the money put in and gains do not, so the distribution leans hard right; "
+    "an equal-weight basket collects the whole right tail while each loss is "
+    "capped. The effect grows with the spread, and the spread here is wide."
+)
+
+DISPERSION_READ = (
+    "So the basket did not beat the typical company by being selective -- it "
+    "beat it by holding all of them, including the few that ran away. Any "
+    "rule that narrows the list gives up part of that tail and has to earn it "
+    "back before it has done anything."
+)
+
+OWN_HISTORY_CAVEAT = (
+    "Each company&rsquo;s return is measured over the part of the window it "
+    "actually traded in, so the spread mixes full-window rates with rates "
+    "from names that listed late. The basket figure is unaffected: it is the "
+    "board&rsquo;s own "
+    "benchmark, reproduced here to the fourth decimal before anything else is "
+    "computed."
+)
+
+# ------------------------------------------------- 3. the drawdown ---------
+PAIN_LEAD = (
+    "The fall the index took and the fall its typical member took are not the "
+    "same number, and they are not close."
+)
+
+PAIN_READ = (
+    "Five hundred companies do not fall together, so their individual "
+    "collapses cancel inside the index and never appear in its chart. The "
+    "index is not a smoothed version of its members; it is a different "
+    "experience."
+)
+
+PAIN_STAKES = (
+    "That decides how to read any backtest run on this list. A rule tested "
+    "across the whole list reports the portfolio&rsquo;s drawdown, the "
+    "shallow one; what a real person has to sit through is the drawdown on "
+    "the few positions actually held."
+)
+
+# ------------------------------------------------- 4. sectors --------------
+SECTOR_LEAD = (
+    "The spread is not evenly distributed across the list. Part of it is "
+    "industry, and the heaviest industry is not the one that paid."
+)
+
+SECTOR_LIMITS = (
+    "A sector median is not a sector index: it weights a tiny constituent "
+    "like a giant one, on purpose, so it describes the typical company rather "
+    "than the industry&rsquo;s market value."
+)
+
+# ---------------------------------- 5. how to read every number above ------
+READING_LEAD = (
+    "Every number above was measured on the list NSE publishes today, and "
+    "that carries a correction big enough to change how each of them reads."
+)
+
 THE_TWO_LISTS = (
-    "Everything here rests on running the same thing twice on two different "
-    "lists, and reading the gap. The first list is today&rsquo;s five hundred "
-    "constituents, downloaded from NSE. The second is a list built the way a "
-    "trader in the start year would have had to build one: rank every stock "
-    "by how much money actually changed hands in it per day, using only "
-    "sessions dated BEFORE the start year, and take the top five hundred. No "
-    "bar dated after the start is allowed to influence which names are "
-    "chosen. This is called a point-in-time list, and the phrase means "
-    "exactly what it says -- built from what was knowable at that point in "
-    "time."
-)
-
-WHAT_LOOKAHEAD_IS = (
-    "The gap between the two has a name. A backtest that uses today&rsquo;s "
-    "index membership to decide what to buy in 2018 is using information from "
-    "the future: it is buying the companies that would go on to earn their "
-    "place, because they went up. That is look-ahead bias, and the particular "
-    "version of it that comes from an index list is called membership bias. "
-    "It is not a rounding error and it is not a caveat. It is a number, and "
-    "this document&rsquo;s job is to put a size on it."
-)
-
-WHAT_CAGR_IS = (
-    "Every return quoted here is a compound annual growth rate: the single "
-    "steady yearly rate that would have taken the starting money to the "
-    "finishing money over the same span. Two returns are comparable only when "
-    "they cover the same dates, so the tables are grouped by start year and "
-    "never across them. A &lsquo;point&rsquo; means one percentage point of "
-    "that rate -- the difference between 14 per cent a year and 18 per cent "
-    "a year is four points, and over eight years four points is a great deal "
-    "of money."
-)
-
-# ------------------------------------------------------------- finding 1 ---
-FINDING_ONE_LEAD = (
-    "Buying and holding today&rsquo;s Nifty 500 list, in equal amounts, from "
-    "each of three start years, against the same thing on a list that could "
-    "have been built in that year. The second column is achievable. The first "
-    "is not, and the gap between them is the size of the illusion."
-)
-
-FINDING_ONE_READ = (
-    "The gap is positive at every start year. It is not an artefact of one "
-    "period, one market cycle or one choice of start date. And the mechanism "
-    "is visible in a single count: only a little over half of today&rsquo;s "
-    "list was in the top five hundred by traded value in 2018. Nearly half "
-    "the names in a backtest run on today&rsquo;s list are names a trader "
-    "that year had no reason to be looking at."
+    "NSE re-cuts the list twice a year, and a company joins it by having "
+    "grown; the bias that creates is measurable rather than arguable. Run the "
+    "same buy-and-hold on two lists: today&rsquo;s constituents, and one "
+    "built as a trader in the start year would have had to -- every stock "
+    "ranked by daily traded value using only sessions dated BEFORE the start "
+    "year, top five hundred taken. The gap between them is membership bias."
 )
 
 NOT_THE_IPOS = (
-    "The obvious explanation is wrong, and it is worth saying so plainly "
-    "because it is the explanation most people reach for. A large number of "
-    "today&rsquo;s constituents had not listed in the start year -- the "
-    "recent flotations everyone can name. You would expect them to be the "
-    "whole story. They are not, and the measurement points the other way. "
-    "Rerunning on only the companies that were ALREADY trading in the start "
-    "year does not lower the result; it raises it, because in this benchmark "
-    "a company that has not listed yet is held as idle cash earning nothing, "
-    "which drags the basket down until it lists."
+    "It is not the recent flotations, which is the first explanation most "
+    "readers reach for. Rerunning on only the companies already trading in "
+    "the start year RAISES it -- this benchmark holds an unlisted "
+    "member as idle cash, so new listings drag the basket down and every gap "
+    "printed here is smaller than it would otherwise be. The bias comes from "
+    "which ESTABLISHED companies are on today&rsquo;s list."
 )
 
-NOT_THE_IPOS_2 = (
-    "So the recent listings are not the source of the bias. They work against "
-    "it, and every gap printed in this document is smaller than it would be "
-    "without them. What is left is the uncomfortable part: the bias comes "
-    "from WHICH ESTABLISHED COMPANIES are on today&rsquo;s list -- the "
-    "survivors of years of twice-yearly promotion and relegation, selected "
-    "after the fact for having done well."
-)
-
-# ------------------------------------------------------------- finding 2 ---
-FINDING_TWO_LEAD = (
-    "The second fact is separate from the first and compounds with it. The "
-    "equal-weight basket in Table 1 is not the Nifty 500. The real index is "
-    "weighted by company size, and its published Total Return Index -- "
-    "&lsquo;total return&rsquo; meaning dividends are counted as reinvested, "
-    "so it is comparable with a portfolio that does the same -- is that "
-    "table&rsquo;s last row."
-)
-
-FINDING_TWO_READ = (
-    "Equal weighting beats the real index at every start year, by a wide "
-    "margin. That is not a free lunch and it should not be read as one. An "
-    "equal-weight basket of five hundred names holds far more of its money in "
-    "small companies than the index does, rebalances constantly to keep it "
-    "that way, and is correspondingly harder to trade and more volatile. The "
-    "point of putting it here is narrower: if a backtest reports an "
-    "equal-weight return and a reader compares it in their head to the index "
-    "they follow, the comparison is wrong before the strategy is even "
-    "considered."
-)
-
-# ------------------------------------------------------------- finding 3 ---
-FINDING_THREE_LEAD = (
-    "So much for holding. The question that matters for a trader is whether "
-    "any of this survives contact with an actual rule. A rule does not own "
-    "the whole list -- it buys a name only when its own condition fires, and "
-    "sells days later. It is entirely reasonable to expect the bias to wash "
-    "out, or at least thin out, once the buying becomes selective."
+EQUAL_WEIGHT_GAP = (
+    "The equal-weight basket beating the real index is a second correction, "
+    "and it compounds with the first. It is not a free lunch: equal weight "
+    "holds far more of its money in small companies, rebalances constantly to "
+    "keep it there, and is correspondingly harder to trade."
 )
 
 # The claim stops where the measurement stops. How MANY start years it holds
-# at is counted in build_n500_report.section_finding_three and appended
-# there, because a count written into prose goes stale silently.
-FINDING_THREE_PREDICTION = (
-    "That was the expectation going in, and it was wrong. Running all "
-    "thirty-six board rows on both lists, the bias is not diluted by a "
-    "trading rule. It is concentrated by one."
+# at is counted in build_n500_report.section_reading and appended there,
+# because a count written into prose goes stale silently.
+RULES_PREDICTION = (
+    "A trading rule buys a name when its condition fires and sells days "
+    "later, so the bias might be expected to thin out once the buying becomes "
+    "selective. It does not. It concentrates."
 )
 
-FINDING_THREE_WHY = (
-    "The likely reason is uncomfortable rather than technical. The rules on "
-    "this board are mostly shaped to buy strength -- breakouts, gaps, "
-    "momentum, new highs. The companies that earned their way into "
-    "today&rsquo;s index are, by construction, companies that went up a lot. "
-    "They are therefore exactly the companies that fire those signals. A "
-    "rule that hunts for strength, pointed at a list assembled after the fact "
-    "out of things that turned out to be strong, finds what it was aimed at. "
-    "This explanation is plausible and consistent with the numbers, but it "
-    "has not been separately measured, and it should be read as the reading "
-    "rather than as a finding."
+RULES_WHY = (
+    "These rules are mostly shaped to buy strength, and the companies that "
+    "earned their way into today&rsquo;s index are by construction the ones "
+    "that went up a lot. A strength rule pointed at a list assembled after "
+    "the fact out of things that turned out strong finds what it was aimed "
+    "at. That reading fits the numbers but has not been separately measured."
 )
 
-FINDING_THREE_STAKES = (
-    "The practical consequence is the part worth keeping. Choosing the wrong "
-    "list roughly doubles the number of rules that appear to beat buying and "
-    "holding, and it flips several from losing to winning outright. Table 4 "
-    "has the counts. The rules named in Table 5 are not marginal cases: "
-    "they lose money on a list a trader could have assembled, and make "
-    "money on today&rsquo;s. Nothing about the rule changed. Only the "
-    "list did."
+RULES_STAKES = (
+    "Same rule, same parameters, same dates, same costs: only the list of "
+    "stocks differs, and it roughly doubles the count of rules that appear to "
+    "beat buying and holding."
+)
+
+# ------------------------------------------------------- trusting it -------
+TRUST_ONE = (
+    "Two checks run before any number here is computed, and both have to "
+    "pass or nothing is written. <b>The account check:</b> this study drives "
+    "the first report&rsquo;s "
+    "simulator from outside it, so one cell of the already-built board is "
+    "recomputed from scratch and compared to the recorded version on all five "
+    "of annual return, final balance, worst drawdown, trade count and "
+    "risk-adjusted return, to the digit -- a different cell at each start "
+    "year."
+)
+
+TRUST_TWO = (
+    "<b>The trade check.</b> A hundred-odd Nifty 500 names sit outside the "
+    "board&rsquo;s own thousand, so their trades are built for this study. A "
+    "sample of names that ARE in the board&rsquo;s universe is rebuilt and "
+    "compared field by field: entry and exit date, entry and exit price, "
+    "share count, exit reason, profit."
+)
+
+# ------------------------------------------------------------- the limits --
+LIMIT_SURVIVORSHIP = (
+    "<b>Survivorship.</b> Firms delisted, merged away or failed since the "
+    "start year have no price history on disk, so they are missing from every "
+    "table and from both sides of every comparison, and they are "
+    "disproportionately the losers. Every spread, drawdown and gap above is a "
+    "floor, by an amount this data cannot measure."
+)
+
+LIMIT_CLOSES = (
+    "<b>Closing prices only.</b> An intraday low below the close never enters "
+    "a drawdown, so every fall reported is at or shallower than what happened "
+    "-- on the members and on the index alike."
+)
+
+LIMIT_ONE_INDEX = (
+    "<b>One index, one exchange.</b> The mechanisms are general; the sizes "
+    "are not, and none of them transfers to the Nifty 50 or to a list built "
+    "on a different qualification rule."
+)
+
+LIMIT_NOT_ADVICE = (
+    "<b>Not advice.</b> Every figure describes a fixed past window. No number "
+    "here is a forecast and nothing here is a recommendation."
+)
+
+CLOSING = (
+    "A small minority of the Nifty 500 carries most of its trading; its "
+    "typical member returned far less than the index and fell far further; "
+    "and today&rsquo;s membership was chosen partly by knowing how the story "
+    "ended. Any claim about this index that does not say which of those it is "
+    "quoting is not yet a claim about anything."
 )
 
 # ------------------------------------------------------------ the universe -
 UNIVERSE_LEAD = (
     "The study uses the real NSE constituent file, not a proxy and not a "
-    "sample. Four of the five hundred names are not in it, for two reasons "
-    "and no others."
+    "sample. Names are absent for two reasons and no others."
 )
 
 UNIVERSE_RULE = (
-    "A short price history is NOT a reason to drop a name here, and that is a "
-    "deliberate departure from the board&rsquo;s own universe rules. A "
-    "company that listed in 2024 contributes almost nothing to a backtest "
-    "that starts in 2018, but it is not bad data, and excluding it would "
-    "quietly delete the very cohort the first finding is about. Everything "
-    "with a usable price file is in, however short."
+    "A short price history is NOT one of them, which is a deliberate "
+    "departure from the board&rsquo;s own universe rules: excluding recent "
+    "listings would quietly delete the very cohort the membership finding is "
+    "about."
 )
 
 UNIVERSE_TOO_NEW = (
-    "A separate and smaller thing: the buy-and-hold benchmark will not admit "
-    "a member with fewer than a year of trading days inside the span, because "
-    "a basket weight computed from a handful of bars is noise. Those names "
-    "are named below rather than quietly dropped. They are in the study "
-    "universe; they are simply absent from the hold column."
-)
-
-# ------------------------------------------------------- trusting it -------
-TRUST_LEAD = (
-    "Two checks run before any number in this document is computed, and both "
-    "have to pass or nothing is written at all. They are worth a paragraph "
-    "each, because they are the reason these figures are worth more than an "
-    "assertion."
-)
-
-TRUST_ONE = (
-    "<b>The account check.</b> The machinery here is the same simulator the "
-    "first report used, driven from outside it. That is only worth anything "
-    "if it produces the same answers. So before each run, one cell of the "
-    "already-built board is recomputed from scratch and compared to what the "
-    "board recorded -- annual return, final balance, worst drawdown, number "
-    "of trades and risk-adjusted return, all five, to the digit. It is a "
-    "different cell at each start year, so agreement is not one lucky match. "
-    "If any digit disagrees, the run stops and prints why."
-)
-
-TRUST_TWO = (
-    "<b>The trade check.</b> A little over a hundred of the Nifty 500 names "
-    "are outside the board&rsquo;s own thousand, so their trades have never "
-    "been computed and are built for this study. That is only legitimate if a "
-    "trade built today is identical to one the board built a fortnight ago. "
-    "So a sample of names that ARE in the board&rsquo;s universe is rebuilt "
-    "and compared to the stored version field by field: entry date, exit "
-    "date, entry price, exit price, share count, exit reason and profit. Any "
-    "mismatch stops the run."
-)
-
-# ------------------------------------------------------------- the limits --
-LIMIT_SURVIVORSHIP = (
-    "<b>Every gap in this document is a floor, not an estimate.</b> Both "
-    "lists are drawn from companies whose price history still exists today. "
-    "Companies that were delisted, merged away or failed between the start "
-    "year and now are missing from BOTH sides of every comparison. Those are "
-    "disproportionately the losers. Their absence flatters the achievable "
-    "column as much as the unachievable one, which means the true size of the "
-    "bias is larger than the number printed here -- by an amount this study "
-    "cannot measure, because the data to measure it was never collected. "
-    "This is called survivorship bias, and it is the largest known "
-    "limitation of everything in both reports."
-)
-
-LIMIT_ONE_INDEX = (
-    "<b>One index, one exchange, one country.</b> Nothing here says how large "
-    "the same effect is in the Nifty 50, in a US index, or in a list built on "
-    "a different qualification rule. The mechanism -- periodic promotion of "
-    "things that went up -- is general. The size measured here is not."
-)
-
-LIMIT_NOT_ADVICE = (
-    "<b>No number in this document is a forecast, and nothing in it is a "
-    "recommendation to buy or sell anything.</b> Every figure describes what "
-    "already happened in a simulation over a fixed past window. The reason "
-    "for measuring the bias is to know how much of a backtest to believe, not "
-    "to find a list worth trading."
-)
-
-CLOSING = (
-    "The useful takeaway is a habit rather than a number. Whenever a backtest "
-    "is quoted on an index -- anyone&rsquo;s, including this board&rsquo;s -- "
-    "the first question is which list it used and when that list was made. If "
-    "the answer is &lsquo;today&rsquo;s constituents&rsquo;, the measured "
-    "correction is several points a year for holding and more than that for a "
-    "rule, before any other objection is raised. That is usually larger than "
-    "the edge being claimed."
+    "Separately, the buy-and-hold benchmark will not admit a member with "
+    "fewer than a year of trading days inside the span, because a basket "
+    "weight from a handful of bars is noise. Those names are in the study "
+    "universe and absent from every return column."
 )
