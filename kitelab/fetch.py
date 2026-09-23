@@ -35,6 +35,34 @@ MIN_REQUEST_GAP = 0.35
 
 COLUMNS = ["ts", "open", "high", "low", "close", "volume"]
 
+# An empty frame with the RIGHT dtypes. `pd.DataFrame(columns=COLUMNS)` gives
+# every column object dtype, and object `ts` is contagious: concat it with a
+# real chunk and pandas 3 keeps the column as object, so the merge in `rebased`
+# dies with "trying to merge on datetime64[us] and object columns" and the
+# symbol is skipped with its history left stale. Worse, the same blank feeds
+# `combined`, so an object `ts` reaches to_parquet and the fault is now ON DISK
+# and reappears on every later run. Seen on a real backfill 2026-09-23 across
+# dozens of symbols (HAL, IRFC among them).
+_DTYPES = {"ts": "datetime64[ns]", "open": "float64", "high": "float64",
+           "low": "float64", "close": "float64", "volume": "int64"}
+
+
+def blank() -> pd.DataFrame:
+    """An empty candle frame that can be concatenated or merged safely."""
+    return pd.DataFrame({c: pd.Series(dtype=d) for c, d in _DTYPES.items()})
+
+
+def with_ts(frame: pd.DataFrame) -> pd.DataFrame:
+    """The same frame with `ts` guaranteed to be datetimes.
+
+    Belt and braces over `blank()`: a parquet written by an older run already
+    holds an object `ts`, and nothing upstream can fix a file that exists.
+    """
+    if "ts" in frame.columns and not frame.empty:
+        frame = frame.copy()
+        frame["ts"] = pd.to_datetime(frame["ts"])
+    return frame
+
 
 def path_for(symbol: str, interval: str):
     return DATA / f"{symbol}_{interval}.parquet"
@@ -77,7 +105,7 @@ def instrument_tokens(kite, symbols: list[str], exchange: str) -> dict[str, int]
 
 def _to_frame(candles: list[dict]) -> pd.DataFrame:
     if not candles:
-        return pd.DataFrame(columns=COLUMNS)
+        return blank()
     frame = pd.DataFrame(candles)
     frame = frame.rename(columns={"date": "ts"})
     # Kite returns tz-aware IST. Drop the offset so stored timestamps read exactly
@@ -137,8 +165,11 @@ def _pull(kite, token: int, interval: str, ranges: list[tuple],
             chunks.append(_to_frame(candles))
             cursor = chunk_end + timedelta(days=1)
     if not chunks:
-        return pd.DataFrame(columns=COLUMNS), requests
-    return pd.concat(chunks, ignore_index=True), requests
+        return blank(), requests
+    # with_ts, not just blank(): a run that fetched some empty ranges and some
+    # full ones concatenates typed blanks with real data, and one stray object
+    # column anywhere in the list would carry through.
+    return with_ts(pd.concat(chunks, ignore_index=True)), requests
 
 
 def rebased(stored: pd.DataFrame, served: pd.DataFrame) -> str | None:
@@ -150,8 +181,9 @@ def rebased(stored: pd.DataFrame, served: pd.DataFrame) -> str | None:
     """
     if stored.empty or served.empty:
         return None
-    joined = stored[["ts", "close"]].merge(served[["ts", "close"]], on="ts",
-                                          suffixes=("_stored", "_served"))
+    joined = with_ts(stored)[["ts", "close"]].merge(
+        with_ts(served)[["ts", "close"]], on="ts",
+        suffixes=("_stored", "_served"))
     if joined.empty:
         return None
     ratio = joined["close_served"] / joined["close_stored"]
@@ -184,7 +216,7 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
     `now` is injectable for tests; it defaults to the market clock (IST).
     """
     target = path_for(symbol, interval)
-    existing = pd.read_parquet(target) if target.exists() else pd.DataFrame(columns=COLUMNS)
+    existing = with_ts(pd.read_parquet(target)) if target.exists() else blank()
 
     wanted_start = datetime.fromisoformat(start).date()
     to_date = cutoff_date(now)
@@ -216,12 +248,12 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
     why = rebased(existing, fetched)
     if why:
         print(f"{label} {why}; discarding the stored file and fetching it whole")
-        existing = pd.DataFrame(columns=COLUMNS)
+        existing = blank()
         fetched, more = _pull(kite, token, interval, [(wanted_start, to_date)],
                               throttle, continuous)
         requests += more
 
-    combined = pd.concat([existing, fetched], ignore_index=True)
+    combined = with_ts(pd.concat([existing, fetched], ignore_index=True))
     combined = (
         combined.dropna(subset=["ts"])
         .drop_duplicates(subset=["ts"], keep="last")
