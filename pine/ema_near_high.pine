@@ -41,7 +41,7 @@
 // a chart, so everything this rule needs is drawn here and nothing is left to
 // a second study. Add built-in indicators for anything else.
 
-//@version=5
+//@version=6
 strategy("EMA · near the high", overlay = true,
          initial_capital       = 100000,
          pyramiding            = 0,

@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ============================================================================
 // PULLBACK IN AN UPTREND — the board's `pull` row, on a chart.
 //
@@ -13,9 +13,15 @@
 //          Only on the RISING EDGE — false yesterday, true today. The
 //          condition can stay true for weeks; without the edge the rule would
 //          re-enter every session and pay a spread a day to hold one position.
-//   STOP   one of two, chosen in the settings, because the board trades both:
-//            "own"   the ENTRY BAR'S OWN LOW          (the narrow arm)
-//            "atr3"  close - 3 x ATR(14) at entry     (the wide arm)
+//   STOP   close - 3 x ATR(14), measured on the entry bar. ATR ONLY.
+//          The board trades this entry against two stop widths -- the wide
+//          ATR one here, and a narrow one at the entry bar's own low -- and
+//          until 2026-09-23 this script offered both behind a settings
+//          dropdown. The narrow arm was taken out on the user's instruction
+//          ("for pull use atr only"), so that what is on the chart is one
+//          strategy rather than two. The removed arm is not a secret: it is
+//          still `pull|own` on the board, still a sheet in the workbook
+//          below, and still in this file's git history at commit 8217a9d.
 //   EXIT   sell at the close, whichever comes first:
 //            - a close AT OR BELOW the stop, or
 //            - 60 sessions held.
@@ -36,18 +42,59 @@
 // costs on). Median return per year against simply buying and holding the
 // same universe:
 //     pull|atr3   -1.27 pts/yr   behind hold in 164 of 276 scenarios
-//     pull|own    -7.05 pts/yr   behind hold in 220 of 276 scenarios
+//     pull|own    -7.05 pts/yr   behind hold in 220 of 276 scenarios  (removed)
 // `pull|atr3` is the BEST of all 36 rows on the board — and it still loses to
 // buy-and-hold. Nothing here is a recommendation to trade it.
 //
-// TWO PLACES THIS CANNOT MATCH THE PYTHON EXACTLY, both small:
-//   1. ATR seeding. The lab uses pandas ewm(alpha=1/14, adjust=False), seeded
-//      on the first true range; Pine's ta.atr seeds on an average of the first
-//      14. They converge within a few dozen bars, so only the earliest atr3
-//      trades of a symbol's history can differ.
-//   2. Re-entry timing. The lab resumes scanning the bar AFTER an exit; here
+// MAKING THE NUMBERS MATCH THE WORKBOOK
+// The target is the `pull - 3xATR stop` sheet of
+// output/measurements/hg_vs_pull_RELIANCE.xlsx. On NSE:RELIANCE, daily, with
+// the defaults below, the Strategy Tester should read:
+//
+//     Total closed trades     56
+//     Net Profit              Rs 22,364.75      <- the sheet's PROFIT column
+//     first entry             2006-10-26  at 140.00, 121 shares
+//     last entry              2025-12-09  at 1529.40, 14 shares
+//     largest single buy      Rs 26,166.80
+//
+// Four settings are what make that hold, and changing any one breaks it:
+//
+//   1. THE DATE WINDOW. The lab's price file for RELIANCE starts 2006-01-02
+//      and ends 2026-09-02; TradingView carries the stock back to the 1990s
+//      and forward to today. Left alone the chart would take a decade of
+//      trades the workbook never saw. The window inputs below fence the
+//      entries into the lab's range. Bars OUTSIDE it are still loaded and
+//      still feed the averages — which is right, the SMA 200 on 2006-10-26
+//      is built from bars before it.
+//   2. COMMISSION 0 (hard-coded in the declaration; if you want to play with
+//      it, the box is in Settings -> Properties, not in this script's own
+//      Inputs tab). The Strategy Tester then reports the sheet's GROSS
+//      "Profit" column. The sheet's separate "Net Profit" column subtracts
+//      real Zerodha delivery charges (brokerage, STT, stamp, exchange, SEBI,
+//      GST, DP) which came to Rs 2,593.80 here — 0.166% of turnover, and
+//      NOT reproducible by Pine's flat percentage. Match the gross, read the
+//      net off the sheet.
+//   3. CAPITAL 1,00,000 AT 1% RISK. The class account, which is the book the
+//      workbook was written on. The board itself runs this rule at 2,00,000
+//      and 10,00,000, so the Strategy Tester's rupees are not the board's.
+//   4. A DAILY CHART, adjusted for splits and bonuses (TradingView's
+//      default). RELIANCE has had three 1:1 bonuses since 2006; Kite and
+//      TradingView both adjust for them but not always to the same paisa, so
+//      expect the oldest trades to agree in shape and drift a little in
+//      price. Recent years should match exactly.
+//
+// TWO PLACES IT STILL CANNOT MATCH EXACTLY, both small:
+//   1. Re-entry timing. The lab resumes scanning the bar AFTER an exit; here
 //      pyramiding = 0 blocks an entry while a position is open. Same effect
 //      except on the single bar an exit and a fresh signal coincide.
+//   2. A trade still open when the data runs out is DROPPED by the lab and
+//      shown as an open position by the Strategy Tester. Compare closed
+//      trades; TradingView lists any open one separately.
+//
+// (ATR seeding used to be on this list. It is not a real difference here:
+// the lab seeds its Wilder average on the first true range and Pine seeds on
+// the first 14, but the gap decays by 13/14 a bar and the first RELIANCE
+// trade is 200 bars in, by which point the two agree past six decimals.)
 //
 // WHERE TO SEE THE RESULTS: the Strategy Tester panel at the bottom.
 // TradingView computes net profit, the equity curve and max drawdown itself,
@@ -76,28 +123,52 @@
 // NEXT_OPEN_FILLS and leaves it off).
 strategy("Pullback in an Uptrend (kitelab)",
      overlay              = true,
-     initial_capital      = 200000,
+     initial_capital      = 100000,
      pyramiding           = 0,                 // never add to an open position
      calc_on_every_tick   = false,             // judge completed bars only
      process_orders_on_close = true,
      commission_type      = strategy.commission.percent,
-     commission_value     = 0.11)              // flat stand-in for delivery charges
+     // ZERO, so the Strategy Tester reports the workbook's GROSS Profit
+     // column. It is a bare literal and not an input on purpose: strategy()
+     // types this argument `const float`, which an input is not, so
+     // `commission_value = input.float(...)` will not compile. Nothing is
+     // lost -- TradingView puts a commission box in Settings -> Properties,
+     // which is the right place to experiment with it anyway. See MAKING THE
+     // NUMBERS MATCH above for why the lab's charges are not a flat percent.
+     commission_value     = 0.0)
 
 // --- inputs -----------------------------------------------------------------
 // Exposed so anyone can experiment; every default is the tested board value.
 slowInput  = input.int(200, "Slow SMA — the trend filter", minval = 2)
 fastInput  = input.int(20,  "Fast SMA — the dip", minval = 2)
-stopInput  = input.string("atr3", "Stop arm", options = ["own", "atr3"],
-     tooltip = "own = the entry bar's own low (narrow). " +
-       "atr3 = close - 3 x ATR(14) at entry (wide). The board trades both; " +
-       "atr3 is the better of the two and still loses to buy-and-hold.")
-atrLenIn   = input.int(14, "ATR length (atr3 arm only)", minval = 1)
-atrMultIn  = input.float(3.0, "ATR multiple (atr3 arm only)", minval = 0.1, step = 0.5)
+atrLenIn   = input.int(14, "ATR length", minval = 1)
+atrMultIn  = input.float(3.0, "ATR multiple", minval = 0.1, step = 0.5,
+     tooltip = "3 is the board value. ATR — average true range — is the " +
+       "average size of a daily bar, so 3 x ATR is a stop three ordinary " +
+       "days' movement below the close: wide enough that normal noise does " +
+       "not reach it.")
 holdInput  = input.int(60, "Max hold, sessions", minval = 1)
 riskInput  = input.float(1.0, "Risk % per trade", minval = 0.1, step = 0.5)
-capInput   = input.float(200000, "Capital the sizing uses", minval = 1000,
+useWindow  = input.bool(true, "Fence entries into the lab's date range",
+     tooltip = "The lab's RELIANCE file runs 2006-01-02 to 2026-09-02. " +
+       "TradingView has more history than that at both ends, and without " +
+       "this the trade counts cannot agree. Bars outside the window still " +
+       "feed the averages; only ENTRIES are blocked.")
+// PLAIN MILLISECOND LITERALS, not timestamp(). input.time types its default
+// `const int`, and timestamp() is `simple int` in BOTH its overloads -- the
+// numeric one and the string one -- so either spelling fails to compile. A
+// literal is the only const form. The Inputs tab still draws these as a date
+// picker, so nobody has to read the numbers; they are, in IST:
+//     1136140200000  =  2006-01-02 00:00   the first bar of the lab's file
+//     1788373740000  =  2026-09-02 23:59   the last bar of the lab's file
+fromInput  = input.time(1136140200000, "Entries from")
+toInput    = input.time(1788373740000, "Entries until")
+capInput   = input.float(100000, "Capital the sizing uses", minval = 1000,
      tooltip = "FIXED, not the running equity — the lab sizes against a " +
-       "constant so a good run cannot inflate later position sizes.")
+       "constant so a good run cannot inflate later position sizes. " +
+       "1,00,000 at 1% is the class account, the same book as the workbook " +
+       "output/measurements/hg_vs_pull_RELIANCE.xlsx, so the Strategy " +
+       "Tester and that spreadsheet can be read side by side.")
 
 // --- the two averages -------------------------------------------------------
 // Both SIMPLE, not exponential, and each needs its own full length of history:
@@ -109,6 +180,12 @@ fastMa = ta.sma(close, fastInput)
 // --- timeframe guard --------------------------------------------------------
 tfOk = timeframe.isdaily
 
+// --- the date window --------------------------------------------------------
+// ENTRIES only. The averages, the ATR and an already-open position all ignore
+// this, exactly as the lab does: it reads every bar in the file and simply has
+// no bars outside it.
+inWindow = not useWindow or (time >= fromInput and time <= toInput)
+
 // --- the signal -------------------------------------------------------------
 // `setup` is the rule itself. `cond` is the rule AFTER the timeframe guard.
 // They are kept apart on purpose so the diagnostics panel can tell "the setup
@@ -119,7 +196,7 @@ fresh = cond and not cond[1]          // the RISING EDGE only
 
 // --- the stop this bar would set --------------------------------------------
 atrNow   = ta.atr(atrLenIn)
-stopCand = stopInput == "own" ? low : close - atrMultIn * atrNow
+stopCand = close - atrMultIn * atrNow
 perShare = close - stopCand           // what one share puts at risk
 
 // --- sizing -----------------------------------------------------------------
@@ -139,6 +216,7 @@ var int nSetup    = 0   // bars where the rule was true (guard ignored)
 var int nSignal   = 0   // fresh rising edges that passed the guard
 var int nEntry    = 0   // ... that became a trade
 var int nHeld     = 0   // ... skipped: a position was already open
+var int nOutside  = 0   // ... skipped: outside the lab's date window
 var int nWarmup   = 0   // ... skipped: inside the ATR warm-up, no stop drawable
 var int nNoRisk   = 0   // ... skipped: stop at or above the entry price
 var int nTooSmall = 0   // ... skipped: the capital could not afford one share
@@ -149,7 +227,9 @@ if setup
 // --- entry ------------------------------------------------------------------
 if fresh
     nSignal += 1
-    if strategy.position_size != 0
+    if not inWindow
+        nOutside += 1
+    else if strategy.position_size != 0
         nHeld += 1
     else if na(stopCand)
         nWarmup += 1
@@ -189,7 +269,7 @@ plotshape(fresh, "Fresh signal", shape.triangleup, location.belowbar,
 // say. This panel names the reason instead. Turn it off once trades appear.
 showDiag = input.bool(true, "Show the diagnostics panel")
 
-var table diag = table.new(position.top_right, 2, 10,
+var table diag = table.new(position.top_right, 2, 11,
      border_width = 1, frame_width = 1)
 
 // Built as three parallel lists and drawn in one loop: a Pine function that
@@ -224,6 +304,10 @@ if barstate.islast and showDiag
     array.push(keys, "  -> became trades")
     array.push(vals, str.tostring(nEntry))
     array.push(warns, nEntry == 0)
+
+    array.push(keys, "  -> outside the date window")
+    array.push(vals, str.tostring(nOutside))
+    array.push(warns, false)
 
     array.push(keys, "  -> already in a trade")
     array.push(vals, str.tostring(nHeld))

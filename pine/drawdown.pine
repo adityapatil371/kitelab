@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // ============================================================================
 // DRAWDOWN — how far price sits below the highest point it has EVER reached.
 //

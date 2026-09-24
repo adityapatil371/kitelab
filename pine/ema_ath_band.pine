@@ -13,7 +13,7 @@
 // line: flat until a new high is made, then it jumps. That flatness is what
 // makes the band readable -- the zone stays put while price moves through it.
 
-//@version=5
+//@version=6
 // overlay      draw on the candles, not in a pane of its own
 // scale.right   pin to the SAME price scale as the candles. Without it an
 //               overlay can end up on its own axis, and then the lines drift
