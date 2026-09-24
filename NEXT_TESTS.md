@@ -148,6 +148,68 @@ NEXT: nothing, until someone prices borrow. Do not build on this.
 
 ---
 
+## NEXT SESSION — the two jobs, in order
+
+The user set both on 2026-09-24 after the lookahead fix. Do these, not
+something else.
+
+### Job 1 — conditional deployment (NEVER BUILT)
+
+"Find a period where a strategy crushed buy-and-hold, work out what was true
+about that period, and deploy only when those conditions return."
+
+Asked for at least four times across sessions and never tested once — there is
+no regime/conditioning script anywhere in `scripts/`. This is the largest
+untested idea in the project, and its shape is right: the rules are not
+uniformly bad, they are bad AVERAGED over 20 years, and averages hide
+switching.
+
+**The trap, and it is the whole difficulty.** Pick the good years after seeing
+which were good and you measure your own hindsight. This project already
+measured PBO **0.412** on its own selection criterion — worse than a coin flip
+([[kitelab-rank-cut-was-mostly-noise]]). So build it the way the stop test was
+built ([[kitelab-tailored-stops-do-nothing]]):
+- conditions named in ADVANCE and computable from information available at the
+  time (volatility level, breadth, trend of a return index, dispersion) —
+  never from the rules' own returns;
+- fit any threshold on the first half of the calendar only;
+- print a noise-floor quantity the conditioning CANNOT affect, so the size of
+  the table's own wobble is a reading rather than an argument;
+- a condition-matched RANDOM arm: same number of days in the market, same
+  frictions, entries drawn at random within the same regime. Without it, "the
+  regime was good" is indistinguishable from "the rule was good in it".
+
+### Job 2 — change the gate
+
+Stop scoring against buy-and-hold. Score on: **which strategies make the most
+money, reliably, with the least drawdown.**
+
+That is a different objective and it may have different winners — the one
+measure where this board is NOT 0-for-36 is risk-matched
+([[kitelab-matched-risk-wins-live-in-the-short-window]]: 3 of 36 from 2006,
+16 of 36 from 2018). Deciding the metric BEFORE looking is the whole job:
+name the reliability and drawdown terms first, then run once. Candidates to
+choose between up front — CAGR/|maxDD|, Ulcer index, worst rolling 12m, the
+fraction of start-years positive — not all of them, then the best.
+
+Buy-and-hold does not disappear; it becomes one row in the table rather than
+the bar to clear.
+
+---
+
+## DEAD — do not re-open (each cost a session)
+
+- **Cash drag / idle capital.** Board exposure 99.4%, cash 0.0%, 83% of signals
+  rejected for capital. Raised and withdrawn 2026-09-10, falsified again 09-11,
+  raised a THIRD time on 09-24 and corrected by the user. The leak is
+  CONCENTRATION. See [[kitelab-where-the-money-goes-2026-09-10]].
+- **The liquidity screen** — Finding 2b above.
+- **Raschke / Street Smarts** — section 2 above, 0 of 40.
+- **Intraday, leverage, vol targeting, the 101 alphas, trailing stops,
+  tailored stops, shorts.** All measured, all closed.
+
+---
+
 ## Still open from earlier sessions
 - NSE gap-fill base rate for `gap` / `gapdn`.
 - Backfill second pass stalled at 370 of 1,000 stale.
