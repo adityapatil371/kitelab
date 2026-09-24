@@ -26,3 +26,8 @@ data/*
 
 # Class spreadsheets dropped in for reference. Data, not source.
 *.xlsx
+
+# Reference books dropped in for reading. Data, not source -- same rule as the
+# class spreadsheets above. The Raschke PDF alone is 6 MB of copyrighted binary
+# that git can never forget once committed. `git add -f <file>` if you disagree.
+*.pdf
