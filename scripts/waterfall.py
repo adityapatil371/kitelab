@@ -69,7 +69,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kitelab import entries, indicators                                # noqa: E402
 from scripts.wf_intraday import FAMILIES, PANEL, STOPS, close_panel, \
     panel_masks, fires_for                                             # noqa: E402
-from scripts.us_rules import load, us_universe, nse_universe, _exit_from  # noqa: E402
+from scripts.us_rules import load, us_universe, nse_universe, _exit_from, MIN_SESSIONS  # noqa: E402
 
 OUT = Path(__file__).resolve().parents[1] / "output"
 SESSIONS = 252
@@ -90,6 +90,17 @@ def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
     lo = bars["low"].to_numpy(float)
     atr = indicators.atr(bars["high"], bars["low"], bars["close"],
                          entries.ATR_LEN).to_numpy(float)
+    # A stop may be a NUMBER (multiples of ATR, the board's convention) or a
+    # CALLABLE, in which case it is asked for a per-bar stop DISTANCE in price
+    # units and the multiple becomes 1.0. That is the whole hook a tailored
+    # stop needs: `_exit_from` already computes c[i] - mult * atr[i], so a
+    # distance array slotted into `atr` with mult 1.0 is exactly right, and
+    # the exit logic below stays byte-identical between the board's stops and
+    # a tailored one. The callable never sees returns -- only bars.
+    stop_arg = stop_mult          # the UNREWRITTEN stop, for the recursion below
+    if callable(stop_mult):
+        atr = stop_mult(bars, family)
+        stop_mult = 1.0
     total = len(bars)
     out = []
 
@@ -124,7 +135,11 @@ def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
     # against the flat-exit rule arm, the stopped control against the stopped
     # rule arm. Matching both to `rule` gave the flat control 144 trades
     # against the flat rule arm's 128 -- a breadth edge, not a timing test.
-    n = len(trades_for(sym, bars, family, stop_mult, masks, rng,
+    # stop_arg, NOT stop_mult: by here a callable stop has been rewritten to
+    # 1.0, and passing that down would silently give the control a 1x-ATR stop
+    # against a tailored rule arm -- a stop-width difference wearing a timing
+    # test's clothes.
+    n = len(trades_for(sym, bars, family, stop_arg, masks, rng,
                        "nostop" if flat else "rule"))
     if not n:
         return out
@@ -255,7 +270,7 @@ def maxdd_of(r: pd.Series) -> float:
     return float((e / e.cummax() - 1.0).min() * 100.0)
 
 
-def run_universe(tag, syms, fams, capital, t0):
+def run_universe(tag, syms, fams, capital, t0, start=None):
     print(f"\n=== {tag}: loading {len(syms)} symbols ===")
     bars, dropped_bad = {}, []
     for s in syms:
@@ -268,6 +283,14 @@ def run_universe(tag, syms, fams, capital, t0):
         if mv > MAX_DAY:                       # CRUDEOIL and friends
             dropped_bad.append((s, mv * 100))
             continue
+        # Trimmed here, before anything reads the frame, so the rules, the
+        # random controls and buy-and-hold all see the identical history.
+        # Indicators warm up from the new start rather than carrying state
+        # across the cut, which is what an investor starting that year has.
+        if start is not None:
+            b = b[pd.DatetimeIndex(b["ts"]) >= start]
+            if len(b) < MIN_SESSIONS:
+                continue
         bars[s] = b
     for s, mv in dropped_bad:
         print(f"  DROPPED {s}: largest single-day move {mv:,.0f}%")
@@ -375,6 +398,10 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=1e7,
                     help="account size in rupees, for the fill cap only")
     ap.add_argument("--pilot", type=int, default=0, help="use only N symbols")
+    ap.add_argument("--start", default=None,
+                    help="drop every bar before this date (YYYY-MM-DD). The "
+                         "India numbers are shaped by 2008; --start 2010-01-01 "
+                         "asks whether anything here survives without it.")
     ap.add_argument("--capfrac", type=float, default=CAP_FRAC,
                     help="fraction of a bar's traded value one order may take. "
                          "Pass something huge (1e9) to switch the fill cap OFF "
@@ -392,11 +419,14 @@ def main() -> None:
     if args.pilot:
         books = {k: v[:args.pilot] for k, v in books.items()}
 
-    out = pd.concat([run_universe(t, s, args.families, args.capital, t0)
+    start = pd.Timestamp(args.start) if args.start else None
+    out = pd.concat([run_universe(t, s, args.families, args.capital, t0, start)
                      for t, s in books.items()], ignore_index=True)
     stamp = date.today().isoformat()
     if args.capfrac != 0.01:            # never clobber the shipped run
         stamp += f"_capfrac{args.capfrac:g}"
+    if args.start:
+        stamp += f"_from{args.start}"
     csv = OUT / "measurements" / f"waterfall_{stamp}.csv"
     csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(csv, index=False)

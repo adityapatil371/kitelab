@@ -119,6 +119,16 @@ def run_symbol(sym, bars, family, stop_mult, masks, rng):
     lo = bars["low"].to_numpy(float)
     atr = indicators.atr(bars["high"], bars["low"], bars["close"],
                          entries.ATR_LEN).to_numpy(float)
+    # A stop may be a NUMBER (multiples of ATR, the board's convention) or a
+    # CALLABLE, in which case it is asked for a per-bar stop DISTANCE in price
+    # units and the multiple becomes 1.0. That is the whole hook a tailored
+    # stop needs: `_exit_from` already computes c[i] - mult * atr[i], so a
+    # distance array slotted into `atr` with mult 1.0 is exactly right, and
+    # the exit logic below stays byte-identical between the board's stops and
+    # a tailored one. The callable never sees returns -- only bars.
+    if callable(stop_mult):
+        atr = stop_mult(bars, family)
+        stop_mult = 1.0
     total = len(bars)
 
     yrs = pd.DatetimeIndex(bars["ts"]).year.to_numpy()
