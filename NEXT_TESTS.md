@@ -24,30 +24,60 @@ The rule does not pick better entries. It picks entries the board's stop
 damages less. Remove the stop from both sides and the edge is zero.
 Consistent with `kitelab-exit-beats-entry-3to1`.
 
-**Finding 2 — the NSE "beat hold by +16.70" was the fill cap, not the rule.**
-DIAGNOSED AND CLOSED. Two controls settled it:
+**Finding 2 — the NSE "beat hold by +16.70" was a LOOKAHEAD in this script.**
+FOUND AND FIXED 2026-09-24, same day it was written.
 
-| NSE, median CAGR | cap ON (1%) | cap OFF |
+`account()` sized every position against `turn[sym][t]` — the close x volume of
+the **same bar it then earned `rets[sym][t]` on**. An order placed at the close
+of t-1 cannot know bar t's traded value. The effect: a name was held at full
+size exactly on its heavy days and shrunk on its quiet ones, and in NSE small
+caps volume and same-day return correlate enough to manufacture the whole
+result. Fixed with `CAP_LAG` / `--caplag 1`, which measures the cap against
+bar t-1. Nothing else changed.
+
+| median of 26 arms, points of CAGR/yr | US peek | US honest | NSE peek | NSE honest |
+|---|---|---|---|---|
+| capping at 20 positions costs | −5.58 | −7.26 | **+22.45** | **−8.49** |
+| the same cap+costs is worth to RANDOM | −4.21 | −5.21 | **+27.01** | **−4.03** |
+| FINAL: rule minus matched RANDOM | +4.53 | +4.39 (25/26) | +6.19 | +5.72 (22/26) |
+| FINAL: rule minus buy and hold | −10.53 (0/26) | **−12.75 (0/26)** | **+16.70 (26/26)** | **−14.55 (0/26)** |
+
+With the honest cap the two markets agree and the India exception is gone: the
+fill cap is a **cost** in both, as a friction should be, and **0 of 52 arms beat
+buy and hold**. What survives is real but small — the entry beats a
+friction-matched random entry by +4.39 / +5.72, in 47 of 52 arms. It is not
+enough to reach hold.
+
+The main engine was never affected. `kitelab/slippage.py:92` builds ADV as a
+rolling median `.shift(1)` and carries a docstring about this exact trap, and
+`scripts/wf_intraday.py:172` mirrors it. `waterfall.py` was the one place that
+hand-rolled the cap and skipped the shift. The 36-row board, the
+"nine are worse than hold" result and the dashboard all stand.
+
+**Finding 2b — the liquidity screen is dead** (`scripts/liquidity_screen.py`).
+Built to test whether the cap's apparent lift was a real screen. It is not, and
+it fails in the opposite direction to the story:
+
+| CAGR | US | NSE |
 |---|---|---|
-| C rule+costs, unlimited | 12.01 | 12.01 |
-| D0 rule+costs, 20 slots | **34.92** | **10.01** |
-| E RANDOM+costs, 20 slots | **29.35** | −0.33 |
-| F buy and hold | 18.22 | 18.22 |
+| hold everything | 16.92 | 18.05 |
+| top 20 by turnover | 15.36 | **9.69** |
+| 20 at random | 16.70 | 17.78 |
+| bottom 20 by turnover | **22.01** | **27.06** |
+| capped, random names | 6.06 | 8.91 |
+| cash-matched, no tilt | 7.58 | 8.96 |
 
-The 20-slot limit alone does nothing (cap off: 10.01, below C and below hold).
-The lift is entirely the 1% fill cap, which is a **liquidity screen wearing a
-friction's clothes** — it refuses to size up in thin names and leaves the money
-in cash. On NSE small caps in a market that fell 73.5% that is worth ~+20
-points; on US large caps it is worth −5. Random entries get the same screen
-and the same lift (29.35%), so the ENTRY is worth D0−E = **+6.19**, not +16.70.
+Ranking content (top − random) = −1.34 US, −8.09 NSE: worse than a coin flip.
+The tilt itself (capped − cash-matched) = −1.53 / −0.05: holding cash was the
+entire effect. Concentration (random 20 − hold all) = −0.22 / −0.27: free, not
+an edge. The only real pattern runs the other way — the least-traded names beat
+hold by 5 (US) and 9 (NSE) points, which is the size/illiquidity premium and is
+not tradeable at size by construction. Holds in all three NSE decades.
 
-Honest final lines: **US −10.53 vs hold (0/26). NSE +16.70 vs hold but only
-+6.19 vs a friction-matched random control**, and even that compares a
-half-cash liquidity-screened book against an all-in benchmark.
-
-NEXT: the only live question here is whether an explicit liquidity screen
-(rank by turnover, hold the top N) beats hold on its own, entry rules deleted.
-Rung E says it might. That is a NEW hypothesis, not a rule result.
+This script is also what caught the bug: it lagged turnover correctly from the
+start and returned 8.91% where the waterfall claimed 28.6–34.9% for the same
+idea. **A disagreement between two implementations of one mechanism is
+evidence. Chase it.**
 
 ---
 
@@ -70,8 +100,25 @@ Three caveats that must travel with the number:
 2-Period ROC is deliberately absent — a daily proxy would be our invention
 wearing her name. Her entries are intraday stop orders; we enter at the close.
 
-NEXT: put `anti` and `whiplash` through `waterfall.py` at hold 6. If they die
-at the account layer like everything else, the Raschke thread is closed.
+**RAN 2026-09-24 — the thread is CLOSED** (`scripts/raschke_account.py`).
+All 10 setups x 2 stops x 2 universes through the waterfall's account at her
+own hold of 6, with the honest cap (`--caplag 1`):
+
+| account layer, hold 6 | US | NSE |
+|---|---|---|
+| beat buy and hold | **0 of 20** | **0 of 20** |
+| of the 4 named on trial BEFORE the run | 0, median −21.21 | 0, median −19.24 |
+| best row | eighty20/atr3, −16.97 | anti/atr3, −19.08 |
+| buy and hold | 16.98%/yr | 18.22%/yr |
+
+The four were named in the script before it ran, so this is not a post-hoc
+reading. `anti` — the strongest row in the whole trade-level table — is
+−19.08 against hold. Under the *peeking* cap NSE printed 12 of 20 beating hold
+and `anti` at +16.97; that was the same lookahead as Finding 2, and it is the
+only reason her setups ever looked different from ours.
+
+Her setups behave exactly like the board's own: a real per-trade edge that the
+account layer does not pay for. Nothing left to test here.
 
 ---
 

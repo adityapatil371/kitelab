@@ -77,6 +77,14 @@ MAXHOLD = entries.MAXHOLD
 COST_BPS = 23.0            # round trip, NSE delivery, the board's own figure
 SLOTS = [20, 10]
 CAP_FRAC = 0.01            # you may take 1% of a bar's traded value
+# Bars of delay between the traded value the cap is measured against and the bar
+# the order fills on. 0 is what this script shipped with, and it is a LOOKAHEAD:
+# it sizes the position against the same bar's close x volume that it then earns
+# the return of, so a name is held at full size exactly on its heavy days and
+# shrunk on its quiet ones. You cannot know a bar's turnover before it trades.
+# 1 is the honest choice -- the order goes in at the close of t-1, so t-1's
+# traded value is the most recent capacity estimate that exists.
+CAP_LAG = 0
 MAX_DAY = 5.00             # see scripts.vol_target -- CRUDEOIL is not a price
 
 
@@ -319,7 +327,14 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
         r[loc] = rr
         rets[s] = r
         tv = np.full(len(dates), np.nan)
-        tv[loc] = c * b["volume"].to_numpy(float)
+        tvals = c * b["volume"].to_numpy(float)
+        if CAP_LAG:
+            # Shifted in the SYMBOL's own bar order, not the calendar's, so a
+            # name that did not trade for a week still looks back one of ITS
+            # bars rather than one of someone else's.
+            tvals = np.concatenate([np.full(CAP_LAG, np.nan),
+                                    tvals[:-CAP_LAG]])
+        tv[loc] = tvals
         turn[s] = tv
 
     # rung F: buy and hold, equal weight, daily rebalanced, same calendar
@@ -392,7 +407,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
 
 
 def main() -> None:
-    global CAP_FRAC
+    global CAP_FRAC, CAP_LAG
     ap = argparse.ArgumentParser()
     ap.add_argument("--families", nargs="*", default=FAMILIES)
     ap.add_argument("--capital", type=float, default=1e7,
@@ -402,6 +417,11 @@ def main() -> None:
                     help="drop every bar before this date (YYYY-MM-DD). The "
                          "India numbers are shaped by 2008; --start 2010-01-01 "
                          "asks whether anything here survives without it.")
+    ap.add_argument("--caplag", type=int, default=0,
+                    help="bars between the traded value the 1%% cap is measured "
+                         "against and the bar the order fills on. 0 (shipped) "
+                         "peeks at the fill bar's own turnover; 1 is what an "
+                         "order placed at the previous close could know.")
     ap.add_argument("--capfrac", type=float, default=CAP_FRAC,
                     help="fraction of a bar's traded value one order may take. "
                          "Pass something huge (1e9) to switch the fill cap OFF "
@@ -410,6 +430,7 @@ def main() -> None:
                          "is what the slot rungs are actually doing.")
     args = ap.parse_args()
     CAP_FRAC = args.capfrac
+    CAP_LAG = args.caplag
     t0 = time.time()
 
     us = us_universe()
@@ -427,6 +448,8 @@ def main() -> None:
         stamp += f"_capfrac{args.capfrac:g}"
     if args.start:
         stamp += f"_from{args.start}"
+    if args.caplag:
+        stamp += f"_caplag{args.caplag}"
     csv = OUT / "measurements" / f"waterfall_{stamp}.csv"
     csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(csv, index=False)
