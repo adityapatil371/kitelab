@@ -55,7 +55,7 @@ def main() -> None:
     # 1% fill cap -- and that cap shipped reading the fill bar's OWN turnover.
     # Every NSE number she posts rests on it, so it has to be switchable here
     # too or the re-test is not a re-test.
-    ap.add_argument("--caplag", type=int, default=0)
+    ap.add_argument("--caplag", type=int, default=1)
     args = ap.parse_args()
     t0 = time.time()
 
@@ -84,8 +84,13 @@ def main() -> None:
     print(f"\nrows: {len(out)}")
 
     stamp = date.today().isoformat()
-    if args.caplag:
+    if args.caplag != 1:
         stamp += f"_caplag{args.caplag}"
+    # A pilot runs 40 symbols and 2 rules. It is a different universe, not a
+    # cheaper version of the same one, and without this it silently overwrote
+    # the shipped full-board csv with a sliver of it.
+    if args.pilot:
+        stamp += f"_pilot{args.pilot}"
     (OUT / "measurements").mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT / "measurements" / f"raschke_account_{stamp}.csv", index=False)
 

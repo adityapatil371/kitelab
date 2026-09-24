@@ -83,8 +83,9 @@ CAP_FRAC = 0.01            # you may take 1% of a bar's traded value
 # the return of, so a name is held at full size exactly on its heavy days and
 # shrunk on its quiet ones. You cannot know a bar's turnover before it trades.
 # 1 is the honest choice -- the order goes in at the close of t-1, so t-1's
-# traded value is the most recent capacity estimate that exists.
-CAP_LAG = 0
+# traded value is the most recent capacity estimate that exists, and is the
+# DEFAULT. Pass --caplag 0 only to reproduce the bug.
+CAP_LAG = 1
 MAX_DAY = 5.00             # see scripts.vol_target -- CRUDEOIL is not a price
 
 
@@ -417,7 +418,7 @@ def main() -> None:
                     help="drop every bar before this date (YYYY-MM-DD). The "
                          "India numbers are shaped by 2008; --start 2010-01-01 "
                          "asks whether anything here survives without it.")
-    ap.add_argument("--caplag", type=int, default=0,
+    ap.add_argument("--caplag", type=int, default=1,
                     help="bars between the traded value the 1%% cap is measured "
                          "against and the bar the order fills on. 0 (shipped) "
                          "peeks at the fill bar's own turnover; 1 is what an "
@@ -448,8 +449,13 @@ def main() -> None:
         stamp += f"_capfrac{args.capfrac:g}"
     if args.start:
         stamp += f"_from{args.start}"
-    if args.caplag:
+    if args.caplag != 1:
         stamp += f"_caplag{args.caplag}"
+    # A pilot runs 40 symbols and 2 rules. It is a different universe, not a
+    # cheaper version of the same one, and without this it silently overwrote
+    # the shipped full-board csv with a sliver of it.
+    if args.pilot:
+        stamp += f"_pilot{args.pilot}"
     csv = OUT / "measurements" / f"waterfall_{stamp}.csv"
     csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(csv, index=False)
