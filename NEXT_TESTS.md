@@ -132,8 +132,16 @@ outright — stocks drift up. Borrow fees, recall risk and the NSE cash-market
 overnight-short ban are NOT modelled, so these are the BEST case. A rule that
 fails here fails a fortiori.
 
-The mirror rules that clear: US high252 (both stops), US rsi70 (both stops),
-US mr_hi|own. The strongest rows are the NEUTRAL setups (US vcon|own t=8.4,
+The mirror rules that clear: US high252 (both stops), US rsi70 (both stops).
+That is TWO rules, not three. An earlier draft of this line also listed
+US mr_hi|own; it does not clear -- t = 3.16 against a 3.39 threshold. It
+clears the uncorrected |t| >= 2.0 only, which is the bar 4 of 32 rows are
+expected to clear by chance. Corrected 2026-09-24 against
+`output/measurements/short_rules_2026-09-24.csv`.
+
+And every one of the 7 clearers has a NEGATIVE rule_bps -- the best,
+US high252|own, loses 70.9 bps a trade against a random short's 105.0. Zero of
+them make money. The strongest rows are the NEUTRAL setups (US vcon|own t=8.4,
 US inside|own t=7.5), which says nothing about a bearish edge.
 
 NEXT: nothing, until someone prices borrow. Do not build on this.
