@@ -1,3 +1,44 @@
+# SESSION 2026-09-30 — read this first
+
+## State of the repo (UNSAVED)
+- Codex deleted 80 files on disk (finished research scripts, dead scripts,
+  pine/, experiments/, class CSVs, old audit/fix docs). Details: CLEANUP_PLAN.md.
+- NOT committed: .git is read-only inside the AI sandbox. The owner must run
+  these on the Mac, in the repo folder:
+    git restore scripts/show.py scripts/diagnose.py
+    git tag -a pre-cleanup 58889cf -m "State before the 2026-09-30 cleanup"
+    git switch -c cleanup
+    git add .gitignore AUDIT_REPORT_2026-09-30.md NEXT_TESTS.md && git commit -m "Add the 2026-09-30 audit report and session notes"
+    git add -u && git commit -m "Remove finished research, dead scripts, Pine files, class CSVs and superseded docs"
+- Verified before commit: 471 tests pass, both page checks pass, all 11 kept
+  research scripts import. Tracked files 200 -> 121, lines 63,242 -> ~42,300.
+- Kept on purpose (audit fixes need them): waterfall, us_rules, entry_exit_grid,
+  wf_lookahead, wf_survivor, survivorship_test, pbo, wf_intraday (a dependency),
+  plus RESEARCH-OPEN fixed_rules, fixed_sim, build_fixed_report.
+
+## Audit 2026-09-30 (AUDIT_REPORT_2026-09-30.md) — what changes numbers
+1. Survivorship: both universes are today's lists. Every CAGR is an upper bound.
+   2018 Nifty hold: today's list 17.98%/yr vs pre-2018-turnover list 13.97%.
+2. No untouched holdout remains (101/399 split merged 2026-09-03).
+3. Board default fills at the same close that made the decision (NEXT_OPEN_FILLS=False).
+4. Waterfall: one random draw per arm, seeded by Python hash() (not reproducible);
+   NSE rule-minus-random median ranges 4.8-6.7 over 5 seeds. Its cap also
+   resizes held positions daily for free (moved NSE 1-2 points in one family).
+5. entry_exit_grid "rand" control fits its firing rate on future data.
+6. check_all.sh exits 0 even when unit tests fail.
+Headline "0 of 36 rows beat buy-and-hold" survived all checks.
+
+## Next jobs, in order (one per Codex handoff)
+1. Confirm the owner committed the cleanup (git log, tag pre-cleanup exists).
+2. Rerun the board with next-open fills; compare to same-close, per row.
+3. Waterfall: 100+ seeded random draws (seed from bytes, not hash()); report spread.
+4. Make check_all.sh fail when tests fail.
+5. Lean pass 2: remove kitelab code used only by deleted scripts
+   (kitelab/excursion.py + tests/test_excursion.py first; list in CLEANUP_PLAN.md).
+=== BLOCK END ===
+
+---
+
 # NEXT TESTS — kitelab
 
 State as of 2026-09-24. Three jobs ran this session (waterfall, Raschke,
