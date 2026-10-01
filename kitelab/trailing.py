@@ -12,9 +12,7 @@ Two honesty constraints, both of which cost the strategy rather than flatter it:
     * The stop is only raised to a pivot that sits below the current bar's low.
       Otherwise it would trigger on the very bar that set it.
 
-The trail is read from the same timeframe as each strategy's initial stop: 30-minute
-swing lows for the support bounce, daily swing lows for the breakout. Using daily
-pivots on a trade that lasts three days would mean the stop never moves at all.
+The trail is read from the same daily timeframe as each strategy's initial stop.
 """
 from __future__ import annotations
 
@@ -31,7 +29,7 @@ PIVOT_SPAN = 5
 OPEN_MARKER = "open (marked to market)"
 
 
-def intraday_trail(bars: pd.DataFrame, pivots: list[int], span: int = PIVOT_SPAN):
+def same_frame_trail(bars: pd.DataFrame, pivots: list[int], span: int = PIVOT_SPAN):
     """Trailing rule reading swing lows off the same bars the trade runs on."""
     lows = bars["low"].to_numpy()
 

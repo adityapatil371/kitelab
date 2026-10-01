@@ -56,7 +56,7 @@ RULES = [
      "repaired towards anything."),
     ("repair-nonpositive",
      "open <= 0 -> close; high <= 0 -> max(open, close); low <= 0 -> "
-     "min(open, close). Kite's 2015-2018 intraday history records missing "
+     "min(open, close). Kite history can record missing "
      "fields as 0.00, and an intrabar rule reads low=0 as a stop gapped "
      "through."),
     ("widen-containment",
@@ -79,7 +79,7 @@ RULES = [
      f"{frames.LISTING_BREAK_DAYS} days (a listing break -- ROTO's 2018-2022 "
      f"suspension, STARHEALTH's pre-listing bars), a demerger ex-date in "
      f"config.DEMERGERS, or a config.HISTORY_STARTS date, are dropped; the "
-     f"history restarts there. The intraday file inherits it on load. Added "
+     f"history restarts there. Added "
      f"2026-09-07."),
     ("passthrough-instruments",
      f"Files named {PASSTHROUGH_PREFIX}*.parquet are symbol master dumps, not "
@@ -213,7 +213,7 @@ def in_scope(path, keep: set[str]) -> bool:
     if path.name.startswith(PASSTHROUGH_PREFIX):
         return True
     stem = path.stem
-    for suffix in ("_day", "_15minute", "_30minute"):
+    for suffix in ("_day",):
         if stem.endswith(suffix):
             return stem[:-len(suffix)] in keep
     return False
@@ -244,7 +244,8 @@ def main() -> None:
     _summary_name = ("clean_data_summary_subset.csv" if args.symbols_file
                      else "clean_data_summary.csv")
 
-    files = sorted(DATA.glob("*.parquet"))
+    files = [p for p in sorted(DATA.glob("*.parquet"))
+             if p.name.startswith(PASSTHROUGH_PREFIX) or p.name.endswith("_day.parquet")]
     if args.symbols_file:
         want = {ln.strip().upper() for ln in open(args.symbols_file) if ln.strip()}
         files = [p for p in files if in_scope(p, want)

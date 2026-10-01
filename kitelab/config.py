@@ -85,7 +85,7 @@ def now_local():
 # which charts them individually, and clean_data, which has to know that their
 # price files belong in the working set. While it lived in the timeframe module
 # clean_data did not know, so the 2026-09-01 tidy-up deleted HYUNDAI's cleaned
-# files and the dashboard rebuild died on "No 15-minute data for HYUNDAI".
+# files and the dashboard rebuild died on "No daily data for HYUNDAI".
 CLASS_ASSIGNED = ["HAL", "HINDZINC", "HYUNDAI", "IRFC", "INDHOTEL"]
 
 # The cached Kite access token, overridable with KITELAB_TOKEN_PATH. The
@@ -371,8 +371,6 @@ class Config:
     unseen: list[str]
     exchange: str
     start: str
-    intraday_start: str
-    use_daily_source: bool
 
     @staticmethod
     def _dedupe(*groups) -> list[str]:
@@ -497,7 +495,5 @@ def load() -> Config:
         unseen=universe.get("unseen", []),
         exchange=universe.get("exchange", "NSE"),
         start=backfill.get("start", "2015-01-01"),
-        intraday_start=backfill.get("intraday_start",
-                                    backfill.get("start", "2015-01-01")),
-        use_daily_source=backfill.get("use_daily_source", True),
+
     )

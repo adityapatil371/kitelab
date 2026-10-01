@@ -1,9 +1,9 @@
-"""Inspect and sanity-check what is on disk.
+"""Inspect and sanity-check daily and derived candles on disk.
 
     python -m scripts.show                  # coverage + health check for everything
     python -m scripts.show HAL 1w -n 12     # last 12 weekly candles for HAL
 
-The second form is what you use to verify the resampled timeframes. 30m, 1h, 1w and
+The second form is what you use to verify the resampled timeframes. 1w and
 1M are computed locally, not served by Zerodha, so check a handful of bars against
 TradingView before trusting them in a backtest.
 """
@@ -26,7 +26,7 @@ def _summary(cfg) -> None:
     for symbol in cfg.symbols:
         for timeframe in frames.TIMEFRAMES:
             try:
-                frame = frames.load(symbol, timeframe, cfg.use_daily_source)
+                frame = frames.load(symbol, timeframe)
             except SystemExit as exc:
                 print(f"{symbol:<10} {timeframe:<5} {exc}")
                 break
@@ -46,24 +46,9 @@ def _health(cfg) -> None:
     print("-" * 66)
     for symbol in cfg.symbols:
         try:
-            base = frames.base_15m(symbol)
-            day = frames.load(symbol, "1d", cfg.use_daily_source)
+            day = frames.daily(symbol)
         except SystemExit:
             continue
-
-        # A full session holds 25 fifteen-minute bars before NSE's closing auction
-        # session started on 2026-08-03, and 24 after it.
-        per_day = base.groupby(base["ts"].dt.normalize()).size()
-        expected = per_day.index.map(frames.expected_bars)
-        odd = per_day[per_day.values != expected.values]
-        if odd.empty:
-            print(f"{symbol:<10} 15m sessions: all {len(per_day):,} days have the expected bar count")
-        else:
-            print(
-                f"{symbol:<10} 15m sessions: {len(odd)} of {len(per_day):,} days differ "
-                f"from the expected count (muhurat/halts are normal; a long run is not)"
-            )
-            print(f"{'':<10}   e.g. {odd.head(3).to_dict()}")
 
         # Unadjusted corporate actions show up as impossible overnight gaps.
         if len(day) > 1:
@@ -85,13 +70,11 @@ def _health(cfg) -> None:
 
 
 def _candles(cfg, symbol: str, timeframe: str, count: int) -> None:
-    frame = frames.load(symbol, timeframe, cfg.use_daily_source)
+    frame = frames.load(symbol, timeframe)
     if frame.empty:
         print(f"No {timeframe} data for {symbol}.")
         return
-    source = "Kite native" if timeframe == "15m" or (
-        timeframe == "1d" and cfg.use_daily_source
-    ) else "resampled locally"
+    source = "Kite native" if timeframe == "1d" else "resampled locally"
     print(f"\n{symbol}  {timeframe}  ({source})  last {min(count, len(frame))} of {len(frame):,} bars\n")
     with pd.option_context("display.max_rows", None, "display.width", 120):
         print(frame.tail(count).to_string(index=False))

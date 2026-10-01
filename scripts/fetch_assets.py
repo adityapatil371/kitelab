@@ -7,19 +7,18 @@
 Three data paths, one storage format:
 
     BITCOIN            Binance public API, no account or key needed. BTCUSDT daily
-                       and native 30-minute candles from 2017. Timestamps are UTC
+                       from 2017. Timestamps are UTC
                        (Bitcoin trades 24/7; the "daily" candle is a UTC-midnight
                        convention). Prices are US dollars.
     NIFTY 50 /
     NIFTY BANK         Kite index candles, same API as the stocks. Daily from 2006,
-                       15-minute from 2015. Indices have no volume.
+                       Indices have no volume.
     GOLD / SILVER /
     CRUDEOIL           Kite MCX futures with continuous=1, which stitches expired
                        monthly contracts into one series. Continuous data is only
-                       reliable for DAILY candles, so these three get no intraday.
+                       reliable for DAILY candles.
 
-Everything lands as data/{SYMBOL}_day.parquet (+ _30minute / _15minute where it
-exists), which is all frames/strategies/reports need.
+Everything lands as data/{SYMBOL}_day.parquet, which is all frames/strategies/reports need.
 """
 from __future__ import annotations
 
@@ -119,7 +118,6 @@ def fetch_indices(kite, throttle) -> None:
             continue
         token = int(match.iloc[0]["instrument_token"])
         fetch.fetch_interval(kite, symbol, token, "day", "2006-01-01", throttle)
-        fetch.fetch_interval(kite, symbol, token, "15minute", "2015-01-01", throttle)
 
 
 def fetch_commodities(kite, throttle) -> None:
@@ -149,15 +147,6 @@ def fetch_commodities(kite, throttle) -> None:
                                  continuous=True)
         except Exception as exc:
             print(f"  !! {name} day: {type(exc).__name__}: {exc}")
-        # Continuous intraday is not reliably served; try once, fail quietly.
-        try:
-            frame = fetch.fetch_interval(kite, name, token, "30minute", "2020-01-01",
-                                         throttle, continuous=True)
-            if frame.empty:
-                fetch.path_for(name, "30minute").unlink(missing_ok=True)
-                print(f"     {name}: no continuous intraday (expected) -- daily only")
-        except Exception:
-            print(f"     {name}: no continuous intraday (expected) -- daily only")
 
 
 def main() -> None:
@@ -172,7 +161,6 @@ def main() -> None:
     if do_btc:
         print("Bitcoin (Binance, no login needed):")
         fetch_btc("1d", "day")
-        fetch_btc("30m", "30minute")
     if do_kite:
         print("\nIndices and commodities (Kite):")
         cfg = config.require_secrets(config.load())

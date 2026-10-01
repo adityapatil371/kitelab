@@ -300,7 +300,7 @@ def stamp(symbols, account: bool = False, producer: str | None = None) -> dict:
     symbols = sorted(set(symbols))
     data = []
     for s in symbols:
-        for suffix in ("day", "15minute", "30minute"):
+        for suffix in ("day",):
             p = CLEAN / f"{s}_{suffix}.parquet"
             if p.exists():
                 st = p.stat()

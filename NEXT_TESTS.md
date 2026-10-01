@@ -13,7 +13,7 @@
 - Verified before commit: 471 tests pass, both page checks pass, all 11 kept
   research scripts import. Tracked files 200 -> 121, lines 63,242 -> ~42,300.
 - Kept on purpose (audit fixes need them): waterfall, us_rules, entry_exit_grid,
-  wf_lookahead, wf_survivor, survivorship_test, pbo, wf_intraday (a dependency),
+  wf_lookahead, wf_survivor, survivorship_test, pbo,
   plus RESEARCH-OPEN fixed_rules, fixed_sim, build_fixed_report.
 
 ## Audit 2026-09-30 (AUDIT_REPORT_2026-09-30.md) — what changes numbers
@@ -91,7 +91,7 @@ enough to reach hold.
 
 The main engine was never affected. `kitelab/slippage.py:92` builds ADV as a
 rolling median `.shift(1)` and carries a docstring about this exact trap, and
-`scripts/wf_intraday.py:172` mirrors it. `waterfall.py` was the one place that
+`waterfall.py` was the one place that
 hand-rolled the cap and skipped the shift. The 36-row board, the
 "nine are worse than hold" result and the dashboard all stand.
 

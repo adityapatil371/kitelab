@@ -1,11 +1,10 @@
 """The 2026-09-07 data rules: listing breaks, demergers, configured starts,
-one bar per session, intraday ex-date sessions, the fetch resume, and a
+one bar per session, the fetch resume, and a
 missing levels file.
 
 Hermetic: synthetic frames, a fake Kite, a temp directory. Each rule was
 written after a specific file was found trading on bad bars (ROTO through a
-1,469-day suspension at -53.5R; COALINDIA's doubled 2015-12-31; DIVISLAB's
-15-minute bars at twice the daily close on its split day), so each test is
+1,469-day suspension at -53.5R; COALINDIA's doubled 2015-12-31; a split day), so each test is
 that shape, reduced to a handful of bars.
 """
 import contextlib
@@ -81,23 +80,6 @@ class ListingBreak(unittest.TestCase):
         self.assertEqual(got["ts"].iloc[0], c["ts"].iloc[0])
         self.assertEqual(len(got), 20)
 
-    def test_intraday_frames_are_not_cut_by_this_rule(self):
-        """The 15-minute frame inherits the cut from the daily one in base_15m;
-        sanitise itself must not measure session gaps on intraday bars."""
-        frame, _ = self._split(1469)
-        with configured():
-            got = quiet(frames.sanitise, frame, "X", "15-minute")
-        self.assertEqual(len(got), len(frame))
-
-    def test_history_start_reports_the_reason(self):
-        frame, restart = self._split(400)
-        got = frames.history_start("X", frame["ts"], demergers={}, history_starts={})
-        self.assertEqual(got[0], restart)
-        self.assertIn("listing break", got[1])
-
-    def test_a_continuous_series_has_no_start(self):
-        self.assertIsNone(frames.history_start("X", daily(100, "2020-01-01")["ts"],
-                                               demergers={}, history_starts={}))
 
 
 class Demergers(unittest.TestCase):
@@ -187,58 +169,6 @@ class DedupeSessions(unittest.TestCase):
         self.assertEqual(float(row["close"].iloc[0]), 307.05)
         self.assertTrue((got["ts"] == got["ts"].dt.normalize()).all())
 
-    def test_intraday_bars_share_a_date_and_are_never_deduped(self):
-        stamps = pd.date_range("2020-01-01 09:15", periods=25, freq="15min")
-        frame = pd.DataFrame({"ts": stamps, "open": 100.0, "high": 101.0,
-                              "low": 99.0, "close": 100.0, "volume": 10})
-        got = frames.dedupe_sessions(frame, "X", "15-minute")
-        self.assertEqual(len(got), 25)
-
-
-class ExDateSessions(unittest.TestCase):
-    """DIVISLAB 2015-09-22: 15-minute bars at 2241/2215 against a daily close of
-    1104.55 -- Kite adjusted the daily file for the 2:1 split, not the intraday
-    one. The daily bar is the authority for price AND volume."""
-
-    def _session(self, day, close, volume=100):
-        stamps = pd.date_range(f"{day} 09:15", periods=25, freq="15min")
-        return pd.DataFrame({"ts": stamps, "open": close, "high": close * 1.01,
-                             "low": close * 0.99, "close": close, "volume": volume})
-
-    def _pair(self, factor):
-        intraday = pd.concat([self._session("2015-09-21", 1100.0),
-                              self._session("2015-09-22", 1100.0 * factor, 50),
-                              self._session("2015-09-23", 1100.0)], ignore_index=True)
-        day = pd.DataFrame({"ts": pd.to_datetime(["2015-09-21", "2015-09-22", "2015-09-23"]),
-                            "close": [1100.0, 1100.0, 1100.0],
-                            "volume": [2500, 2500, 2500]})
-        return intraday, day
-
-    def test_a_2x_session_is_scaled_onto_the_daily_bar(self):
-        intraday, day = self._pair(2.0)
-        got = quiet(frames.rescale_ex_date_sessions, intraday, day, "DIVISLAB")
-        mid = got[got["ts"].dt.normalize() == "2015-09-22"]
-        self.assertAlmostEqual(float(mid["close"].iloc[-1]), 1100.0)
-        self.assertEqual(int(mid["volume"].sum()), 2500)
-
-    def test_a_5x_session_is_scaled_too(self):
-        intraday, day = self._pair(5.0)
-        got = quiet(frames.rescale_ex_date_sessions, intraday, day, "ALANKIT")
-        mid = got[got["ts"].dt.normalize() == "2015-09-22"]
-        self.assertAlmostEqual(float(mid["high"].max()), 1100.0 * 1.01, places=6)
-
-    def test_the_closing_auction_mismatch_is_left_alone(self):
-        """MUTHOOTFIN 2018-12-06 at 5.8%, IOC 2018-10-04 at 9.2%: real prices."""
-        intraday, day = self._pair(1.10)
-        got = quiet(frames.rescale_ex_date_sessions, intraday, day, "X")
-        pd.testing.assert_frame_equal(got, intraday)
-
-    def test_neighbouring_sessions_are_untouched(self):
-        intraday, day = self._pair(2.0)
-        got = quiet(frames.rescale_ex_date_sessions, intraday, day, "X")
-        for d in ("2015-09-21", "2015-09-23"):
-            self.assertAlmostEqual(
-                float(got[got["ts"].dt.normalize() == d]["close"].iloc[-1]), 1100.0)
 
 
 class MarketWideDays(unittest.TestCase):
@@ -310,8 +240,21 @@ class FetchResume(unittest.TestCase):
     def test_cutoff_is_yesterday_before_the_close_and_today_after(self):
         morning = pd.Timestamp("2026-09-02 10:19", tz="Asia/Kolkata")
         self.assertEqual(fetch.cutoff_date(morning), date(2026, 9, 1))
-        evening = pd.Timestamp("2026-09-02 15:40", tz="Asia/Kolkata")
+        afternoon = pd.Timestamp("2026-09-02 15:50", tz="Asia/Kolkata")
+        self.assertEqual(fetch.cutoff_date(afternoon), date(2026, 9, 1))
+        evening = pd.Timestamp("2026-09-02 16:01", tz="Asia/Kolkata")
         self.assertEqual(fetch.cutoff_date(evening), date(2026, 9, 2))
+
+    def test_fetch_waits_until_1600_for_todays_bar(self):
+        today = self.days[25]
+        self._store(20)
+        kite = FakeKite(self.series)
+        before = self._run(kite, pd.Timestamp(f"{today} 15:50", tz="Asia/Kolkata"))
+        self.assertEqual(before["ts"].max().date(), self.days[24])
+        self.assertLessEqual(kite.calls[-1][1], today - timedelta(days=1))
+        after = self._run(kite, pd.Timestamp(f"{today} 16:01", tz="Asia/Kolkata"))
+        self.assertEqual(after["ts"].max().date(), today)
+        self.assertEqual(kite.calls[-1][1], today)
 
     def test_resume_refetches_the_last_five_sessions(self):
         self._store(20)
@@ -353,6 +296,30 @@ class FetchResume(unittest.TestCase):
         got = self._run(kite, morning)
         self.assertEqual(got["ts"].max().date(), self.days[24])
         self.assertLess(len(got), len(stored))
+
+
+class InstrumentAliases(unittest.TestCase):
+    def test_changed_series_and_name_resolve_to_the_configured_symbol(self):
+        class FakeKite:
+            def instruments(self, exchange):
+                self.exchange = exchange
+                return [
+                    {"tradingsymbol": "ANMOL-BE", "instrument_type": "EQ",
+                     "instrument_token": 955393},
+                    {"tradingsymbol": "HEGAM", "instrument_type": "EQ",
+                     "instrument_token": 342017},
+                ]
+
+        saved = fetch.DATA
+        with tempfile.TemporaryDirectory() as temp:
+            fetch.DATA = pathlib.Path(temp)
+            try:
+                kite = FakeKite()
+                got = quiet(fetch.instrument_tokens, kite, ["ANMOL", "HEG", "LOST"], "NSE")
+            finally:
+                fetch.DATA = saved
+        self.assertEqual(got, {"ANMOL": 955393, "HEG": 342017})
+        self.assertEqual(kite.exchange, "NSE")
 
 
 class LevelsFile(unittest.TestCase):

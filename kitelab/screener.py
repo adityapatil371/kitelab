@@ -113,7 +113,7 @@ def _cached(symbol: str, kind: str) -> pd.DataFrame:
     """Parquet does not change mid-run, so read each file once per process."""
     key = f"{symbol}:{kind}"
     if key not in _SOURCE_CACHE:
-        _SOURCE_CACHE[key] = frames.base_15m(symbol) if kind == "15m" else frames.daily(symbol)
+        _SOURCE_CACHE[key] = frames.daily(symbol)
     return _SOURCE_CACHE[key]
 
 
@@ -122,10 +122,6 @@ ALIASES = {"d": "daily", "w": "weekly", "m": "monthly"}
 
 class Context(Mapping):
     """Lazy timeframe namespaces for one symbol at one moment.
-
-    Namespaces are built only when a query actually names them. That matters for
-    scan_history: rebuilding the 30m and 1h frames costs a per-session loop, and a
-    query that only mentions `daily` and `weekly` should never pay for it.
 
     Higher timeframes are derived AFTER truncation. Slicing a precomputed weekly frame
     would hand back the completed weekly bar even when asof falls mid-week -- lookahead.
@@ -147,27 +143,20 @@ class Context(Mapping):
             if name == "weekly":
                 return Timeframe("1w", frames.weekly(day))
             return Timeframe("1M", frames.monthly(day))
-        intraday = self._truncate(_cached(self.symbol, "15m"))
-        if name == "m15":
-            return Timeframe("15m", intraday)
-        return Timeframe(
-            "30m" if name == "m30" else "1h",
-            frames.resample_intraday(intraday, 30 if name == "m30" else 60),
-        )
 
     def __getitem__(self, key: str) -> Timeframe:
         name = ALIASES.get(key, key)
-        if name not in ("daily", "weekly", "monthly", "m15", "m30", "h1"):
+        if name not in ("daily", "weekly", "monthly"):
             raise KeyError(key)
         if name not in self._built:
             self._built[name] = self._build(name)
         return self._built[name]
 
     def __iter__(self):
-        return iter(("daily", "weekly", "monthly", "m15", "m30", "h1", *ALIASES))
+        return iter(("daily", "weekly", "monthly", *ALIASES))
 
     def __len__(self) -> int:
-        return 9
+        return 6
 
 
 def context(symbol: str, asof: pd.Timestamp | None = None) -> Context:

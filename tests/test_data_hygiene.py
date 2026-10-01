@@ -12,22 +12,6 @@ from kitelab import frames
 from tests.support import bars
 
 
-class ExpectedBars(unittest.TestCase):
-    """NSE introduced a closing auction on 2026-08-03: continuous trading ends
-    at 15:15 rather than 15:30, so a full session is 24 fifteen-minute bars
-    instead of 25. A single constant would flag every session on one side."""
-
-    def test_a_session_before_the_auction_expects_more_bars(self):
-        self.assertGreater(frames.expected_bars("2026-07-01"),
-                           frames.expected_bars("2026-09-01"))
-
-    def test_the_rule_switches_on_the_auction_date_itself(self):
-        self.assertEqual(frames.expected_bars("2026-08-03"),
-                         frames.expected_bars("2026-12-01"))
-        self.assertNotEqual(frames.expected_bars("2026-08-02"),
-                            frames.expected_bars("2026-08-03"))
-
-
 class Containment(unittest.TestCase):
     """A bar's high and low must contain its own open and close. Kite delivers
     bars that violate this."""

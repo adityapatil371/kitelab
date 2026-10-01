@@ -1,20 +1,4 @@
-"""Load stored candles and resample them to any timeframe.
-
-The 15-minute file is the base. 30m and 1h are built from it; 1d comes either from
-Kite's own daily candles (deeper history) or from the 15-min bars; 1w and 1M are
-always built from whichever daily frame you ended up with.
-
-NSE session arithmetic, which is why the resampling needs an explicit origin:
-
-    09:15 -> 15:30  =  375 minutes
-      15m  ->  25 bars, exact
-      30m  ->  12 full bars + a 15-minute stub at 15:15
-      1h   ->   6 full bars + a 15-minute stub at 15:15
-
-Pandas' default resampling anchors to midnight, which would produce a 09:00-09:30
-bucket and silently misalign every intraday bar against what Kite and TradingView
-show. Every intraday resample below is anchored to that day's 09:15 instead.
-"""
+"""Load daily candles and resample to weekly or monthly bars."""
 from __future__ import annotations
 
 from functools import lru_cache
@@ -24,15 +8,6 @@ import pandas as pd
 from . import config
 from .config import CLEAN
 
-SESSION_OPEN = pd.Timedelta(hours=9, minutes=15)
-
-AGG = {
-    "open": "first",
-    "high": "max",
-    "low": "min",
-    "close": "last",
-    "volume": "sum",
-}
 
 # `ts` is the bar's FIRST session and `close` is its LAST session's close, so the
 # stamp is up to four sessions older than the price. `end_ts` carries the session
@@ -48,37 +23,11 @@ NAMED_AGG = dict(
     volume=("volume", "sum"),
 )
 
-# Like NAMED_AGG but without the ts column, for groupbys whose KEY is the stamp.
-NAMED_AGG_NOTS = dict(
-    open=("open", "first"),
-    high=("high", "max"),
-    low=("low", "min"),
-    close=("close", "last"),
-    volume=("volume", "sum"),
-)
-
-TIMEFRAMES = ["15m", "30m", "1h", "1d", "1w", "1M"]
-
-# NSE introduced a Closing Auction Session on 2026-08-03. For stocks covered by it,
-# continuous trading ends at 15:15 and an auction from 15:15 to 15:35 sets the official
-# close. So the session shrank from 375 to 360 minutes and the bar count per session
-# changed. 360 divides evenly by 15/30/60, so post-CAS sessions have no stub bar --
-# pre-CAS ones do, because 375 does not divide by 30 or 60.
-CAS_START = pd.Timestamp("2026-08-03")
-BARS_PRE_CAS = 25   # 09:15 .. 15:15, last bar covers 15:15-15:30
-BARS_POST_CAS = 24  # 09:15 .. 15:00, last bar covers 15:00-15:15
-
-
-def expected_bars(session_day) -> int:
-    """How many 15-minute bars a full session should hold on a given date."""
-    return BARS_POST_CAS if pd.Timestamp(session_day) >= CAS_START else BARS_PRE_CAS
-
+TIMEFRAMES = ["1d", "1w", "1M"]
 
 def _path(symbol: str, interval: str):
     return CLEAN / f"{symbol}_{interval}.parquet"
 
-
-_TRIM_WARNED: set[str] = set()
 
 _CLEAN_WARNED: set[str] = set()
 
@@ -297,8 +246,7 @@ def drop_before_history_start(frame: pd.DataFrame, symbol: str,
                               interval: str) -> pd.DataFrame:
     """Cut everything before the last listing break / demerger / configured start.
 
-    Daily frames only; the intraday frame inherits it in base_15m, which trims
-    to the first DAILY bar. Every consumer of daily bars -- frames.daily,
+    Every consumer of daily bars -- frames.daily,
     frames.load, the weekly/monthly/quarterly resamplers, and clean_data's
     cleaned copies -- goes through sanitise(), so this is the one place the rule
     has to live.
@@ -318,67 +266,6 @@ def drop_before_history_start(frame: pd.DataFrame, symbol: str,
               f"before {start.date()} ({reason}; history restarts there)")
         _CLEAN_WARNED.add(tag)
     return frame.loc[~doomed].reset_index(drop=True)
-
-
-# An intraday session whose last close is this far from the daily close is
-# priced in a different unit from the daily bar. Measured 2026-09-07 over every
-# 15-minute file with a daily twin: 1,837 sessions differ by 2-5%, 77 by
-# 5-10%, 4 by 10-15% -- the closing-auction / VWAP-vs-last-trade effect
-# (MUTHOOTFIN 2018-12-06 at 5.8%, IOC 2018-10-04 at 9.2%) -- then NOTHING
-# between 15% and 50%, and four sessions above it: ALANKIT 2015-09-22 at 5.0x,
-# DIVISLAB 2015-09-22 at 2.005x, ALANKIT 2016-10-18 at 2.002x, MOTHERSON
-# 2015-07-22 at 1.505x. Those are ex-dates where Kite adjusted the daily bar
-# for the split/bonus but not the 15-minute bars. 0.25 sits in the empty band
-# with a 2x margin to the smallest hit and to the largest auction mismatch.
-EX_DATE_MISMATCH = 0.25
-
-
-def rescale_ex_date_sessions(frame: pd.DataFrame, day: pd.DataFrame,
-                             symbol: str) -> pd.DataFrame:
-    """Scale an intraday session onto its daily bar when the two disagree by
-    more than EX_DATE_MISMATCH.
-
-    The daily bar is the authority: it is what Kite adjusts, and it is what
-    every close-based rule trades on. Price is scaled by daily close / last
-    intraday close; volume is scaled so the session's sum matches the daily
-    volume, because the intraday volume on those sessions is in pre-action
-    shares too (DIVISLAB's 15-minute bars sum to 0.50x the daily volume on its
-    2:1 day, ALANKIT's to 0.20x on its 5x day, MOTHERSON's to 0.66x).
-
-    Nothing under the threshold is touched, so the 4-13% closing-auction
-    mismatches stay exactly as Kite served them.
-    """
-    if frame.empty or day.empty:
-        return frame
-    session = frame["ts"].dt.normalize()
-    grouped = frame.groupby(session)
-    mine = pd.DataFrame({"m_close": grouped["close"].last(),
-                         "m_volume": grouped["volume"].sum()})
-    ref = day.set_index(pd.to_datetime(day["ts"]).dt.normalize())[["close", "volume"]]
-    ref = ref[~ref.index.duplicated(keep="last")]
-    joined = mine.join(ref.rename(columns={"close": "d_close", "volume": "d_volume"}),
-                       how="inner")
-    factor = joined["d_close"] / joined["m_close"]
-    hit = (factor - 1).abs() > EX_DATE_MISMATCH
-    if not hit.any():
-        return frame
-    frame = frame.copy()
-    for stamp, row in joined[hit].iterrows():
-        mask = (session == stamp).to_numpy()
-        scale = row["d_close"] / row["m_close"]
-        for col in ("open", "high", "low", "close"):
-            frame.loc[mask, col] = frame.loc[mask, col] * scale
-        if row["m_volume"] > 0 and row["d_volume"] > 0:
-            v_scale = row["d_volume"] / row["m_volume"]
-            frame.loc[mask, "volume"] = (frame.loc[mask, "volume"] * v_scale).round()
-    frame["volume"] = frame["volume"].astype("int64")
-    tag = f"{symbol}:15-minute:ex-date"
-    if tag not in _CLEAN_WARNED:
-        shown = ", ".join(f"{d.date()} x{1 / f:.2f}" for d, f in factor[hit].items())
-        print(f"[kitelab] {symbol}: rescaled {int(hit.sum())} intraday session(s) "
-              f"priced in pre-corporate-action units onto the daily bar ({shown})")
-        _CLEAN_WARNED.add(tag)
-    return frame
 
 
 def market_wide_days(closes: dict[str, pd.Series], drop: float = 0.08,
@@ -465,8 +352,7 @@ def sanitise(frame: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
 # first, as strategies.breakout_trades already does. Nothing else in the repo mutates
 # a frame it did not build (checked by AST over every .py).
 #
-# Sizes are set so a whole universe fits: the 15-minute frames are the memory, at
-# roughly 3.5 MB each.
+# Sizes are set so a whole universe fits: daily frames and their derived weekly/monthly frames fit in memory.
 _CACHE_SYMBOLS = 600
 
 
@@ -477,108 +363,14 @@ def clear_caches() -> None:
     surface, and the alternative when frames go stale mid-session is restarting
     the process. Kept deliberately after the 2026-09-03 audit listed it.
     """
-    for fn in (base_15m, daily, load, _resample_cached):
+    for fn in (daily, load):
         fn.cache_clear()
     _CLEAN_WARNED.clear()
-    _TRIM_WARNED.clear()
-
-
-@lru_cache(maxsize=_CACHE_SYMBOLS)
-def base_15m(symbol: str, trim_orphans: bool = True) -> pd.DataFrame:
-    """15-minute bars.
-
-    Some symbols return intraday history from before the equity listed -- IRFC serves
-    bars from 2018 despite listing in 2021, almost certainly from listed debt under the
-    same trading symbol. Those bars are dropped by default, using the first DAILY bar
-    as the listing date.
-
-    Since 2026-09-07 that first daily bar is read through daily(), i.e. AFTER the
-    listing-break / demerger / HISTORY_STARTS cut, so the intraday frame restarts
-    where the daily one does -- ROTO's 15-minute bars from 2018 go with its daily
-    ones. The same daily frame then rescales any session Kite left in
-    pre-corporate-action units (rescale_ex_date_sessions).
-    """
-    path = _path(symbol, "15minute")
-    if not path.exists():
-        raise SystemExit(f"No 15-minute data for {symbol}. Run: python -m scripts.backfill")
-    frame = pd.read_parquet(path).sort_values("ts").reset_index(drop=True)
-    frame = sanitise(frame, symbol, "15-minute")
-
-    native = _path(symbol, "day")
-    if native.exists():
-        day = daily(symbol)
-        if trim_orphans and not day.empty:
-            listed_on = day["ts"].min()
-            orphans = frame["ts"] < listed_on
-            if orphans.any():
-                if symbol not in _TRIM_WARNED:
-                    print(
-                        f"[kitelab] {symbol}: dropped {int(orphans.sum()):,} intraday bars "
-                        f"before {listed_on.date()} (predate the first usable daily bar)."
-                    )
-                    _TRIM_WARNED.add(symbol)
-                frame = frame.loc[~orphans].reset_index(drop=True)
-        frame = rescale_ex_date_sessions(frame, day, symbol)
-    return frame
-
-
-def _resample_intraday(base: pd.DataFrame, minutes: int) -> pd.DataFrame:
-    """Resample intraday bars, anchoring each session to its own 09:15 open.
-
-    ONE groupby over the whole frame, not one pandas resample per trading day. The
-    per-day loop built ~2,500 tiny DataFrames per symbol and spent its time in pandas
-    bookkeeping rather than arithmetic -- profiled at 1.89s per symbol against 0.05s
-    to read the file, with 3.1 million isinstance calls and ~14,400 Index
-    constructions. Same output, and verify.py proves it: 137,298 of 137,298 derived
-    bars reconstruct exactly from their source.
-
-    The bucket key is computed directly: floor the minutes elapsed since that
-    session's 09:15 into `minutes`-wide slots and add them back to the open. Floor
-    division handles a pre-open bar the same way resample's `origin` does, by
-    extending the grid backwards.
-    """
-    if base.empty:
-        return pd.DataFrame(columns=["ts", *AGG])
-    ts = base["ts"]
-    day = ts.dt.normalize()
-    step = pd.Timedelta(minutes=minutes)
-    offset = ((ts - day - SESSION_OPEN) // step) * step
-    bucket = day + SESSION_OPEN + offset
-    out = (base.assign(_bucket=bucket)
-               .groupby("_bucket", sort=True)
-               .agg(**NAMED_AGG_NOTS))
-    out.index.name = "ts"
-    out = out.reset_index()
-    out["volume"] = out["volume"].astype("int64")
-    return out.sort_values("ts").reset_index(drop=True)
-
-
-def resample_intraday(base: pd.DataFrame, minutes: int) -> pd.DataFrame:
-    """Public entry point for callers that hold their own (e.g. truncated) 15m frame."""
-    return _resample_intraday(base, minutes)
 
 
 @lru_cache(maxsize=_CACHE_SYMBOLS * 2)
-def _resample_cached(symbol: str, minutes: int) -> pd.DataFrame:
-    """Resampled intraday bars for a symbol, computed once per session."""
-    return _resample_intraday(base_15m(symbol), minutes)
-
-
-def _daily_from_intraday(base: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    indexed = base.set_index("ts").sort_index()
-    out = indexed.groupby(indexed.index.normalize()).agg(AGG)
-    out.index.name = "ts"
-    out = out.reset_index()
-    out["volume"] = out["volume"].astype("int64")
-    out = out.sort_values("ts").reset_index(drop=True)
-    # The intraday bars were sanitised as intraday; the daily rules (one bar per
-    # session, nothing before the last break) still have to run on the result.
-    return sanitise(out, symbol, "daily")
-
-
-@lru_cache(maxsize=_CACHE_SYMBOLS * 2)
-def daily(symbol: str, prefer_native: bool = True) -> pd.DataFrame:
-    """Daily candles, from Kite's `day` interval if available, else from 15-min bars.
+def daily(symbol: str) -> pd.DataFrame:
+    """Daily candles from Kite's `day` interval.
 
     Sorted on the RAW stamp before sanitise() normalises it, so that when a
     session is stored twice (00:00 and 09:15) "keep last" means the later
@@ -587,12 +379,12 @@ def daily(symbol: str, prefer_native: bool = True) -> pd.DataFrame:
     through here, which is what makes the rules in sanitise() universal.
     """
     native = _path(symbol, "day")
-    if prefer_native and native.exists():
+    if native.exists():
         frame = pd.read_parquet(native)
         frame["ts"] = pd.to_datetime(frame["ts"])
         frame = frame.sort_values("ts", kind="stable").reset_index(drop=True)
         return sanitise(frame, symbol, "daily")
-    return _daily_from_intraday(base_15m(symbol), symbol)
+    raise SystemExit(f"No daily data for {symbol}. Run: python -m scripts.backfill")
 
 
 def _group_daily(day_frame: pd.DataFrame, key) -> pd.DataFrame:
@@ -617,35 +409,11 @@ def quarterly(day_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 @lru_cache(maxsize=_CACHE_SYMBOLS * 3)
-def load(symbol: str, timeframe: str = "1d", prefer_native_daily: bool = True) -> pd.DataFrame:
+def load(symbol: str, timeframe: str = "1d") -> pd.DataFrame:
     """Return OHLCV for a symbol at one of TIMEFRAMES."""
     if timeframe not in TIMEFRAMES:
         raise ValueError(f"timeframe must be one of {TIMEFRAMES}, got {timeframe!r}")
-    if timeframe == "15m":
-        return base_15m(symbol)
-    if timeframe == "30m":
-        # Assets fetched with native 30-minute bars (Bitcoin: 24/7 market, Binance
-        # serves 30m directly and NSE-session resampling makes no sense there) are
-        # loaded as-is instead of being rebuilt from 15m.
-        native = _path(symbol, "30minute")
-        if native.exists():
-            return pd.read_parquet(native).sort_values("ts").reset_index(drop=True)
-        return _resample_cached(symbol, 30)
-    if timeframe == "1h":
-        # Assets fetched with native 30-minute bars and no 15m file (Bitcoin) are
-        # paired into hours on a midnight anchor -- correct for a 24/7 UTC market,
-        # where NSE session anchoring makes no sense.
-        native_30 = _path(symbol, "30minute")
-        if not _path(symbol, "15minute").exists() and native_30.exists():
-            base = pd.read_parquet(native_30).sort_values("ts")
-            out = base.set_index("ts").resample("60min").agg(AGG).dropna(subset=["open"])
-            out.index.name = "ts"
-            out = out.reset_index()
-            out["volume"] = out["volume"].astype("int64")
-            return out
-        return _resample_cached(symbol, 60)
-
-    day_frame = daily(symbol, prefer_native=prefer_native_daily)
+    day_frame = daily(symbol)
     if timeframe == "1d":
         return day_frame
     if timeframe == "1w":

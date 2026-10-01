@@ -68,7 +68,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kitelab import entries, indicators                                # noqa: E402
-from scripts.wf_intraday import FAMILIES, PANEL, STOPS, close_panel, \
+from scripts.rule_panel import FAMILIES, PANEL, STOPS, close_panel, \
     panel_masks, fires_for                                             # noqa: E402
 from scripts.us_rules import load, us_universe, nse_universe, _exit_from, MIN_SESSIONS  # noqa: E402
 

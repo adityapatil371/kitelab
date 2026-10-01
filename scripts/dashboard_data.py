@@ -276,7 +276,7 @@ ASSET_EXCLUDED = {
 # one line here.
 ASSETS: list[tuple[str, str, float]] = []
 # W/D/H and ATH Breakout were ruled out in class (2026-09-01) and are no longer
-# computed. Their code is untouched -- strategies.ath_breakout_trades and the WDH
+# computed. Their code is untouched -- strategies.ath_breakout_trades and the retired WDH
 # variant still work and still have scripts -- they are simply not on the board.
 # "Turtle", not "Darvas": the 20/10 and 55/20 channels are what the Turtles
 # traded, which is what the class is studying. The old label was wrong and the

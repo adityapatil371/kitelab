@@ -1,4 +1,4 @@
-"""The two level-based strategies, simulated on 30-minute candles.
+"""The two level-based strategies, simulated on daily candles.
 
 SUPPORT BOUNCE (your "Support Line Strategy")
     A bar touches a support level. If it is red, look at the next bar. The first green
@@ -8,7 +8,7 @@ SUPPORT BOUNCE (your "Support Line Strategy")
 
 BREAKOUT (your "Breakout Stratergy")
     A resistance level that has already been touched twice is a confirmed level. The
-    first 30-minute close above it is the break. Buy-stop at that bar's high, target at
+    first daily close above it is the break. Buy-stop at that bar's high, target at
     1.5R, stop at the last daily pivot low that was ALREADY CONFIRMED at entry time --
     a 5-bar pivot is not visible until 5 bars after it forms, and using it earlier
     would be reading a swing low that had not happened yet.
@@ -31,7 +31,7 @@ import pandas as pd
 from . import frames, indicators, levels, sizing, trailing, slippage
 from .backtest import charges
 
-TIMEFRAME = "30m"
+TIMEFRAME = "1d"
 MAX_RISK = 500.0        # your "Max Risk Capital" column
 REWARD_RATIO = 1.5      # your "Desired R:R"
 CONFIRM_WINDOW = 6      # bars after a touch to find the confirming green candle
@@ -40,8 +40,8 @@ ENTRY_WINDOW = 4        # bars for the buy-stop to trigger before the setup goes
 # stops differ by an order of magnitude: a support bounce risks ~0.8% and resolves in
 # hours, while a breakout risks 8-15% off a daily pivot, putting its 1.5R target 12-22%
 # away. A single shared cap starved the breakout -- 55% of its trades timed out flat.
-SUPPORT_HOLD_BARS = 130    # ~10 sessions on 30m
-BREAKOUT_HOLD_BARS = 780   # ~60 sessions, room for a multi-month move to play out
+SUPPORT_HOLD_BARS = 10     # ~10 daily sessions
+BREAKOUT_HOLD_BARS = 60    # ~60 sessions, room for a multi-month move to play out
 PIVOT_SPAN = 5          # daily bars either side, for the breakout stop
 BREAK_FAIL_MULTIPLE = 2 # closes below level*(1 - 2*tolerance) abandon a support setup
 
@@ -60,7 +60,7 @@ def _resolve_exit(bars: pd.DataFrame, entry_pos: int, stop: float, target: float
     limit = min(len(bars), entry_pos + max_hold + 1)
 
     # The entry bar itself is included: a buy-stop can trigger and then be stopped out
-    # within the same 30 minutes.
+    # within the same bar.
     for position in range(entry_pos, limit):
         hit_stop = low[position] <= stop
         hit_target = high[position] >= target
@@ -229,9 +229,8 @@ def support_bounce_trades(symbol: str, trailing_stops: bool = False) -> list[dic
         if active.empty:
             continue
         failed_below = price * (1 - BREAK_FAIL_MULTIPLE * levels.TOUCH_TOLERANCE)
-        # 30-minute swing lows: this strategy's initial stop is a 30m candle low and
-        # its trades resolve in days, so a daily pivot would never move the stop.
-        make_trail = (trailing.intraday_trail(active, trailing.pivot_lows(active))
+        # Use swing lows of the same daily bars as the initial stop.
+        make_trail = (trailing.same_frame_trail(active, trailing.pivot_lows(active))
                       if trailing_stops else None)
 
         for touch in levels.touch_events(active, price):
@@ -360,8 +359,7 @@ def ath_levels(daily: pd.DataFrame, pullback: float = ATH_PULLBACK) -> list[tupl
 def ema_exit_signal(daily: pd.DataFrame, stamps, length: int = 20):
     """True on the last bar of any session whose DAILY close finished below its EMA.
 
-    The rule is a daily-close rule, but breakout entries run on 30-minute bars, so it
-    has to be evaluated somewhere in the intraday frame. The honest place is the last
+    The rule is evaluated on daily closes. The relevant signal is the last
     bar of the session: its close IS the daily close, so acting on it uses nothing you
     would not have known at the bell. Flagging an earlier bar would let the trade react
     to a daily close that had not happened yet.
@@ -385,11 +383,6 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
                         scale_r: float = 1.0) -> list[dict]:
     """Breakouts to new all-time highs, detected automatically.
 
-    timeframe="1d" runs entries on daily bars instead of 30-minute ones. That is a
-    DIFFERENT strategy, not the same one measured differently -- the entry fills at a
-    coarser price. It exists only because Kite serves no intraday data before 2015, so
-    it is the only way to look at 2008 at all.
-
     exit_rule picks how the trade ends. The pivot-low stop is always live underneath:
         "trail"        ratcheting daily swing lows -- the original rule
         "ema20"        out on the first daily close below the 20-EMA, stop never moves
@@ -411,20 +404,7 @@ def ath_breakout_trades(symbol: str, trailing_stops: bool = True,
         return None
 
     trades: list[dict] = []
-    intraday_start = bars["ts"].min() if len(bars) else None
-    daily_close = daily["close"].to_numpy()
-    daily_ts = daily["ts"].to_numpy()
     for price, armed_on in ath_levels(daily, pullback):
-        # Daily history reaches back to 2006 but intraday only to 2015. A level armed
-        # pre-2015 whose FIRST daily break also happened pre-2015 is already dead --
-        # scanning post-2015 intraday for "the first crossing" would fire on some later
-        # incidental cross (often a bounce inside a decline), which is exactly the
-        # not-a-breakout error this strategy exists to avoid. Skip such levels.
-        after = (daily_ts > armed_on.to_numpy()) & (daily_close > price)
-        if after.any():
-            first_daily_break = daily_ts[after.argmax()]
-            if intraday_start is not None and first_daily_break < intraday_start.to_numpy():
-                continue
         active = bars[bars["ts"] > armed_on].reset_index(drop=True)
         if len(active) < 2:
             continue

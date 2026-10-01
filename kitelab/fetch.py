@@ -1,9 +1,8 @@
 """Backfill candles from Kite into local Parquet files.
 
-15-minute candles are the base timeframe. Optionally daily candles are fetched too,
-because Kite's intraday history is much shallower than its daily history.
+Only daily candles are fetched.
 
-Storage is one Parquet file per symbol per fetched interval, in data/. For four
+Storage is one Parquet file per symbol, in data/. For four
 symbols this is a few megabytes and pandas reads it instantly -- no database needed.
 """
 from __future__ import annotations
@@ -19,16 +18,7 @@ from .config import DATA, Config
 # Max days Kite will serve in a single historical request, per interval.
 # Source: Kite Connect developer forum, not the official docs page -- treat as
 # approximate. If a request 400s with a date-range error, lower the value.
-CHUNK_DAYS = {
-    "minute": 60,
-    "3minute": 100,
-    "5minute": 100,
-    "10minute": 100,
-    "15minute": 200,
-    "30minute": 200,
-    "60minute": 400,
-    "day": 2000,
-}
+CHUNK_DAYS = {"day": 2000}
 
 # Historical endpoint is documented at 3 req/s. Stay just under it.
 MIN_REQUEST_GAP = 0.35
@@ -82,6 +72,12 @@ class Throttle:
         self._last = time.monotonic()
 
 
+# HEG changed its trading symbol to HEGAM while retaining token 342017 in the
+# 2026-09-02 and 2026-09-24 NSE instrument dumps. The four other stale names
+# moved to the -BE settlement series and are resolved generically below.
+RENAMED_SYMBOLS = {"HEG": "HEGAM"}
+
+
 def instrument_tokens(kite, symbols: list[str], exchange: str) -> dict[str, int]:
     """Resolve trading symbols to instrument tokens, caching the daily dump."""
     cache = DATA / f"instruments_{exchange}_{date.today().isoformat()}.parquet"
@@ -97,7 +93,12 @@ def instrument_tokens(kite, symbols: list[str], exchange: str) -> dict[str, int]
     for symbol in symbols:
         match = equities[equities["tradingsymbol"] == symbol]
         if match.empty:
-            print(f"  !! {symbol}: not found in the {exchange} EQ instrument list -- skipped")
+            alias = RENAMED_SYMBOLS.get(symbol, f"{symbol}-BE")
+            match = equities[equities["tradingsymbol"] == alias]
+            if len(match) == 1:
+                print(f"  {symbol}: resolving current trading symbol {alias}")
+        if len(match) != 1:
+            print(f"  !! {symbol}: not found uniquely in the {exchange} EQ instrument list -- skipped")
             continue
         tokens[symbol] = int(match.iloc[0]["instrument_token"])
     return tokens
@@ -115,13 +116,14 @@ def _to_frame(candles: list[dict]) -> pd.DataFrame:
     return frame[COLUMNS]
 
 
-# NSE's closing auction ends at 15:35 (post 2026-08-03). A bar fetched before
-# that on a trading day is a PARTIAL session and must never be stored as if it
+# NSE's closing auction ends around 15:35 (post 2026-08-03). Kite may
+# still serve the last traded price soon afterwards. Wait until 16:00 IST; a
+# bar fetched before then may have an unverified close and is a PARTIAL session and must never be stored as if it
 # were the day. Measured 2026-09-07: the 101 in-sample files end 2026-08-25
 # with a last-bar volume of 0.19x their 60-day median (fetched 10:19-10:34
 # IST); the 898 others end 2026-09-02 at 0.58x (fetched 12:43-13:49 IST).
 # Every one of those last bars is a fraction of a day wearing a day's stamp.
-SESSION_CLOSE = clock(15, 35)
+SESSION_CLOSE = clock(16, 0)
 
 # On resume, re-fetch this many of the most recent stored sessions and compare
 # them with what Kite serves now. Kite adjusts its whole history at serve time
@@ -151,7 +153,7 @@ def cutoff_date(now=None) -> date:
 def _pull(kite, token: int, interval: str, ranges: list[tuple],
           throttle: Throttle, continuous: bool) -> tuple[pd.DataFrame, int]:
     """Fetch every (start, end) range in CHUNK_DAYS-sized requests."""
-    span = CHUNK_DAYS.get(interval, 100)
+    span = CHUNK_DAYS[interval]
     chunks: list[pd.DataFrame] = []
     requests = 0
     for range_start, range_end in ranges:
@@ -215,6 +217,8 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
 
     `now` is injectable for tests; it defaults to the market clock (IST).
     """
+    if interval != "day":
+        raise ValueError("only the day interval is supported")
     target = path_for(symbol, interval)
     existing = with_ts(pd.read_parquet(target)) if target.exists() else blank()
 
@@ -274,29 +278,18 @@ def fetch_interval(kite, symbol: str, token: int, interval: str,
     return combined
 
 
-def backfill(kite, cfg: Config, intervals: list[str] | None = None) -> None:
-    """Fetch every configured interval for every symbol in cfg.symbols.
-
-    `intervals` overrides the default pair. Passing ["day"] is the cheap screening
-    pass: daily costs ~4 requests per symbol against ~22 for 15-minute, so a wide
-    candidate sweep is a fifth of the price. Fetch the intraday data afterwards, for
-    the symbols that survive screening.
-    """
-    if intervals is None:
-        intervals = ["15minute"] + (["day"] if cfg.use_daily_source else [])
+def backfill(kite, cfg: Config) -> None:
+    """Fetch daily candles for every configured symbol."""
     print(f"\nResolving instruments on {cfg.exchange} ...")
     tokens = instrument_tokens(kite, cfg.symbols, cfg.exchange)
     if not tokens:
         raise SystemExit("No symbols resolved -- check the names in config.local.toml.")
-
     throttle = Throttle()
-    starts = {"day": cfg.start, "15minute": cfg.intraday_start}
-    print(f"\nBackfilling daily from {cfg.start}, intraday from {cfg.intraday_start}:\n")
+    print(f"\nBackfilling daily from {cfg.start}:\n")
     for symbol, token in tokens.items():
-        for interval in intervals:
-            try:
-                fetch_interval(kite, symbol, token, interval,
-                               starts.get(interval, cfg.start), throttle)
-            except Exception as exc:  # keep going; one bad symbol shouldn't kill the run
-                print(f"  !! {symbol} {interval}: {type(exc).__name__}: {exc}")
+        try:
+            fetch_interval(kite, symbol, token, "day", cfg.start, throttle)
+        except Exception as exc:  # keep going; one bad symbol shouldn't kill the run
+            print(f"  !! {symbol} day: {type(exc).__name__}: {exc}")
+
     print(f"\nDone. Parquet files are in {DATA}\n")

@@ -1,8 +1,8 @@
-"""The EMA stack at three speeds: Q/M/W, M/W/D, W/D/H.
+"""The EMA stack on daily and slower bars: Q/M/W and M/W/D.
 
 One rule -- two higher timeframes must agree on the trend before the lowest one
 is allowed to trigger -- run at three speeds. Q/M/W trades weekly closes, M/W/D
-daily (the class strategy), W/D/H hourly.
+daily (the class strategy).
 
 This used to live in scripts/tf_compare.py alongside the workbook it wrote. The
 report scripts were retired on 2026-09-01 because the dashboard replaced them,
@@ -30,7 +30,6 @@ BAND = 0.0
 VARIANTS = [
     ("QMW", "Q/M/W", "quarterly + monthly stacks, traded on WEEKLY closes, stop = entry week's low"),
     ("MWD", "M/W/D", "monthly + weekly stacks, traded on DAILY closes, stop = entry day's low (class strategy)"),
-    ("WDH", "W/D/H", "weekly + daily stacks, traded on HOURLY closes, stop = entry hour's low"),
 ]
 
 # One higher timeframe instead of two, and not always the adjacent one. M/D and
@@ -68,9 +67,6 @@ def _stack_frames(symbol: str, variant: str):
         return frames.weekly(day), [frames.monthly(day), frames.quarterly(day)]
     if variant == "MWD":
         return day, [frames.weekly(day), frames.monthly(day)]
-    if variant == "WDH":
-        hour = frames.load(symbol, "1h")
-        return hour, [day, frames.weekly(day)]
     # pairs: one higher timeframe, one trading timeframe
     if variant == "WD":                       # weekly over daily
         return day, [frames.weekly(day)]
@@ -316,8 +312,8 @@ def simulate_variant(symbol: str, variant: str,
 
 
 def window_start(symbol: str) -> pd.Timestamp:
-    """First hourly bar's day -- the date all three variants can see."""
-    return frames.base_15m(symbol)["ts"].min().normalize()
+    """First daily bar of the symbol."""
+    return frames.daily(symbol)["ts"].min().normalize()
 
 
 def summarise(trades: list[dict]) -> dict:

@@ -4,14 +4,14 @@
     python -m scripts.screen_universe --rank         # screen what has been fetched
     python -m scripts.screen_universe --rank --target 500
 
-Two phases, because daily candles cost ~4 requests per symbol and 15-minute ~22:
+Two phases, using daily candles throughout:
 
     1. --candidates   every ordinary NSE equity we do not already have, written to
                       data/candidates.txt
-    2. backfill those DAILY ONLY  (a fifth of the price of a full pull)
+    2. backfill those daily candles
     3. --rank         apply the quality gate to whatever arrived, stratify the
                       survivors across liquidity, and write data/accepted.txt
-    4. backfill the accepted list properly, then add them to config.local.toml
+    4. backfill the accepted list, then add them to config.local.toml
 
 THE QUALITY GATE. Every defect this project has been bitten by is a rejection rule
 here, so bad data is refused at the door instead of being discovered months later in
@@ -246,13 +246,12 @@ def main() -> None:
         target.write_text(
             "# Ordinary NSE equities not yet in the universe.\n"
             f"# Written by scripts.screen_universe from {dump.name}.\n"
-            "# Fetch DAILY ONLY first -- it is a fifth the cost of a full pull:\n"
-            "#   python -m scripts.backfill --symbols-file data/candidates.txt "
-            "--daily-only\n"
+            "# Fetch daily candles first:\n"
+            "#   python -m scripts.backfill --symbols-file data/candidates.txt\n"
             + "\n".join(wanted) + "\n")
         mins = len(wanted) * 4 * 0.35 / 60
         print(f"\n  wrote {target} with {len(wanted):,} candidates")
-        print(f"  daily-only backfill: ~{len(wanted)*4:,} requests, "
+        print(f"  daily backfill: ~{len(wanted)*4:,} requests, "
               f"~{mins:.0f} minutes of throttle plus network time\n")
         return
 
@@ -271,7 +270,7 @@ def main() -> None:
     if not rows:
         raise SystemExit("\n  Nothing to rank. Fetch the candidates first:\n"
                          "    python -m scripts.backfill --symbols-file "
-                         "data/candidates.txt --daily-only\n")
+                         "data/candidates.txt\n")
 
     passed = [r for r in rows if not r["reject"]]
     print(f"  passed every quality check:         {len(passed):,}\n")
@@ -323,8 +322,6 @@ def main() -> None:
             yrs = [r["years"] for r in chosen if bucket_of(r["turnover"]) == name]
             print(f"    {name:<20s} {n:4,}   median history "
                   f"{float(np.median(yrs)):.1f}y")
-    print(f"\n  full 15-minute backfill for these: ~{len(chosen)*26:,} requests, "
-          f"~{len(chosen)*26*0.35/60:.0f} minutes of throttle\n")
 
 
 if __name__ == "__main__":

@@ -77,62 +77,25 @@ only the three fetching programs call `config.require_secrets()`.
 
 ## Timeframes
 
-15-minute candles are the only intraday interval fetched. Everything else is derived:
+Kite daily candles are the price source. Weekly and monthly bars are grouped from
+the cleaned daily frame; fetching waits until 16:00 IST so the closing auction price
+has time to appear.
 
-| Timeframe | Source                                            |
-|-----------|---------------------------------------------------|
-| `15m`     | Kite, native                                      |
-| `30m`     | resampled from 15m                                |
-| `1h`      | resampled from 15m                                |
-| `1d`      | Kite native if `use_daily_source = true`, else from 15m |
-| `1w`      | grouped from the daily frame                      |
-| `1M`      | grouped from the daily frame                      |
+| Timeframe | Source |
+|-----------|--------|
+| `1d` | Kite native daily candle |
+| `1w` | grouped from daily candles |
+| `1M` | grouped from daily candles |
 
 ```python
 from kitelab import frames
 df = frames.load("HINDZINC", "1w")
 ```
 
-### Why `use_daily_source` defaults to true
-
-Kite's intraday history is shallow (roughly 2015 onward) while its daily history goes
-back much further. Deriving monthly candles from 15-minute bars would truncate your
-monthly chart to whatever the intraday feed covers. Fetching the `day` interval costs
-one extra request per symbol — the daily interval allows 2000 days in a single call —
-and preserves the full history on `1d`, `1w` and `1M`. Set it to `false` if you want a
-pure 15-minute derivation instead.
-
-## The 2026-08-03 session change
-
-NSE introduced a Closing Auction Session on 3 August 2026. For stocks covered by it —
-currently those with active derivatives contracts, a minority of the ~1,000-stock
-universe — continuous trading now ends at **15:15**, and an auction from 15:15 to
-15:35 sets the official closing price. `expected_bars` is applied uniformly, so on
-the stocks the auction does not cover the last 15-minute slot is simply absent.
-
-|                | before 2026-08-03 | from 2026-08-03 |
-|----------------|-------------------|-----------------|
-| continuous session | 09:15–15:30 (375 min) | 09:15–15:15 (360 min) |
-| 15m bars/day   | 25                | 24              |
-| 30m bars/day   | 12 + a 15-min stub at 15:15 | 12, no stub |
-| 1h bars/day    | 6 + a 15-min stub at 15:15  | 6, no stub  |
-
-Two consequences:
-
-- **The daily close is no longer the last intraday close.** It is the auction price
-  struck around 15:35, while the last 15-minute bar ends at 15:15. Deriving daily bars
-  from intraday data would miss the auction entirely, which is the main reason
-  `use_daily_source` defaults to true.
-- **A backtest spanning that date contains a regime change in the data itself.**
-  Close-based results either side of it are not strictly comparable.
-
-`frames.expected_bars(date)` encodes this, and both `scripts.show` and
-`scripts.diagnose` judge each session against the rule that applied on its own date.
-
 ## Verify before trusting a backtest
 
 **The resampled timeframes are computed here, not by Zerodha.** Kite serves no weekly
-or monthly candles at all, and 30m/1h are rebuilt locally. Run
+or monthly candles at all. Run
 `python -m scripts.show HAL 1w -n 12` and compare against TradingView before relying on
 them.
 
@@ -144,11 +107,6 @@ now applies that gap-versus-volume test automatically to anything it flags.
 
 ## Known limits
 
-- **IRFC intraday before 2021-01-29 is not the equity.** Kite serves 15-minute bars
-  from 2018 under the IRFC symbol, but the stock only listed in January 2021, and those
-  years contain 52 / 97 / 4 sessions instead of ~250 — a thinly traded instrument,
-  almost certainly listed debt. `frames.base_15m` drops any intraday bar that predates
-  the first native daily bar and prints what it dropped.
 - **Survivorship bias.** The universe comes from the current instrument list, so
   delisted companies are invisible. With ~1,000 stocks screened from that list it
   is the largest known bias in every number here (estimated ~4.9pp/yr on

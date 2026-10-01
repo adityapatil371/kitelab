@@ -63,7 +63,7 @@ class TrailingStop(unittest.TestCase):
         lows = [100, 95, 105, 92, 110, 90, 120, 88, 130, 95, 140]
         f = frame(lows)
         pivots = trailing.pivot_lows(f, span=1)
-        step = trailing.intraday_trail(f, pivots, span=1)()
+        step = trailing.same_frame_trail(f, pivots, span=1)()
         stop = 80.0
         for i in range(len(lows)):
             moved = step(i, stop, float(lows[i]))
@@ -79,7 +79,7 @@ class TrailingStop(unittest.TestCase):
         """
         lows = [100, 90, 100, 80, 100, 70, 100]
         f = frame(lows)
-        step = trailing.intraday_trail(f, trailing.pivot_lows(f, span=1), span=1)()
+        step = trailing.same_frame_trail(f, trailing.pivot_lows(f, span=1), span=1)()
         stop, raises = 50.0, 0
         for i in range(len(lows)):
             moved = step(i, stop, float(lows[i]))
