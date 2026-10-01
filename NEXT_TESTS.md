@@ -34,7 +34,7 @@ Headline "0 of 36 rows beat buy-and-hold" survived all checks.
 3. Waterfall: 100+ seeded random draws (seed from bytes, not hash()); report spread.
 4. Make check_all.sh fail when tests fail.
 5. Lean pass 2: remove kitelab code used only by deleted scripts
-   (kitelab/excursion.py + tests/test_excursion.py first; list in CLEANUP_PLAN.md).
+   (kitelab/excursion.py + tests/test_excursion.py first; list in CLEANUP_PLAN.md). -- DONE 2026-10-01 (excursion pair removed)
 === BLOCK END ===
 
 ---

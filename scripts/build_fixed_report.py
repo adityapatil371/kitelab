@@ -78,15 +78,6 @@ def piv(d: pd.DataFrame, stop: str, col: str) -> pd.DataFrame:
     return d[d.stop_name == stop].pivot(index="rule", columns="arm", values=col)[ARMS]
 
 
-def md_table(df: pd.DataFrame, fmt: str, index_name: str) -> list[str]:
-    head = f"| {index_name} | " + " | ".join(df.columns) + " |"
-    rule = "|" + "---|" * (len(df.columns) + 1)
-    out = [head, rule]
-    for idx, row in df.iterrows():
-        out.append(f"| `{idx}` | " + " | ".join(format(v, fmt) for v in row) + " |")
-    return out
-
-
 def sign_test(k: int, n: int) -> float:
     """Exact two-sided binomial p-value for k successes in n, under p = 0.5.
 
