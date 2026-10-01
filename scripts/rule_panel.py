@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from kitelab import entries, frames
+from kitelab import curves, entries, frames
 
 BAR_LOCAL = ["mr", "vcon", "vol", "pull", "rsi30", "dryup", "low252", "inside"]
 FLAGGED = ["cal", "gap", "gapdn"]
@@ -41,7 +41,7 @@ def panel_masks(wide: pd.DataFrame):
     xrank = ret.rank(axis=1, pct=True).gt(1.0 - XRANK_TOP)
 
     bar_ret = wide.pct_change(fill_method=None)
-    proxy = (1.0 + bar_ret.mean(axis=1, skipna=True).fillna(0.0)).cumprod()
+    proxy = curves.ew_daily_wealth(bar_ret)
     weak = (proxy / proxy.shift(REL_LOOKBACK) - 1.0) < 0.0
     own_up = (wide / wide.shift(REL_LOOKBACK) - 1.0).gt(0.0)
     mktrel = own_up & pd.DataFrame(
@@ -62,5 +62,4 @@ def fires_for(symbol, entry, bars, masks):
         aligned = col.reindex(pd.DatetimeIndex(bars["ts"]))
         return aligned.fillna(False).to_numpy(dtype=bool)
     return entries.signal(symbol, entry, bars)
-
 

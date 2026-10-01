@@ -418,11 +418,12 @@ def _t_taken(taken):
 
 
 def run_payload(r):
-    longest, current = underwater_stats(r["curve"])
+    longest, current = underwater_stats(r["curve"], r["capital"])
     eps = [{"peak": str(e["peak_day"].date()), "trough": str(e["trough_day"].date()),
             "depth": round(float(e["depth_pct"]), 1),
             "recovered": str(e["recovered"].date()) if e["recovered"] is not None else None,
-            "years": round(e["days"] / 365.25, 1)} for e in episodes(r["curve"])]
+            "years": round(e["days"] / 365.25, 1)}
+            for e in episodes(r["curve"], initial_peak=r["capital"])]
     # cagr is null when the account was wiped out -- the rate is undefined, and the
     # 0.0 this used to emit read as "broke even" on 157 of these 3,072 cells.
     # The page renders null as "Wiped", and a MISSING key as an em dash.

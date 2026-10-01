@@ -81,7 +81,7 @@ import numpy as np
 import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 
-from kitelab import config, frames, slippage
+from kitelab import config, curves, frames, slippage
 
 OUT = Path(__file__).resolve().parent.parent / "output"
 FIG = OUT / "figures"              # every PNG
@@ -90,7 +90,6 @@ FIG.mkdir(parents=True, exist_ok=True)
 SEED = 20260917
 MAXHOLD = 120          # sessions; the longest any cell may hold. Caps the
                        # sliding window, and `t60` is the longest real exit.
-SESSIONS_PER_YEAR = 252.0
 RND_MEAN_HOLD = 15.0   # the exit control's mean holding period, in sessions
 
 ENTRIES = ["mr", "pull", "vcon", "vol", "xrank", "mktrel", "gap", "cal", "rand"]
@@ -170,8 +169,7 @@ def build_signals(p):
     vmed = v.rolling(50, min_periods=50).median()
     sig["vol"] = v.gt(3.0 * vmed) & vmed.gt(0)
     sig["xrank"] = (c / c.shift(252) - 1.0).rank(axis=1, pct=True).gt(0.90)
-    proxy = (1.0 + c.pct_change(fill_method=None).mean(axis=1, skipna=True)
-             .fillna(0.0)).cumprod()
+    proxy = curves.ew_daily_wealth(c.pct_change(fill_method=None))
     weak = (proxy / proxy.shift(20) - 1.0) < 0
     sig["mktrel"] = (c / c.shift(20) - 1.0).gt(0) & pd.DataFrame(
         np.repeat(weak.to_numpy()[:, None], c.shape[1], axis=1),
@@ -386,7 +384,11 @@ def main():
                   f"({time.time() - started:.0f}s)")
 
     print("\n5. cells")
-    stock_years = float(np.isfinite(C).sum()) / SESSIONS_PER_YEAR
+    stock_years = sum(
+        (p["close"].index[np.flatnonzero(np.isfinite(C[:, ci]))[-1]]
+         - p["close"].index[np.flatnonzero(np.isfinite(C[:, ci]))[0]]).days / 365.25
+        for ci in range(C.shape[1]) if np.isfinite(C[:, ci]).sum() > 1)
+    observed_sessions = float(np.isfinite(C).sum())
     rows = []
     for (ename, xname, sname), a in acc.items():
         if not a["ret"]:
@@ -404,7 +406,7 @@ def main():
             "median_hold": float(np.median(hold)),
             "trades_per_stock_year": len(ret) / stock_years,
             "ann_pct": 100.0 * ret.mean() * len(ret) / stock_years,
-            "exposure_pct": 100.0 * hold.sum() / (stock_years * SESSIONS_PER_YEAR),
+            "exposure_pct": 100.0 * hold.sum() / observed_sessions,
             "ret_per_session_bp": 10_000.0 * ret.sum() / hold.sum(),
             "mean_R_w": float(np.clip(R, lo, hi).mean()),
             "pct_ended_by_stop": 100.0 * bs.mean(),

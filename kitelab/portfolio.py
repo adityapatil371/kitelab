@@ -379,7 +379,7 @@ def daily_curve(ledger: list[dict], capital: float) -> dict:
             "peak_date": peak_date, "trough_date": trough_date}
 
 
-def ulcer_index(curve) -> float | None:
+def ulcer_index(curve, initial_peak=None) -> float | None:
     """Root-mean-square of the percentage drawdown, day by day.
 
     Peter Martin's measure. Max drawdown says how deep the worst hole was and
@@ -388,7 +388,7 @@ def ulcer_index(curve) -> float | None:
     a 20% dip that lasts three years. Squaring means a long shallow misery
     scores below one deep plunge, which matches how it feels.
     """
-    peak = float("-inf")
+    peak = float("-inf") if initial_peak is None else float(initial_peak)
     squares = []
     for _, equity in curve:
         peak = max(peak, equity)
@@ -777,7 +777,7 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
         # Return against pain, two ways. MAR is return per unit of worst dip;
         # the Martin ratio is return per unit of Ulcer, which charges for how
         # long the dips lasted as well as how deep they went.
-        "ulcer": (round(ui, 2) if (ui := ulcer_index(marked["curve"])) is not None
+        "ulcer": (round(ui, 2) if (ui := ulcer_index(marked["curve"], capital)) is not None
                   else None),
         "mar": (round(m, 2) if (m := mar_ratio(
             cagr_pct, marked["max_drawdown_pct"])) is not None else None),

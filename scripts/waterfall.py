@@ -54,6 +54,7 @@ WRITES: output/measurements/waterfall_<date>.csv
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 import time
 from datetime import date
@@ -67,7 +68,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from kitelab import entries, indicators                                # noqa: E402
+from kitelab import curves, entries, indicators                        # noqa: E402
 from scripts.rule_panel import FAMILIES, PANEL, STOPS, close_panel, \
     panel_masks, fires_for                                             # noqa: E402
 from scripts.us_rules import load, us_universe, nse_universe, _exit_from, MIN_SESSIONS  # noqa: E402
@@ -269,15 +270,23 @@ def _open_profile(n: np.ndarray):
             float(100.0 * top.sum() / n.sum()))
 
 
-def cagr_of(r: pd.Series) -> float:
+def cagr_of(r: pd.Series) -> float | None:
     eq = float((1.0 + r).prod())
-    yrs = len(r) / SESSIONS
-    return (eq ** (1 / yrs) - 1.0) * 100.0 if eq > 0 and yrs > 0 else -100.0
+    return curves.calendar_cagr(1.0, eq, r.index[0], r.index[-1]) if len(r) else None
 
 
 def maxdd_of(r: pd.Series) -> float:
     e = (1.0 + r).cumprod()
-    return float((e / e.cummax() - 1.0).min() * 100.0)
+    return float(curves.drawdown_from_wealth(e, initial_peak=1.0).min())
+
+
+def trading_session_vol(r: pd.Series) -> float:
+    """Complete-path descriptive volatility, trading-session annualised (%)."""
+    return float(r.std(ddof=0) * np.sqrt(SESSIONS) * 100)
+
+
+def fmt_cagr(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}%/yr"
 
 
 def run_universe(tag, syms, fams, capital, t0, start=None):
@@ -316,6 +325,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
         *(pd.DatetimeIndex(b["ts"]) for b in bars.values()))))
     print(f"  calendar {len(dates):,} sessions "
           f"({dates[0].date()} .. {dates[-1].date()})")
+    print("  ann_vol_pct: trading-session annualised (252), ddof=0")
 
     rets, turn, pos_of = {}, {}, {}
     for s, b in bars.items():
@@ -342,7 +352,15 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
     # rung F: equal-weight, rebalanced daily, same calendar
     wide = pd.DataFrame({s: rets[s] for s in bars}, index=dates)
     ew_daily = wide.mean(axis=1, skipna=True).fillna(0.0)
-    print(f"  EW daily: CAGR {cagr_of(ew_daily):.2f}%/yr, max drawdown {maxdd_of(ew_daily):.1f}%")
+    closes = pd.DataFrame({s: pd.Series(b["close"].to_numpy(float),
+                                       index=pd.DatetimeIndex(b["ts"]))
+                           for s, b in bars.items()}).reindex(dates).ffill()
+    hold_wealth = curves.fixed_share_wealth(
+        closes, listing_policy="first_close", cash_policy="zero_return").mean(axis=1)
+    hold_daily = hold_wealth.pct_change(fill_method=None).fillna(0.0)
+    print(f"  EW daily: CAGR {fmt_cagr(cagr_of(ew_daily))}, max drawdown {maxdd_of(ew_daily):.1f}%")
+    print(f"  buy and hold (fixed shares): CAGR {fmt_cagr(cagr_of(hold_daily))}, "
+          f"max drawdown {maxdd_of(hold_daily):.1f}%")
 
     first = dates[0]
     masks = {}
@@ -353,7 +371,9 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
     rows = []
     for family in fams:
         for stop_name, stop_mult in STOPS.items():
-            seed = abs(hash((tag, family, stop_name))) % (2**32)
+            seed = int.from_bytes(
+                hashlib.blake2s(f"{tag}|{family}|{stop_name}".encode(),
+                                digest_size=4).digest(), "big")
             books = {}
             for mode in ("rule", "random", "nostop", "randomnostop"):
                 rng = np.random.default_rng(seed)
@@ -393,7 +413,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
                              "capped": capped, "cagr_pct": cagr_of(r),
                              "max_dd_pct": maxdd_of(r),
                              "mean_bps_day": float(r.mean() * 1e4),
-                             "ann_vol_pct": float(r.std() * np.sqrt(SESSIONS) * 100),
+                             "ann_vol_pct": trading_session_vol(r),
                              "median_open": nopen[0], "pct_days_cash": nopen[1],
                              "crowding": nopen[2], "exposure_pct": nopen[3]})
             rows.append({"universe": tag, "family": family, "stop": stop_name,
@@ -401,7 +421,15 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
                          "capped": 0, "cagr_pct": cagr_of(ew_daily),
                          "max_dd_pct": maxdd_of(ew_daily),
                          "mean_bps_day": float(ew_daily.mean() * 1e4),
-                         "ann_vol_pct": float(ew_daily.std() * np.sqrt(SESSIONS) * 100),
+                         "ann_vol_pct": trading_session_vol(ew_daily),
+                         "median_open": len(bars), "pct_days_cash": 0.0,
+                         "crowding": 0.0, "exposure_pct": 100.0})
+            rows.append({"universe": tag, "family": family, "stop": stop_name,
+                         "rung": "G  buy and hold (fixed shares)", "trades": 0,
+                         "dropped": 0, "capped": 0, "cagr_pct": cagr_of(hold_daily),
+                         "max_dd_pct": maxdd_of(hold_daily),
+                         "mean_bps_day": float(hold_daily.mean() * 1e4),
+                         "ann_vol_pct": trading_session_vol(hold_daily),
                          "median_open": len(bars), "pct_days_cash": 0.0,
                          "crowding": 0.0, "exposure_pct": 100.0})
         print(f"  [{(time.time()-t0)/60:5.1f} min] {family} done")
@@ -495,6 +523,8 @@ def main() -> None:
             piv[slots_lo] - piv[slots_hi],
         "FINAL: realistic rule minus EW daily":
             piv[slots_hi] - piv["F  EW daily"],
+        "FINAL: realistic rule minus buy and hold":
+            piv[slots_hi] - piv["G  buy and hold (fixed shares)"],
     }).reset_index()
     steps.to_csv(OUT / "measurements" / f"waterfall_steps_{stamp}.csv", index=False)
 
@@ -509,6 +539,8 @@ def main() -> None:
         r = out[(out.universe == tag)]
         print(f"  reference: equal-weight, rebalanced daily "
               f"{r[r.rung.str.startswith('F')].cagr_pct.median():.2f}%/yr")
+        print(f"  reference: buy and hold (fixed shares) "
+              f"{r[r.rung.str.startswith('G')].cagr_pct.median():.2f}%/yr")
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
     for ax, tag in zip(axes, books):

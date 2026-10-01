@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from kitelab import curves
+from kitelab import portfolio
+from scripts import waterfall
 
 
 def test_calendar_cagr_uses_elapsed_calendar_days():
@@ -23,6 +25,22 @@ def test_drawdown_uses_observed_peak_and_recovers():
     assert curves.drawdown_from_wealth(np.array([90, 100])).tolist() == [0, 0]
     assert curves.drawdown_from_wealth(np.array([])).size == 0
     assert curves.drawdown_from_wealth(np.array([100])).tolist() == [0]
+
+
+def test_first_mark_below_initial_capital_counts_as_drawdown():
+    assert curves.drawdown_from_wealth(np.array([0.9]), initial_peak=1.0)[0] == pytest.approx(-10)
+    path = list(zip(pd.date_range("2020-01-01", periods=2), [90.0, 100.0]))
+    assert portfolio.ulcer_index(path, 100.0) == pytest.approx((50.0) ** 0.5)
+    assert curves.episodes(path, initial_peak=100.0)[0]["depth_pct"] == pytest.approx(-10)
+
+
+def test_waterfall_calendar_rate_and_initial_capital_peak():
+    dates = pd.to_datetime(["2020-01-01", "2021-01-01"])
+    returns = pd.Series([-0.1, 0.0], index=dates)
+    assert waterfall.maxdd_of(returns) == pytest.approx(-10)
+    assert waterfall.cagr_of(returns) == pytest.approx(
+        curves.calendar_cagr(1.0, 0.9, dates[0], dates[-1]))
+    assert waterfall.cagr_of(pd.Series([-1.0, 0.0], index=dates)) is None
 
 
 def test_fixed_shares_late_listing_and_daily_rebalance():

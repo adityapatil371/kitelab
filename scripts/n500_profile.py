@@ -156,7 +156,7 @@ def main():
     last = pd.to_datetime(df["last_ts"]).max()
     years = (last - first).days / 365.25
     wealth = float(df["multiple"].sum()) * validation._hold_retention()
-    rebuilt = ((wealth / len(df)) ** (1 / years) - 1) * 100.0
+    rebuilt = curves.calendar_cagr(1.0, wealth / len(df), first, last)
     want = validation.buy_and_hold(study, start_year=year)
     print(f"\n  SELF-CHECK  rebuilt equal-weight hold {rebuilt:.4f}%/yr "
           f"vs validation.buy_and_hold {want:.4f}%/yr")

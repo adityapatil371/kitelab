@@ -205,9 +205,6 @@ def _hold(members, start=None, end=None) -> float | None:
         last_ts = ts[hi - 1] if last_ts is None else max(last_ts, ts[hi - 1])
     if count == 0:
         return None
-    years = (last_ts - first_ts) / np.timedelta64(1, "D") / 365.25
-    if years <= 0:
-        return None
     net = wealth * _hold_retention()      # see _hold_retention: one haircut, no prices
     return curves.calendar_cagr(1.0, net / count, first_ts, last_ts)
 
@@ -525,7 +522,7 @@ def correlate(a, b):
         return None
     x = np.array([a[k] for k in keys], dtype=float)
     y = np.array([b[k] for k in keys], dtype=float)
-    if x.std() == 0 or y.std() == 0:
+    if x.std(ddof=1) == 0 or y.std(ddof=1) == 0:
         return None
     return float(np.corrcoef(x, y)[0, 1])
 

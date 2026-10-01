@@ -50,7 +50,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from kitelab import config, entries, frames, indicators, sizing, slippage
+from kitelab import config, curves, entries, frames, indicators, sizing, slippage
 from kitelab.backtest import charges
 
 sys.path.insert(0, "scripts") if "scripts" not in sys.path else None
@@ -106,8 +106,7 @@ def build_panels(symbols: list[str]) -> dict:
     # documented as needing no entry repair. A price-level average is dominated
     # by high-priced names and steps whenever a symbol enters or leaves the
     # panel; a return index does neither. Fixed 2026-09-24.
-    proxy = (1.0 + wide.pct_change(fill_method=None)
-             .mean(axis=1, skipna=True).fillna(0.0)).cumprod()
+    proxy = curves.ew_daily_wealth(wide.pct_change(fill_method=None))
     weak = (proxy / proxy.shift(fixed_rules.REL_LOOKBACK) - 1.0).lt(0.0)
     print(f"panel: top-decile cells {int(top.to_numpy().sum())}, "
           f"weak-market sessions {int(weak.sum())} of {len(weak)}")

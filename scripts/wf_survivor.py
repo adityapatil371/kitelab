@@ -166,13 +166,9 @@ def wealth_matrix(closes: pd.DataFrame) -> pd.DataFrame:
                                      cash_policy="zero_return")
 
 
-def cagr(s: pd.Series) -> float:
-    if len(s) < 2 or s.iloc[0] <= 0 or s.iloc[-1] <= 0:
-        return float("nan")
-    # Preserve the public wrapper's legacy zero/negative-span behavior.
-    if (s.index[-1] - s.index[0]).days <= 0:
-        yrs = (s.index[-1] - s.index[0]).days / 365.25
-        return ((s.iloc[-1] / s.iloc[0]) ** (1 / yrs) - 1) * 100
+def cagr(s: pd.Series) -> float | None:
+    if s.empty:
+        return None
     return curves.calendar_cagr(s.iloc[0], s.iloc[-1], s.index[0], s.index[-1])
 
 

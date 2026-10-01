@@ -21,15 +21,19 @@ def calendar_cagr(first, last, first_date, last_date):
     return 100 * ((last / first) ** (1 / years) - 1)
 
 
-def drawdown_from_wealth(wealth):
-    """Percentage drawdown from the first observed peak, preserving shape."""
+def drawdown_from_wealth(wealth, initial_peak=None):
+    """Percentage drawdown, optionally counting capital before the first mark."""
     if isinstance(wealth, pd.Series):
         peak = wealth.cummax()
+        if initial_peak is not None:
+            peak = peak.clip(lower=initial_peak)
         return 100.0 * (wealth - peak) / peak
     values = np.asarray(wealth)
     if not len(values):
         return np.asarray([], dtype=float)
     peak = np.maximum.accumulate(values)
+    if initial_peak is not None:
+        peak = np.maximum(peak, initial_peak)
     return 100.0 * (values - peak) / peak
 
 
@@ -51,10 +55,10 @@ def ew_daily_wealth(returns: pd.DataFrame) -> pd.Series:
     return (1.0 + returns.mean(axis=1).fillna(0.0)).cumprod()
 
 
-def underwater_stats(curve):
+def underwater_stats(curve, initial_peak=None):
     """(longest spell in days, still-running spell in days)."""
-    peak = float("-inf")
-    peak_day = None
+    peak = float("-inf") if initial_peak is None else float(initial_peak)
+    peak_day = curve[0][0] if initial_peak is not None and curve else None
     longest = current = 0
     for day, eq in curve:
         if eq >= peak:
@@ -65,12 +69,12 @@ def underwater_stats(curve):
     return longest, current
 
 
-def episodes(curve, top: int = 5):
+def episodes(curve, top: int = 5, initial_peak=None):
     """Each peak-to-recovery spell: depth %, dates, duration. Deepest first."""
     out = []
-    peak = float("-inf")
-    peak_day = trough_day = None
-    trough = None
+    peak = float("-inf") if initial_peak is None else float(initial_peak)
+    peak_day = trough_day = curve[0][0] if initial_peak is not None and curve else None
+    trough = float(initial_peak) if initial_peak is not None else None
     for day, eq in curve:
         if eq >= peak:
             if trough is not None and trough < peak:
@@ -92,13 +96,13 @@ def episodes(curve, top: int = 5):
 
 def bh_stats(daily: pd.DataFrame):
     closes = daily["close"]
-    dd = closes / closes.cummax() - 1
+    dd = drawdown_from_wealth(closes)
     years = (daily["ts"].iloc[-1] - daily["ts"].iloc[0]).days / 365.25
-    growth = closes.iloc[-1] / closes.iloc[0]
     curve = list(zip(daily["ts"], closes))
     longest, current = underwater_stats(curve)
-    return {"cagr": 100 * (growth ** (1 / years) - 1),
-            "maxdd": float(100 * dd.min()),
+    return {"cagr": calendar_cagr(closes.iloc[0], closes.iloc[-1],
+                                   daily["ts"].iloc[0], daily["ts"].iloc[-1]),
+            "maxdd": float(dd.min()),
             "trough": daily["ts"].iloc[int(dd.values.argmin())],
             "longest_uw": longest, "current_uw": current, "years": years}
 
@@ -163,7 +167,7 @@ def _stdev(xs):
 
 
 def sharpe(curve, risk_free: float = 0.0):
-    """Annualised excess return over annualised volatility.
+    """Trading-session annualised excess return over volatility (252 sessions).
 
     None, not zero, when volatility is zero: a flat account has an undefined
     ratio, and zero would rank it alongside a genuinely mediocre one.
@@ -177,7 +181,7 @@ def sharpe(curve, risk_free: float = 0.0):
 
 
 def sortino(curve, risk_free: float = 0.0):
-    """Sharpe's downside-only sibling: upside volatility is not risk.
+    """Trading-session annualised downside-only sibling of Sharpe.
 
     The denominator divides by the count of ALL returns, not just the negative
     ones -- the standard definition, and the one that keeps a rule with few

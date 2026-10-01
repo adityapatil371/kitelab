@@ -63,7 +63,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from kitelab import backtest, config, frames, portfolio, registry, slippage
+from kitelab import backtest, config, curves, frames, portfolio, registry, slippage
 from kitelab.config import CLEAN
 from scripts import dashboard_data as dd
 from scripts.wf_daily import (MIN_DAYS, buckets, closes_matrix, daily_returns,
@@ -240,9 +240,10 @@ def hold_curves(members, unis, assets, board):
     for sym in assets:
         out[sym] = single_name_hold(sym)
     for ukey, c in out.items():
-        yrs = (c.index[-1] - c.index[0]).days / 365.25
+        cagr = curves.calendar_cagr(c.iloc[0], c.iloc[-1], c.index[0], c.index[-1])
+        shown = f"{cagr:.2f}%" if cagr is not None else "n/a"
         print(f"    {ukey:<8}{len(c):>6} days  {c.index[0].date()} to "
-              f"{c.index[-1].date()}  CAGR {100*((c.iloc[-1]/c.iloc[0])**(1/yrs)-1):>7.2f}%")
+              f"{c.index[-1].date()}  CAGR {shown}")
     OUT.mkdir(exist_ok=True)
     ckpt.write_bytes(pickle.dumps(out))
     return out
@@ -319,16 +320,15 @@ def excess_stats(curve, hold):
     se = hac_se(ex, lag)
     if not se:
         return None
-    yrs = (shared[-1] - shared[0]).days / 365.25
     g_r = eq.loc[shared].iloc[-1] / eq.loc[shared].iloc[0]
     g_h = hold.loc[shared].iloc[-1] / hold.loc[shared].iloc[0]
-    rule = 100 * (g_r ** (1 / yrs) - 1) if g_r > 0 else None
-    held = 100 * (g_h ** (1 / yrs) - 1)
+    rule = curves.calendar_cagr(1.0, g_r, shared[0], shared[-1])
+    held = curves.calendar_cagr(1.0, g_h, shared[0], shared[-1])
     t = ex.mean() / se
     return {"days": int(len(ex)), "nw_lag": int(lag),
             "t_hac": round(float(t), 3),
             "p": round(float(norm_sf(t)), 6),
-            "excess_pts": None if rule is None else round(rule - held, 2),
+            "excess_pts": None if rule is None or held is None else round(rule - held, 2),
             # smallest true edge an 80%-power one-sided 5% test catches here
             "mde_80": round(float(2.486 * se * 252 * 100), 2)}
 

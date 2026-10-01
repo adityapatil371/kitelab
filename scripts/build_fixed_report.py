@@ -24,6 +24,7 @@ import math
 
 import pandas as pd
 
+from kitelab import curves
 import scripts.fixed_rules as fixed_rules
 
 MEAS = pathlib.Path("output/measurements/fixed_rules_150sym_2026-09-24.csv")
@@ -115,8 +116,7 @@ def proxy_check() -> dict:
     lb = fixed_rules.REL_LOOKBACK
     price = wide.mean(axis=1, skipna=True)              # scripts/fixed_sim.py:101
     weak_price = (price / price.shift(lb) - 1.0).lt(0.0)
-    ret = (1.0 + wide.pct_change(fill_method=None)
-           .mean(axis=1, skipna=True).fillna(0.0)).cumprod()   # entries.py:252
+    ret = curves.ew_daily_wealth(wide.pct_change(fill_method=None))
     weak_ret = (ret / ret.shift(lb) - 1.0).lt(0.0)
 
     n = len(wide)
