@@ -43,7 +43,7 @@ from statistics import NormalDist
 import numpy as np
 import pandas as pd
 
-from . import backtest, frames, portfolio, signals, slippage, strategies
+from . import backtest, curves, frames, portfolio, signals, slippage, strategies
 
 # The account every rule-level check that has to simulate an account runs on.
 # Rs2L at 1% risk, most-liquid-first -- the smallest account on the grid, at
@@ -209,7 +209,7 @@ def _hold(members, start=None, end=None) -> float | None:
     if years <= 0:
         return None
     net = wealth * _hold_retention()      # see _hold_retention: one haircut, no prices
-    return float(((net / count) ** (1.0 / years) - 1.0) * 100.0)
+    return curves.calendar_cagr(1.0, net / count, first_ts, last_ts)
 
 
 def buy_and_hold(members, start_year=None, end_ts=None) -> float | None:

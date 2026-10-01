@@ -67,7 +67,7 @@ import numpy as np
 import pandas as pd
 
 import kitelab.config as C
-from kitelab import frames, portfolio, registry, validation
+from kitelab import curves, frames, portfolio, registry, validation
 from kitelab.config import CLEAN
 
 OUT = Path(__file__).resolve().parent.parent / "output"
@@ -157,8 +157,8 @@ def hold_curve(closes, members):
     if not cols:
         return None
     sub = closes[cols]
-    first = sub.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
-    wealth = (sub / first).fillna(1.0)          # pre-listing -> Rs1 in cash
+    wealth = curves.fixed_share_wealth(sub, listing_policy="first_close",
+                                       cash_policy="zero_return")
     listed = sub.notna().any(axis=1)            # has ANY member listed yet?
     if not listed.any():
         return None
@@ -251,8 +251,7 @@ def main():
             if c is None:
                 raise SystemExit(f"no hold curve for {key}")
             holds[key] = c
-            yrs = (c.index[-1] - c.index[0]).days / 365.25
-            cagr = 100 * ((c.iloc[-1] / c.iloc[0]) ** (1 / yrs) - 1)
+            cagr = curves.calendar_cagr(c.iloc[0], c.iloc[-1], c.index[0], c.index[-1])
             print(f"  {key:<7}{len(c):>6} days  {c.index[0].date()} to {c.index[-1].date()}"
                   f"  CAGR {cagr:>6.2f}%")
         ckpt.write_bytes(pickle.dumps(holds))
@@ -272,8 +271,7 @@ def main():
         # `all` bucket by definition, and buy_and_hold skips names it cannot read.
         c = holds[key]
         ref = validation.buy_and_hold(members if mem is None else sorted(mem))
-        yrs = (c.index[-1] - c.index[0]).days / 365.25
-        mine = 100 * ((c.iloc[-1] / c.iloc[0]) ** (1 / yrs) - 1)
+        mine = curves.calendar_cagr(c.iloc[0], c.iloc[-1], c.index[0], c.index[-1])
         gap = mine - ref
         worst = max(worst, abs(gap))
         print(f"  {key:<7} buy_and_hold {ref:>6.2f}%/yr  this curve {mine:>6.2f}%/yr"
@@ -339,11 +337,10 @@ def main():
                         n = len(ex)
                         lag = nw_lag(n)
                         se = hac_se(ex, lag)
-                        yrs = (shared[-1] - shared[0]).days / 365.25
                         g_r = eq.loc[shared].iloc[-1] / eq.loc[shared].iloc[0]
                         g_h = hold.loc[shared].iloc[-1] / hold.loc[shared].iloc[0]
-                        rule_cagr = 100 * (g_r ** (1 / yrs) - 1) if g_r > 0 else None
-                        hold_cagr = 100 * (g_h ** (1 / yrs) - 1)
+                        rule_cagr = curves.calendar_cagr(1.0, g_r, shared[0], shared[-1])
+                        hold_cagr = curves.calendar_cagr(1.0, g_h, shared[0], shared[-1])
                         t = (ex.mean() / se) if se else None
                         row = {
                             "universe": uni, "strategy": st.cache, "priority": pri,

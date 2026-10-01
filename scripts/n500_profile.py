@@ -57,7 +57,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from kitelab import frames, validation
+from kitelab import curves, frames, validation
 from scripts.wf_daily import START_DEFAULT
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -77,8 +77,7 @@ def max_drawdown(close):
     Closes only. Intraday lows would make every number worse, so this is the
     kind end of the estimate and is described that way in the report.
     """
-    peak = np.maximum.accumulate(close)
-    return float((100.0 * (close - peak) / peak).min())
+    return float(curves.drawdown_from_wealth(close).min())
 
 
 def main():
@@ -122,7 +121,6 @@ def main():
             bad_price.append(sym)
             continue
         tv = (d["close"] * d["volume"]).to_numpy(float)
-        span_days = (d["ts"].iloc[-1] - d["ts"].iloc[0]).days / 365.25
         rows.append({
             "symbol": sym,
             "industry": meta[sym]["industry"],
@@ -130,7 +128,8 @@ def main():
             "first_ts": d["ts"].iloc[0].date().isoformat(),
             "last_ts": d["ts"].iloc[-1].date().isoformat(),
             "multiple": close[-1] / close[0],
-            "own_cagr": 100.0 * ((close[-1] / close[0]) ** (1 / span_days) - 1),
+            "own_cagr": curves.calendar_cagr(close[0], close[-1],
+                                              d["ts"].iloc[0], d["ts"].iloc[-1]),
             "max_drawdown": max_drawdown(close),
             "traded_value": float(np.median(tv[-RECENT_BARS:])),
         })
@@ -199,8 +198,8 @@ def main():
         t = t[(t["date"] >= cut) & (t["date"] <= last)]
         if len(t) > 1:
             tv_ = t["tri"].to_numpy(float)
-            yrs = (t["date"].iloc[-1] - t["date"].iloc[0]).days / 365.25
-            tri_cagr = 100 * ((tv_[-1] / tv_[0]) ** (1 / yrs) - 1)
+            tri_cagr = curves.calendar_cagr(tv_[0], tv_[-1],
+                                            t["date"].iloc[0], t["date"].iloc[-1])
             tri_dd = max_drawdown(tv_)
             tri_from = t["date"].iloc[0].date().isoformat()
             tri_to = t["date"].iloc[-1].date().isoformat()

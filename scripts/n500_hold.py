@@ -49,7 +49,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from kitelab import config, frames, validation
+from kitelab import config, curves, frames, validation
 from kitelab.config import CLEAN
 from scripts.wf_daily import START_DEFAULT
 
@@ -101,8 +101,8 @@ def tri_cagr(start_year, end_ts):
     d = d[(d["date"] >= pd.Timestamp(f"{start_year}-01-01")) & (d["date"] <= end_ts)]
     if len(d) < 2:
         return None, None, None
-    yrs = (d["date"].iloc[-1] - d["date"].iloc[0]).days / 365.25
-    cagr = 100 * ((d["tri"].iloc[-1] / d["tri"].iloc[0]) ** (1 / yrs) - 1)
+    cagr = curves.calendar_cagr(d["tri"].iloc[0], d["tri"].iloc[-1],
+                                d["date"].iloc[0], d["date"].iloc[-1])
     return cagr, d["date"].iloc[0], d["date"].iloc[-1]
 
 

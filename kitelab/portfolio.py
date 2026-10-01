@@ -41,7 +41,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from . import frames, sizing, slippage
+from . import curves, frames, sizing, slippage
 
 # How same-day signals are ordered when the account cannot afford them all.
 #   "mom_hi"    -- strongest 12-month return first (the rule, see run());
@@ -732,8 +732,9 @@ def run(trades: list[dict], capital: float = 10_000.0, risk_pct: float = 0.01,
     # time elapsed. `wiped` says which. A genuinely flat account still returns 0.0,
     # because for it 0.0 is the true answer. Callers must not coerce None to 0.
     wiped = growth <= 0
-    cagr_pct = (100 * (growth ** (1 / years) - 1)
-                if years > 0 and growth > 0 else None)
+    cagr_pct = (curves.calendar_cagr(1.0, growth,
+                min(t["entry_ts"] for t in entries),
+                max(t["exit_ts"] for t in entries)) if entries else None)
     return {
         "capital": capital, "final": final, "profit": final - capital,
         "return_pct": 100 * (growth - 1),

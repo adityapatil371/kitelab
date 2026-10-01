@@ -64,7 +64,7 @@ import numpy as np
 import pandas as pd
 
 import kitelab.config as C
-from kitelab import portfolio, slippage
+from kitelab import curves, portfolio, slippage
 from kitelab.config import CLEAN
 
 import scripts.wf_daily as wd
@@ -162,15 +162,18 @@ def hold_with_deaths(wealth: pd.DataFrame, deaths: dict) -> pd.Series:
 
 
 def wealth_matrix(closes: pd.DataFrame) -> pd.DataFrame:
-    first = closes.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
-    return (closes / first).fillna(1.0)
+    return curves.fixed_share_wealth(closes, listing_policy="first_close",
+                                     cash_policy="zero_return")
 
 
 def cagr(s: pd.Series) -> float:
     if len(s) < 2 or s.iloc[0] <= 0 or s.iloc[-1] <= 0:
         return float("nan")
-    yrs = (s.index[-1] - s.index[0]).days / 365.25
-    return ((s.iloc[-1] / s.iloc[0]) ** (1 / yrs) - 1) * 100
+    # Preserve the public wrapper's legacy zero/negative-span behavior.
+    if (s.index[-1] - s.index[0]).days <= 0:
+        yrs = (s.index[-1] - s.index[0]).days / 365.25
+        return ((s.iloc[-1] / s.iloc[0]) ** (1 / yrs) - 1) * 100
+    return curves.calendar_cagr(s.iloc[0], s.iloc[-1], s.index[0], s.index[-1])
 
 
 def curve_series(curve) -> pd.Series:

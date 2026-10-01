@@ -8,7 +8,47 @@ formatting, just the measurements.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
+
+
+def calendar_cagr(first, last, first_date, last_date):
+    """Percentage CAGR over elapsed calendar days; None if undefined."""
+    days = (pd.Timestamp(last_date) - pd.Timestamp(first_date)).days
+    if days <= 0 or first <= 0 or last <= 0:
+        return None
+    years = days / 365.25
+    return 100 * ((last / first) ** (1 / years) - 1)
+
+
+def drawdown_from_wealth(wealth):
+    """Percentage drawdown from the first observed peak, preserving shape."""
+    if isinstance(wealth, pd.Series):
+        peak = wealth.cummax()
+        return 100.0 * (wealth - peak) / peak
+    values = np.asarray(wealth)
+    if not len(values):
+        return np.asarray([], dtype=float)
+    peak = np.maximum.accumulate(values)
+    return 100.0 * (values - peak) / peak
+
+
+def fixed_share_wealth(prices: pd.DataFrame, *, listing_policy: str,
+                       cash_policy: str) -> pd.DataFrame:
+    """Rs1 per name, bought at first close; cash earns zero before listing.
+
+    The caller selects members and the date span. This helper leaves missing
+    post-listing observations to the caller's price-alignment policy.
+    """
+    if listing_policy != "first_close" or cash_policy != "zero_return":
+        raise ValueError("unsupported listing or cash policy")
+    first = prices.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
+    return (prices / first).fillna(1.0)
+
+
+def ew_daily_wealth(returns: pd.DataFrame) -> pd.Series:
+    """Daily equal-weight rebalance over available simple returns, base 1."""
+    return (1.0 + returns.mean(axis=1).fillna(0.0)).cumprod()
 
 
 def underwater_stats(curve):
