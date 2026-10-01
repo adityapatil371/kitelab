@@ -29,7 +29,7 @@
 # resolves them -- run_dashboard.sh, check_dashboard.js and config._resolve()
 # all search the same candidates in the same order.
 
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # ------------------------------------------------------------- python ----
@@ -54,7 +54,8 @@ if [ -z "$D" ]; then
 fi
 
 echo "reading  $D"
-echo "python   $($PY -V 2>&1)  [$PY]"
+python_version=$($PY -V 2>&1)
+echo "python   $python_version  [$PY]"
 
 echo; echo "=== 1. build stamp, grid size, family count ==="
 $PY -c "import json,sys;d=json.load(open(sys.argv[1]));print(' ',d['built'],'|',len(d['grid']),'cells |',len(d['strategies']),'families x 2 stops')" "$D"
@@ -112,16 +113,18 @@ if $PY -c "import pandas" 2>/dev/null; then
     # extra is absent -- while unanchored FAILED matched. An audit line that
     # shows the test COUNT but swallows the VERDICT is worse than no line, so
     # if no verdict is found the raw tail is printed rather than nothing.
-    out=$(PYTHONPATH="$PWD" $PY -m unittest discover -s tests -t . 2>&1)
+    suite_status=0
+    out=$(PYTHONPATH="$PWD" $PY -m unittest discover -s tests -t . 2>&1) || suite_status=$?
     if ! printf '%s\n' "$out" | grep -E "^(Ran [0-9]+ test|OK|FAILED)" | sed "s/^/  /"; then
         echo "  (no verdict line matched -- raw tail follows)"
         printf '%s\n' "$out" | tail -5 | sed "s/^/  | /"
     fi
+    if [ "$suite_status" -ne 0 ]; then exit "$suite_status"; fi
 else
     echo "  (no pandas in $PY -- suite skipped, it would report import errors only)"
 fi
 if $PY -c "import pyflakes" 2>/dev/null; then
-    $PY -m pyflakes kitelab scripts tests | sed "s/^/  /"
+    $PY -m pyflakes kitelab scripts tests | sed "s/^/  /" || true
     echo "  (only scripts/refresh.py:69 is expected; anything else is new)"
 else
     echo "  (no pyflakes in $PY -- skipped;  $PY -m pip install pyflakes)"

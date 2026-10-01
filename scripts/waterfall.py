@@ -3,7 +3,8 @@
 THE CONTRADICTION THIS EXISTS TO RESOLVE. Two things are both measured and
 both solid. `scripts/us_rules.py` shows the entry rules genuinely beat random
 timing -- +35 to +100 bps a trade, in two markets that agree with each other.
-The board shows the same rules losing to buy-and-hold by ~18 points a year,
+The board shows the same rules losing to the equal-weight, rebalanced daily
+benchmark by ~18 points a year,
 0 of 36 rows beating it. Those cannot both be true unless something BETWEEN
 the signal and the account is destroying the edge.
 
@@ -23,13 +24,13 @@ from each other. Each rung adds exactly one friction to the one above it:
   D0 rule timing + costs + 20 positions max          D0-C = capital rationing
   D1 rule timing + costs + 10 positions max          D1-D0 = more rationing
   E  RANDOM timing + costs + 20 positions max        D0-E = the honest final
-  F  buy and hold, equal weight, same universe       the benchmark
+  F  equal-weight, rebalanced daily, same universe   the benchmark
 
 WHY RUNG E EXISTS. D0 and D1 carry two frictions the other rungs do not: the
 20-slot limit and the 1% fill cap. The fill cap is not a cost -- it shrinks
 the order in a thin name and leaves the money in cash, which is a LIQUIDITY
 SCREEN wearing a friction's clothes. On NSE that screen is worth more than
-every entry rule on the board: the capped rung beat buy-and-hold in 26 of 26
+every entry rule on the board: the capped rung beat EW daily in 26 of 26
 arms, including arms whose entry is known to have no edge. Rung E charges the
 identical screen to random timing, so D0-E asks the only question that matters
 -- does the ENTRY add anything once both sides own the same screen?
@@ -229,7 +230,7 @@ def account(book, dates, rets, turn, slots, cost_bps, capital):
                     # itself off after its good years. NSE's 20-slot rung then
                     # printed 23.1% CAGR at a 13.8% drawdown while sitting 78%
                     # in cash -- an early-years return annualised over the whole
-                    # span, and compared against a hold that was 100% invested
+                    # span, and compared against EW daily that was 100% invested
                     # throughout. A fixed book is also what the board assumes
                     # (sizing.CAPITAL, the Rs 1cr paper book).
                     order = capital * w
@@ -293,7 +294,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
             dropped_bad.append((s, mv * 100))
             continue
         # Trimmed here, before anything reads the frame, so the rules, the
-        # random controls and buy-and-hold all see the identical history.
+        # random controls and EW daily all see the identical history.
         # Indicators warm up from the new start rather than carrying state
         # across the cut, which is what an investor starting that year has.
         if start is not None:
@@ -309,7 +310,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
     if not bars:
         return pd.DataFrame()
 
-    # One shared calendar. Everything -- rules, controls, hold -- is indexed
+    # One shared calendar. Everything -- rules, controls, EW daily -- is indexed
     # to it, so no rung can win by trading on days another rung cannot see.
     dates = pd.DatetimeIndex(sorted(set().union(
         *(pd.DatetimeIndex(b["ts"]) for b in bars.values()))))
@@ -338,10 +339,10 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
         tv[loc] = tvals
         turn[s] = tv
 
-    # rung F: buy and hold, equal weight, daily rebalanced, same calendar
+    # rung F: equal-weight, rebalanced daily, same calendar
     wide = pd.DataFrame({s: rets[s] for s in bars}, index=dates)
-    hold = wide.mean(axis=1, skipna=True).fillna(0.0)
-    print(f"  hold: CAGR {cagr_of(hold):.2f}%/yr, max drawdown {maxdd_of(hold):.1f}%")
+    ew_daily = wide.mean(axis=1, skipna=True).fillna(0.0)
+    print(f"  EW daily: CAGR {cagr_of(ew_daily):.2f}%/yr, max drawdown {maxdd_of(ew_daily):.1f}%")
 
     first = dates[0]
     masks = {}
@@ -396,11 +397,11 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
                              "median_open": nopen[0], "pct_days_cash": nopen[1],
                              "crowding": nopen[2], "exposure_pct": nopen[3]})
             rows.append({"universe": tag, "family": family, "stop": stop_name,
-                         "rung": "F  buy and hold", "trades": 0, "dropped": 0,
-                         "capped": 0, "cagr_pct": cagr_of(hold),
-                         "max_dd_pct": maxdd_of(hold),
-                         "mean_bps_day": float(hold.mean() * 1e4),
-                         "ann_vol_pct": float(hold.std() * np.sqrt(SESSIONS) * 100),
+                         "rung": "F  EW daily", "trades": 0, "dropped": 0,
+                         "capped": 0, "cagr_pct": cagr_of(ew_daily),
+                         "max_dd_pct": maxdd_of(ew_daily),
+                         "mean_bps_day": float(ew_daily.mean() * 1e4),
+                         "ann_vol_pct": float(ew_daily.std() * np.sqrt(SESSIONS) * 100),
                          "median_open": len(bars), "pct_days_cash": 0.0,
                          "crowding": 0.0, "exposure_pct": 100.0})
         print(f"  [{(time.time()-t0)/60:5.1f} min] {family} done")
@@ -492,8 +493,8 @@ def main() -> None:
             piv[slots_hi] - piv[f"E  random, + costs, {SLOTS[0]:>2} slots"],
         f"tightening {SLOTS[0]} -> {SLOTS[1]} positions costs":
             piv[slots_lo] - piv[slots_hi],
-        "FINAL: realistic rule minus buy and hold":
-            piv[slots_hi] - piv["F  buy and hold"],
+        "FINAL: realistic rule minus EW daily":
+            piv[slots_hi] - piv["F  EW daily"],
     }).reset_index()
     steps.to_csv(OUT / "measurements" / f"waterfall_steps_{stamp}.csv", index=False)
 
@@ -506,7 +507,7 @@ def main() -> None:
             v = s_[col].dropna()
             print(f"  {col:<46} {v.median():+8.2f} {f'{(v > 0).sum()} of {len(v)}':>10}")
         r = out[(out.universe == tag)]
-        print(f"  reference: buy and hold "
+        print(f"  reference: equal-weight, rebalanced daily "
               f"{r[r.rung.str.startswith('F')].cagr_pct.median():.2f}%/yr")
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
@@ -516,8 +517,8 @@ def main() -> None:
         ax.bar(range(len(med)), med.to_numpy(), color="steelblue")
         ax.set_xticks(range(len(med)))
         ax.set_xticklabels([r[:1] for r in med.index])
-        ax.axhline(med.get("F buy and hold", np.nan), color="crimson", lw=1.5,
-                   label="buy and hold")
+        ax.axhline(med.get("F  EW daily", np.nan), color="crimson", lw=1.5,
+                   label="EW daily")
         ax.set_title(f"{tag}: median account CAGR by rung")
         ax.grid(alpha=0.3, axis="y")
         ax.legend(fontsize=8)
