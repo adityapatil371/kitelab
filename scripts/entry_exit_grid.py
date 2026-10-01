@@ -181,16 +181,27 @@ def build_signals(p):
     sig["cal"] = pd.DataFrame(
         np.repeat(first.to_numpy()[:, None], c.shape[1], axis=1),
         index=c.index, columns=c.columns)
-    rates = [float((sig[k] & listed).to_numpy().sum()) /
-             float(listed.to_numpy().sum()) for k in sig]
-    rate = float(np.median(rates))
+    rate = walk_forward_random_rate(sig, listed)
     sig["rand"] = pd.DataFrame(
-        np.random.default_rng(SEED).random(c.shape) < rate,
+        np.random.default_rng(SEED).random(c.shape) < rate.to_numpy()[:, None],
         index=c.index, columns=c.columns)
-    print(f"  entry control `rand` fires at {100 * rate:.3f}% of stock-sessions")
+    print(f"  entry control `rand`: prior-session expanding median rate "
+          f"{100 * rate.mean():.3f}%, warm-up 20 sessions at 0%")
     for k in sig:
         sig[k] = (sig[k].fillna(False) & listed)
     return sig
+
+
+def walk_forward_random_rate(signals, listed, warmup=20):
+    """Median rule firing rate through yesterday, with a zero-rate warm-up."""
+    observed = listed.sum(axis=1).cumsum().shift(1, fill_value=0)
+    rates = []
+    for signal in signals.values():
+        fired = (signal & listed).sum(axis=1).cumsum().shift(1, fill_value=0)
+        rates.append(fired.div(observed.replace(0, np.nan)))
+    rate = pd.concat(rates, axis=1).median(axis=1).fillna(0.0)
+    rate.iloc[:warmup] = 0.0
+    return rate
 
 
 def half_spread_panel(p):

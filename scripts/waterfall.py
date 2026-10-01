@@ -38,7 +38,9 @@ identical screen to random timing, so D0-E asks the only question that matters
 THE ACCOUNT MODEL. Equity is spread equally over whatever positions are open;
 with nothing open it sits in cash earning zero. That is the same equal-weight
 convention `scripts/vol_target.py` uses for its baskets, so rung F is directly
-comparable. Round-trip cost is charged in full on the entry day. Under a
+comparable. The script's 23 bp round-trip cost is split into 11.5 bp per
+side of absolute weight turnover, including entries, exits and daily resizing.
+EW daily pays for rebalancing; fixed-share hold pays one entry side. Under a
 position limit, signals that arrive with no free slot are DROPPED, not queued
 -- a dropped signal is what capital rationing actually feels like.
 
@@ -91,16 +93,37 @@ CAP_LAG = 1
 MAX_DAY = 5.00             # see scripts.vol_target -- CRUDEOIL is not a price
 
 
-def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
+def draw_seed(arm: str, draw: int, base_seed: int) -> int:
+    """Stable across Python processes and independent across arms and draws."""
+    payload = f"{base_seed}|{arm}|{draw}".encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+
+
+def draw_band(values):
+    """Median and central 90% interval, in the same units as values."""
+    return tuple(float(x) for x in np.percentile(values, [50, 5, 95]))
+
+
+def trade_arrays(bars, family, stop_mult):
+    c = bars["close"].to_numpy(float)
+    lo = bars["low"].to_numpy(float)
+    atr = indicators.atr(bars["high"], bars["low"], bars["close"],
+                         entries.ATR_LEN).to_numpy(float)
+    if callable(stop_mult):
+        atr = stop_mult(bars, family)
+        stop_mult = 1.0
+    return c, lo, atr, stop_mult
+
+
+def trades_for(sym, bars, family, stop_mult, masks, rng, mode, rule_count=None,
+               prepared=None):
     """Trade list as (entry_i, exit_i). mode: 'rule' | 'random' | 'nostop'.
 
     'nostop' keeps the rule's entries and replaces the exit with a flat
     60-session hold, which is the only way to price the stop separately.
     """
-    c = bars["close"].to_numpy(float)
-    lo = bars["low"].to_numpy(float)
-    atr = indicators.atr(bars["high"], bars["low"], bars["close"],
-                         entries.ATR_LEN).to_numpy(float)
+    c, lo, atr, actual_stop = (prepared if prepared is not None else
+                               trade_arrays(bars, family, stop_mult))
     # A stop may be a NUMBER (multiples of ATR, the board's convention) or a
     # CALLABLE, in which case it is asked for a per-bar stop DISTANCE in price
     # units and the multiple becomes 1.0. That is the whole hook a tailored
@@ -109,9 +132,7 @@ def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
     # the exit logic below stays byte-identical between the board's stops and
     # a tailored one. The callable never sees returns -- only bars.
     stop_arg = stop_mult          # the UNREWRITTEN stop, for the recursion below
-    if callable(stop_mult):
-        atr = stop_mult(bars, family)
-        stop_mult = 1.0
+    stop_mult = actual_stop
     total = len(bars)
     out = []
 
@@ -150,8 +171,9 @@ def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
     # 1.0, and passing that down would silently give the control a 1x-ATR stop
     # against a tailored rule arm -- a stop-width difference wearing a timing
     # test's clothes.
-    n = len(trades_for(sym, bars, family, stop_arg, masks, rng,
-                       "nostop" if flat else "rule"))
+    n = (rule_count if rule_count is not None else
+         len(trades_for(sym, bars, family, stop_arg, masks, rng,
+                        "nostop" if flat else "rule")))
     if not n:
         return out
     lo_i, hi_i = entries.ATR_LEN + 1, total - 2
@@ -181,6 +203,14 @@ def trades_for(sym, bars, family, stop_mult, masks, rng, mode):
     return sorted(out)
 
 
+def turnover_cost(previous, target, cost_bps):
+    """One side of the 23 bp round trip per unit of absolute weight change."""
+    names = previous.keys() | target.keys()
+    turnover = sum(abs(target.get(s, 0.0) - previous.get(s, 0.0))
+                   for s in names)
+    return turnover, turnover * cost_bps / 2.0 / 1e4
+
+
 def account(book, dates, rets, turn, slots, cost_bps, capital):
     """Walk the calendar. `book` maps symbol -> list of (entry_i, exit_i) as
     positions in that symbol's OWN bar index, already translated to positions
@@ -205,6 +235,8 @@ def account(book, dates, rets, turn, slots, cost_bps, capital):
     expo_log = np.zeros(n)
     port = np.zeros(n)
     eq, taken, dropped, capped = 1.0, 0, 0, 0
+    previous = {}
+    total_turnover = 0.0
     for t in range(n):
         for sym, b in opens[t]:
             if slots is not None and len(held) >= slots:
@@ -218,6 +250,7 @@ def account(book, dates, rets, turn, slots, cost_bps, capital):
         if held:
             w = 1.0 / len(held)
             day, wsum = 0.0, 0.0
+            target = {}
             for sym in list(held):
                 r = rets.get(sym)
                 x = r[t] if r is not None and np.isfinite(r[t]) else 0.0
@@ -242,16 +275,54 @@ def account(book, dates, rets, turn, slots, cost_bps, capital):
                         capped += 1
                 day += weight * x
                 wsum += weight
+                target[sym] = weight
             expo_log[t] = wsum
-            # round trip charged in full on the entry day
-            fresh = sum(1 for sym, b in opens[t] if held.get(sym) == b)
-            day -= fresh * w * cost_bps / 1e4
+            turnover, fee = turnover_cost(previous, target, cost_bps)
+            total_turnover += turnover
+            day -= fee
+            # Mark shares to the close. Tomorrow's rebalance trades against
+            # these drifted weights, including changes in the fill cap.
+            post_value = {s: wt * (1.0 + (rets[s][t] if np.isfinite(rets[s][t])
+                                                     else 0.0))
+                          for s, wt in target.items()}
+            leaving = {s: post_value[s] / (1.0 + day)
+                       for s, b in held.items() if b <= t}
+            if leaving:
+                exit_turnover = sum(leaving.values())
+                total_turnover += exit_turnover
+                day -= exit_turnover * cost_bps / 2.0 / 1e4
+            previous = {s: value / (1.0 + day) for s, value in post_value.items()
+                        if s not in leaving}
             port[t] = day
             eq *= (1.0 + day)
+        elif previous:
+            turnover, fee = turnover_cost(previous, {}, cost_bps)
+            total_turnover += turnover
+            port[t] = -fee
+            previous = {}
         for sym in [s for s, b in held.items() if b <= t]:
             del held[sym]
     return (pd.Series(port, index=dates), taken, dropped, capped,
-            _open_profile(nopen_log) + (float(100.0 * expo_log.mean()),))
+            _open_profile(nopen_log) + (float(100.0 * expo_log.mean()),),
+            total_turnover / ((dates[-1] - dates[0]).days / 365.25))
+
+
+def ew_rebalanced(wide, cost_bps):
+    """Equal weight among names with a return; pay for every daily rebalance."""
+    previous = {}
+    out = np.zeros(len(wide))
+    turnover_total = 0.0
+    for i, (_, row) in enumerate(wide.iterrows()):
+        available = row.dropna()
+        target = {s: 1.0 / len(available) for s in available.index} if len(available) else {}
+        turnover, fee = turnover_cost(previous, target, cost_bps)
+        turnover_total += turnover
+        gross = float(available.mean()) if len(available) else 0.0
+        out[i] = gross - fee
+        previous = {s: wt * (1.0 + float(available[s])) / (1.0 + out[i])
+                    for s, wt in target.items()}
+    years = (wide.index[-1] - wide.index[0]).days / 365.25
+    return pd.Series(out, index=wide.index), turnover_total / years
 
 
 def _open_profile(n: np.ndarray):
@@ -289,7 +360,8 @@ def fmt_cagr(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.2f}%/yr"
 
 
-def run_universe(tag, syms, fams, capital, t0, start=None):
+def run_universe(tag, syms, fams, capital, t0, start=None, draws=100,
+                 base_seed=0):
     print(f"\n=== {tag}: loading {len(syms)} symbols ===")
     bars, dropped_bad = {}, []
     for s in syms:
@@ -351,13 +423,17 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
 
     # rung F: equal-weight, rebalanced daily, same calendar
     wide = pd.DataFrame({s: rets[s] for s in bars}, index=dates)
-    ew_daily = wide.mean(axis=1, skipna=True).fillna(0.0)
+    ew_daily, ew_turnover = ew_rebalanced(wide, COST_BPS)
     closes = pd.DataFrame({s: pd.Series(b["close"].to_numpy(float),
                                        index=pd.DatetimeIndex(b["ts"]))
                            for s, b in bars.items()}).reindex(dates).ffill()
     hold_wealth = curves.fixed_share_wealth(
         closes, listing_policy="first_close", cash_policy="zero_return").mean(axis=1)
     hold_daily = hold_wealth.pct_change(fill_method=None).fillna(0.0)
+    first_trade = closes.notna() & ~closes.notna().cummax().shift(1, fill_value=False)
+    hold_entry_turnover = first_trade.sum(axis=1) / len(bars)
+    hold_daily -= hold_entry_turnover * COST_BPS / 2.0 / 1e4
+    hold_turnover = float(hold_entry_turnover.sum()) / ((dates[-1] - dates[0]).days / 365.25)
     print(f"  EW daily: CAGR {fmt_cagr(cagr_of(ew_daily))}, max drawdown {maxdd_of(ew_daily):.1f}%")
     print(f"  buy and hold (fixed shares): CAGR {fmt_cagr(cagr_of(hold_daily))}, "
           f"max drawdown {maxdd_of(hold_daily):.1f}%")
@@ -371,12 +447,10 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
     rows = []
     for family in fams:
         for stop_name, stop_mult in STOPS.items():
-            seed = int.from_bytes(
-                hashlib.blake2s(f"{tag}|{family}|{stop_name}".encode(),
-                                digest_size=4).digest(), "big")
+            arm = f"{tag}|{family}|{stop_name}"
             books = {}
-            for mode in ("rule", "random", "nostop", "randomnostop"):
-                rng = np.random.default_rng(seed)
+            for mode in ("rule", "nostop"):
+                rng = np.random.default_rng(0)
                 bk = {}
                 for s, b in bars.items():
                     tl = trades_for(s, b, family, stop_mult, masks, rng, mode)
@@ -384,6 +458,26 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
                         loc = pos_of[s]
                         bk[s] = [(int(loc[a]), int(loc[e])) for a, e in tl]
                 books[mode] = bk
+
+            random_books = {"random": [], "randomnostop": []}
+            prepared = {s: trade_arrays(b, family, stop_mult)
+                        for s, b in bars.items()}
+            rule_counts = {s: len(v) for s, v in books["rule"].items()}
+            flat_counts = {s: len(v) for s, v in books["nostop"].items()}
+            for draw in range(draws):
+                for mode, counts in (("random", rule_counts),
+                                     ("randomnostop", flat_counts)):
+                    rng = np.random.default_rng(draw_seed(f"{arm}|{mode}", draw,
+                                                          base_seed))
+                    bk = {}
+                    for s, b in bars.items():
+                        tl = trades_for(s, b, family, stop_mult, masks, rng, mode,
+                                        rule_count=counts.get(s, 0),
+                                        prepared=prepared[s])
+                        if tl:
+                            loc = pos_of[s]
+                            bk[s] = [(int(loc[a]), int(loc[e])) for a, e in tl]
+                    random_books[mode].append(bk)
 
             rungs = [
                 ("A0 random, no cost, NO STOP",   "randomnostop", None, 0.0),
@@ -405,20 +499,46 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
             # printed order is deliberate: A0/A are the two controls, B/X the
             # two rule arms, then frictions. Do NOT let pandas sort these.
 
+            random_cagrs = {}
             for label, mode, slots, cost in rungs:
-                r, taken, dropped, capped, nopen = account(
-                    books[mode], dates, rets, turn, slots, cost, capital)
+                run_books = random_books[mode] if mode.startswith("random") else [books[mode]]
+                results = [account(bk, dates, rets, turn, slots, cost, capital)
+                           for bk in run_books]
+                values = [cagr_of(result[0]) for result in results]
+                if mode.startswith("random"):
+                    random_cagrs[label] = values
+                    mid = int(np.argsort(values)[len(values) // 2])
+                    band = draw_band(values)
+                else:
+                    mid = 0
+                    band = (np.nan, np.nan, np.nan)
+                r, taken, dropped, capped, nopen, turnover_year = results[mid]
                 rows.append({"universe": tag, "family": family, "stop": stop_name,
                              "rung": label, "trades": taken, "dropped": dropped,
-                             "capped": capped, "cagr_pct": cagr_of(r),
+                             "capped": capped,
+                             "cagr_pct": band[0] if mode.startswith("random") else cagr_of(r),
+                             "turnover_per_year": turnover_year,
+                             "random_median_cagr_pct": band[0],
+                             "random_p05_cagr_pct": band[1],
+                             "random_p95_cagr_pct": band[2],
                              "max_dd_pct": maxdd_of(r),
                              "mean_bps_day": float(r.mean() * 1e4),
                              "ann_vol_pct": trading_session_vol(r),
                              "median_open": nopen[0], "pct_days_cash": nopen[1],
                              "crowding": nopen[2], "exposure_pct": nopen[3]})
+            d0 = next(row for row in rows if row["universe"] == tag
+                      and row["family"] == family and row["stop"] == stop_name
+                      and row["rung"].startswith("D0"))
+            e = next(row for row in rows if row["universe"] == tag
+                     and row["family"] == family and row["stop"] == stop_name
+                     and row["rung"].startswith("E "))
+            diffs = np.asarray(d0["cagr_pct"] - np.asarray(random_cagrs[e["rung"]]))
+            e["rule_minus_random_median_pct"], e["rule_minus_random_p05_pct"], e["rule_minus_random_p95_pct"] = draw_band(diffs)
+            e["rule_beats_random_share"] = float(np.mean(diffs > 0))
             rows.append({"universe": tag, "family": family, "stop": stop_name,
                          "rung": "F  EW daily", "trades": 0, "dropped": 0,
                          "capped": 0, "cagr_pct": cagr_of(ew_daily),
+                         "turnover_per_year": ew_turnover,
                          "max_dd_pct": maxdd_of(ew_daily),
                          "mean_bps_day": float(ew_daily.mean() * 1e4),
                          "ann_vol_pct": trading_session_vol(ew_daily),
@@ -427,6 +547,7 @@ def run_universe(tag, syms, fams, capital, t0, start=None):
             rows.append({"universe": tag, "family": family, "stop": stop_name,
                          "rung": "G  buy and hold (fixed shares)", "trades": 0,
                          "dropped": 0, "capped": 0, "cagr_pct": cagr_of(hold_daily),
+                         "turnover_per_year": hold_turnover,
                          "max_dd_pct": maxdd_of(hold_daily),
                          "mean_bps_day": float(hold_daily.mean() * 1e4),
                          "ann_vol_pct": trading_session_vol(hold_daily),
@@ -443,6 +564,10 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=1e7,
                     help="account size in rupees, for the fill cap only")
     ap.add_argument("--pilot", type=int, default=0, help="use only N symbols")
+    ap.add_argument("--draws", type=int, default=100,
+                    help="independent deterministic draws per random arm")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="base seed for every random arm")
     ap.add_argument("--start", default=None,
                     help="drop every bar before this date (YYYY-MM-DD). The "
                          "India numbers are shaped by 2008; --start 2010-01-01 "
@@ -459,6 +584,8 @@ def main() -> None:
                          "that says whether the cap, or merely holding cash, "
                          "is what the slot rungs are actually doing.")
     args = ap.parse_args()
+    if args.draws < 1:
+        ap.error("--draws must be positive")
     CAP_FRAC = args.capfrac
     CAP_LAG = args.caplag
     t0 = time.time()
@@ -471,9 +598,10 @@ def main() -> None:
         books = {k: v[:args.pilot] for k, v in books.items()}
 
     start = pd.Timestamp(args.start) if args.start else None
-    out = pd.concat([run_universe(t, s, args.families, args.capital, t0, start)
+    out = pd.concat([run_universe(t, s, args.families, args.capital, t0, start,
+                                  args.draws, args.seed)
                      for t, s in books.items()], ignore_index=True)
-    stamp = date.today().isoformat()
+    stamp = f"{date.today().isoformat()}_draws{args.draws}_seed{args.seed}"
     if args.capfrac != 0.01:            # never clobber the shipped run
         stamp += f"_capfrac{args.capfrac:g}"
     if args.start:
@@ -541,6 +669,16 @@ def main() -> None:
               f"{r[r.rung.str.startswith('F')].cagr_pct.median():.2f}%/yr")
         print(f"  reference: buy and hold (fixed shares) "
               f"{r[r.rung.str.startswith('G')].cagr_pct.median():.2f}%/yr")
+        for _, arm in r[r.rung.str.startswith(("A0", "A ", "E "))].iterrows():
+            print(f"  {arm['family']}|{arm['stop']} {arm['rung']}: random CAGR "
+                  f"{arm['random_median_cagr_pct']:.2f} "
+                  f"[{arm['random_p05_cagr_pct']:.2f}, "
+                  f"{arm['random_p95_cagr_pct']:.2f}]")
+            if arm['rung'].startswith('E '):
+                print(f"    rule minus random {arm['rule_minus_random_median_pct']:.2f} "
+                      f"[{arm['rule_minus_random_p05_pct']:.2f}, "
+                      f"{arm['rule_minus_random_p95_pct']:.2f}]; "
+                      f"rule beats {arm['rule_beats_random_share']:.1%}")
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
     for ax, tag in zip(axes, books):
