@@ -13,34 +13,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK2 = "#52514e"
-GRID = "#e3e2de"
-TODAY_C = "#2a78d6"    # categorical slot 1 -- today's membership list
-PIT_C = "#eb6834"      # categorical slot 2 -- the point-in-time list
-TRI_C = "#8a8985"      # the real index: neutral, it is the reference
-NEG = "#d03b3b"
-
-
-def _frame(ax, xlabel="", ylabel=""):
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(GRID)
-    ax.tick_params(colors=INK2, labelsize=8, length=3, color=GRID)
-    if xlabel:
-        ax.set_xlabel(xlabel, color=INK2, fontsize=8.5)
-    if ylabel:
-        ax.set_ylabel(ylabel, color=INK2, fontsize=8.5)
-
-
-def _save(fig, path):
-    fig.patch.set_facecolor(SURFACE)
-    fig.savefig(path, dpi=200, facecolor=SURFACE, bbox_inches="tight")
-    plt.close(fig)
-    print(f"    wrote {path}")
+from scripts.report_common import (SURFACE, FIG_INK as INK, FIG_INK2 as INK2,
+                                   GRID, BLUE as TODAY_C, ORANGE as PIT_C,
+                                   GREY as TRI_C, RED as NEG, _frame, _save)
 
 
 # --------------------------------------------------------------- figure 1 --

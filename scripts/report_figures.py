@@ -15,39 +15,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK2 = "#52514e"
-GRID = "#e3e2de"
-TIGHT = "#2a78d6"      # categorical slot 1 -- the entry bar's own low
-WIDE = "#eb6834"       # categorical slot 2 -- 3 x ATR(14)
-POS = "#2a78d6"        # diverging: ahead of hold
-NEG = "#d03b3b"        # diverging: behind hold
-MID = "#8a8985"
+from scripts.report_common import (SURFACE, FIG_INK as INK, FIG_INK2 as INK2,
+                                   GRID, BLUE as TIGHT, ORANGE as WIDE,
+                                   BLUE as POS, RED as NEG, GREY as MID,
+                                   _frame, _save)
 
 VARIANT_COLOR = {"own": TIGHT, "atr3": WIDE}
 VARIANT_NAME = {"own": "Stop at the entry bar's own low",
                 "atr3": "Stop 3 x ATR(14) below entry"}
-
-
-def _frame(ax, xlabel="", ylabel=""):
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(GRID)
-    ax.tick_params(colors=INK2, labelsize=8, length=3, color=GRID)
-    if xlabel:
-        ax.set_xlabel(xlabel, color=INK2, fontsize=8.5)
-    if ylabel:
-        ax.set_ylabel(ylabel, color=INK2, fontsize=8.5)
-
-
-def _save(fig, path):
-    fig.patch.set_facecolor(SURFACE)
-    fig.savefig(path, dpi=200, facecolor=SURFACE, bbox_inches="tight")
-    plt.close(fig)
-    print(f"    wrote {path}")
 
 
 # --------------------------------------------------------------- figure 1 --

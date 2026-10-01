@@ -48,14 +48,13 @@ import sys
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.platypus import (BaseDocTemplate, Frame, Image, KeepTogether,
-                                PageBreak, PageTemplate, Paragraph, Spacer,
-                                Table, TableStyle)
+from reportlab.platypus import (BaseDocTemplate, Image, KeepTogether,
+                                PageBreak, Paragraph, Spacer, Table, TableStyle)
 
 from scripts import n500_figures as figs
 from scripts import n500_text as text
-from scripts.build_report import (BOX, INK2, NEG, POS, RULE, S, data_table,
-                                  dash, inr)
+from scripts.build_report import data_table, dash, inr
+from scripts.report_common import (BOX, INK2, NEG, POS, S, P, build_document)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUTDIR = ROOT / "output"
@@ -72,10 +71,6 @@ REFERENCE_YEAR = 2018          # the one start year the prose quotes by default
 # and the constituent count inside them.
 BASKETS = {"TODAY-EARLY": "early", "TODAY": "today", "PIT": "pit",
            "ALL": "all", "TRI": "tri"}
-
-
-def P(txt, style="body"):
-    return Paragraph(txt, S[style])
 
 
 def picture(path, width):
@@ -689,20 +684,6 @@ def section_appendix(grid, hold, uni, prof, story):
 
 
 # ------------------------------------------------------------ the layout ---
-def page_furniture(canvas, doc):
-    canvas.saveState()
-    canvas.setFont("Helvetica", 7.6)
-    canvas.setFillColor(INK2)
-    canvas.drawString(22 * mm, 13 * mm,
-                      f"{text.TITLE}  |  kitelab, "
-                      f"{dt.date.today():%B %Y}  |  not investment advice")
-    canvas.drawRightString(A4[0] - 22 * mm, 13 * mm, f"{doc.page}")
-    canvas.setStrokeColor(RULE)
-    canvas.setLineWidth(0.5)
-    canvas.line(22 * mm, 16.5 * mm, A4[0] - 22 * mm, 16.5 * mm)
-    canvas.restoreState()
-
-
 class AuditDoc(BaseDocTemplate):
     """A document that records where each flowable actually landed.
 
@@ -778,17 +759,9 @@ def _plain(txt):
 
 
 def build(story):
-    doc = AuditDoc(str(PDF), pagesize=A4,
-                   leftMargin=22 * mm, rightMargin=22 * mm,
-                   topMargin=20 * mm, bottomMargin=22 * mm,
-                   title=text.TITLE, author="kitelab")
-    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height,
-                  id="body")
-    doc.addPageTemplates([PageTemplate(id="main", frames=[frame],
-                                       onPage=page_furniture)])
-    doc.build(story)
+    doc = build_document(story, PDF, text.TITLE,
+                         f"{dt.date.today():%B %Y}", AuditDoc)
     page_report(doc)
-
 
 # A table taller than a page cannot be kept with its caption -- KeepTogether
 # cannot break what will not fit -- so only a short one is bound. The 36-row
