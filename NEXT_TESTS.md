@@ -1,40 +1,27 @@
-# SESSION 2026-09-30 — read this first
-
-## State of the repo (UNSAVED)
-- Codex deleted 80 files on disk (finished research scripts, dead scripts,
-  pine/, experiments/, class CSVs, old audit/fix docs). Details: CLEANUP_PLAN.md.
-- NOT committed: .git is read-only inside the AI sandbox. The owner must run
-  these on the Mac, in the repo folder:
-    git restore scripts/show.py scripts/diagnose.py
-    git tag -a pre-cleanup 58889cf -m "State before the 2026-09-30 cleanup"
-    git switch -c cleanup
-    git add .gitignore AUDIT_REPORT_2026-09-30.md NEXT_TESTS.md && git commit -m "Add the 2026-09-30 audit report and session notes"
-    git add -u && git commit -m "Remove finished research, dead scripts, Pine files, class CSVs and superseded docs"
-- Verified before commit: 471 tests pass, both page checks pass, all 11 kept
-  research scripts import. Tracked files 200 -> 121, lines 63,242 -> ~42,300.
-- Kept on purpose (audit fixes need them): waterfall, us_rules, entry_exit_grid,
-  wf_lookahead, wf_survivor, survivorship_test, pbo,
-  plus RESEARCH-OPEN fixed_rules, fixed_sim, build_fixed_report.
-
-## Audit 2026-09-30 (AUDIT_REPORT_2026-09-30.md) — what changes numbers
-1. Survivorship: both universes are today's lists. Every CAGR is an upper bound.
-   2018 Nifty hold: today's list 17.98%/yr vs pre-2018-turnover list 13.97%.
-2. No untouched holdout remains (101/399 split merged 2026-09-03).
-3. Board default fills at the same close that made the decision (NEXT_OPEN_FILLS=False).
-4. Waterfall: one random draw per arm, seeded by Python hash() (not reproducible);
-   NSE rule-minus-random median ranges 4.8-6.7 over 5 seeds. Its cap also
-   resizes held positions daily for free (moved NSE 1-2 points in one family).
-5. entry_exit_grid "rand" control fits its firing rate on future data.
-6. check_all.sh exits 0 even when unit tests fail.
-Headline "0 of 36 rows beat buy-and-hold" survived all checks.
-
-## Next jobs, in order (one per Codex handoff)
-1. Confirm the owner committed the cleanup (git log, tag pre-cleanup exists).
-2. Rerun the board with next-open fills; compare to same-close, per row.
-3. Waterfall: 100+ seeded random draws (seed from bytes, not hash()); report spread.
-4. Make check_all.sh fail when tests fail.
-5. Lean pass 2: remove kitelab code used only by deleted scripts
-   (kitelab/excursion.py + tests/test_excursion.py first; list in CLEANUP_PLAN.md). -- DONE 2026-10-01 (excursion pair removed)
+# SESSION 2026-10-01 — read this first
+## Done today (commits 1f980d1..2866d17 on nifty500-report)
+- Restored scripts/show.py, diagnose.py; tag pre-cleanup -> 58889cf.
+- Lean pass 2: removed excursion study, wf_lookahead.py, wf_intraday.py, all intraday data support (data files deleted on the Mac), unused functions. Shared report helpers (scripts/report_common.py). One home for CAGR/drawdown/hold in kitelab/curves.py.
+- Owner conventions applied (MERGE_PLAN_2026-10-01.md, "Owner decisions"): calendar-day CAGR (days/365.25); "buy and hold" = fixed shares bought once (late listers wait in zero-return cash); waterfall's daily-rebalanced series renamed "EW daily" and kept as a separate benchmark; drawdown from initial capital; 252 only for volatility; no 0/-100 sentinels.
+- check_all.sh now fails when tests fail.
+- Fetch cutoff 16:00 IST (a fetch at 15:35 stored last-traded price, not the official close). Fetch alias for renamed symbols (HEG->HEGAM; ANMOL/ARIES/HFCL/TBZ -> -BE series).
+- Waterfall: 100 seeded random draws (--draws), paid trading cost on daily resizing for all arms incl. EW daily. entry_exit_grid rand control: firing rate from past data only.
+## Findings today
+- Next-open fills already measured for the 36-row board (output/wf_attach_2026-09-19.json): close-fills flatter by median +0.6 pts/yr (older engines +1.6-1.9, entries.py ~0.1); 0/36 beat hold either way. Owner closed this topic.
+- Timeframes rows (pair, eath) DO pay the same spread as other rows on the board (verified 2026-10-01); the merge plan's claim otherwise was wrong at board level.
+- Pilot hints (not full runs): fixed-share hold vs EW daily differ a lot (10-name NSE pilot 13.3% vs 20.5%/yr); rule beat random entry in 100/100 draws on a 50-stock 2022-26 pilot but stayed ~10 pts/yr below hold.
+- dashboard.json is stale: built 2026-09-19 from prices ending 2026-09-02.
+## State of data
+- Clean daily data current to 2026-10-01 for 1,113 NSE files (board universe and Nifty 500 complete). 74 stale files are outside the board universe and Nifty 500. US files end 2026-09-23. To refresh Nifty 500 names: backfill --symbols-file + clean_data --symbols-file (both needed).
+- Kite key: `set -a; source ~/.secrets/all.env; set +a` before scripts.login / backfill.
+## Accident
+- output/measurements/wf_daily_capped_2026-09-08.csv was overwritten by Codex during preflight (gitignored, no copy). Replacement renamed *.RECOVERY_INCOMPLETE.csv. Headline values survive in output/rerun_baseline_2026-10-01.csv. Restore from Time Machine if available.
+## Next session, in order
+1. Decide where the rerun writes: Codex cannot write the clean data dir (read-only in the AI box). Either point config at a writable dir or the owner runs the rerun on the Mac.
+2. Unblock: us_fetch for US data; refetch/clean the 10 stale NSE control names us_rules uses (AAREYDRUGS, ACL, ARCHIES, BAJAJINDEF, BALAJEE, BOHRAIND, GOLD, HMAAGRO, MWL, PRABHA) or drop them with a reason; make build_fixed_report write a new dated file instead of overwriting.
+3. Full rerun per the preflight run plan (log: .ai-runs/20261001-183358.log), then an old-vs-new table against output/rerun_baseline_2026-10-01.csv. Estimated 8-20 h (low confidence; time the 100-draw waterfall on a pilot first).
+4. Parked, owner to decide: M1/M2 trade-walker merges (~100-150 lines, need cache rebuild + parity fixtures).
+Still-open audit caveats: survivorship (today's lists), no untouched holdout.
 === BLOCK END ===
 
 ---
